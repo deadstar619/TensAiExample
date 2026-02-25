@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tensai": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "C:/Unreal 5.7 Projects/TensAiExample/Plugins/TensAi/Tools/mcp-bridge/dist/tensai-bridge.mjs"
+      ]
+    }
+  }
+}

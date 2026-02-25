@@ -1,0 +1,3 @@
+[submodule "Plugins/TensAi"]
+	path = Plugins/TensAi
+	url = https://github.com/deadstar619/TensAi.git

@@ -1,0 +1,32 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+
+# Visual Studio
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj*
+*.DotSettings.user
+.vs/
+
+# Node modules (MCP bridge dependencies baked into dist/)
+node_modules/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+*.idea/
+*.code-workspace
+
+# Config secrets (API keys)
+Config/DefaultTensAi.ini
+
+# MCP bridge build artifacts are checked in (dist/), but not node_modules
+Plugins/TensAi/Tools/mcp-bridge/node_modules/
