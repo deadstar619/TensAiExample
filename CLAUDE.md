@@ -28,7 +28,7 @@ Build targets: `TensAiExampleTarget` (Game) and `TensAiExampleEditorTarget` (Edi
 |---|---|---|
 | `TensAiExample` | Runtime (game) | `Source/TensAiExample/` |
 | `TensAi` | Runtime (plugin, editor-aware) | `Plugins/TensAi/Source/TensAi/` |
-| `TensAiEditor` | Editor-only (plugin UI) | `Plugins/TensAi/Source/TensAiEditor/` |
+| `TensAiWebChat` | Editor-only (chat UI) | `Plugins/TensAi/Source/TensAiWebChat/` |
 
 The `TensAi` module conditionally includes editor dependencies behind `Target.bBuildEditor` guards in its Build.cs. Code inside the module must use `#if WITH_EDITOR` for editor-only functionality.
 
@@ -40,27 +40,39 @@ The `TensAi` module conditionally includes editor dependencies behind `Target.bB
 
 **Conversation Manager** (`TensAiConversation`) — Multi-turn agentic conversation with automatic tool invocation loop. Wraps operations in transactions for undo support. Caps at 5 agent iterations per message by default.
 
-**Blueprint Function Library** (`TensAiEditorLibrary`) — 85+ `UFUNCTION`s exposed to Blueprints/Python for graph manipulation, flow control, custom functions, event dispatchers, introspection, input system, and UMG widget creation.
+**Blueprint Function Library** (`TensAiEditorLibrary`) — 85+ `UFUNCTION`s exposed to Blueprints/Python for graph manipulation, flow control, custom functions, event dispatchers, introspection, input system, UMG widget creation, and component manipulation.
 
 ### Agent Actions (AI Tools)
 
-Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/`:
+Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (28 action classes, 80+ tools):
 
 - **BlueprintAssistAction** — `analyze_blueprint`, `list_blueprint_assets`, `search_classes`, `get_log_errors`, `execute_console_command`
 - **BlueprintIRAction** — `compile_blueprint_ir`, `snapshot_blueprint`, `preview_blueprint_changes`
+- **GraphIntrospectionAction** — `inspect_graph_schema`, `enumerate_node_types`, `inspect_node_template`, `validate_connection`, `get_pin_context_actions`, `get_ir_schema`
+- **GraphSemanticAction** — `analyze_graph_semantics`
+- **CompilationDiagnosticsAction** — `get_compilation_diagnostics`
 - **LevelPrototypeAction** — `spawn_actor`, `delete_actor`, `modify_actor`, `list_actors`, `get_actor_details`
 - **SceneOperationsAction** — `duplicate_actor`, `batch_modify_actors`, `manipulate_component`
 - **MeshGenerationAction** — `generate_procedural_mesh`, `generate_primitive_mesh`
 - **TextureGenerationAction** — `generate_texture`, `create_material`
 - **MaterialAction** — `get_material_info`, `set_material_parameters`, `build_material_graph`
 - **PythonScriptAction** — `execute_python`, `get_python_api_help`
-- **EditorContextAction** — `get_editor_context`, `get_selected_actors`, `select_actors`, `get/set_actor_properties`, `import_asset`, `list_project_assets`, `take_viewport_screenshot`, `focus_viewport`, `read_file_contents`, `write_file`, `list_directory`
+- **EditorContextAction** — `get_editor_context`, `get_selected_actors`, `get_graph_selection`, `select_actors`, `get_actor_properties`, `set_actor_property`, `import_asset`, `list_project_assets`, `take_viewport_screenshot`, `focus_viewport`, `read_file_contents`, `write_file`, `list_directory`, `open_asset_editor`, `undo_redo`, `get_recent_logs`, `focus_graph_node`, `save_asset`, `compile_blueprint`, `notify_user`, `get_viewport_info`
 - **KnowledgeBaseAction** — `query_knowledge_base`
 - **ReflectionAction** — `reflect_type`, `search_functions`
+- **ResearchAction** — `research_subsystem`
 - **CodeModeAction** — `read_engine_source`
 - **CodeSchemaAction** — `get_api_schema`, `regenerate_api_stubs`
 - **BatchAssetAction** — `batch_execute`
 - **BindingGeneratorAction** — `analyze_api_gap`, `generate_cpp_binding`
+- **NativizeAction** — `nativize_blueprint`, `scaffold_module`
+- **ReparentAction** — `reparent_blueprint`
+- **PIEControlAction** — `pie_control`, `query_pie_state`
+- **LiveCodingAction** — `live_coding`
+- **WidgetTreeAction** — `widget_tree`
+- **AssetReferenceAction** — `analyze_asset_references`
+- **SelfTestAction** — `self_test`
+- **ToolDiscoveryAction** — `get_available_tools`
 
 ### Python Layer
 
@@ -68,7 +80,7 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 
 ### Knowledge Base
 
-`Plugins/TensAi/Resources/Knowledge/` contains AI-consumable reference docs: `PythonAPIReference.md`, `Recipes_FlowControl.md`, `Recipes_Functions.md`, `Recipes_Input.md`, `Recipes_UI.md`. These are queried by the `KnowledgeBaseAction` tool at runtime.
+`Plugins/TensAi/Resources/Knowledge/` contains AI-consumable reference docs queried by the `KnowledgeBaseAction` tool at runtime: `PythonAPIReference.md`, `Recipes_FlowControl.md`, `Recipes_Functions.md`, `Recipes_Input.md`, `Recipes_UI.md`, `Recipes_Materials.md`, `Recipes_MaterialGraph.md`, `Recipes_Transforms.md`, `Recipes_LevelBuilding.md`.
 
 ### Project Context
 
@@ -100,4 +112,4 @@ When calling TensAi MCP tools (especially `execute_python`), **never speculate o
 
 ## Roadmap
 
-See `Plugins/TensAi/Roadmap.md`. Current focus: improving graph layout and node placement in compiled blueprints.
+See `Plugins/TensAi/ROADMAP.md`.
