@@ -4,18 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TensAiExample is an Unreal Engine 5.7 project containing the **TensAi** plugin — an AI-powered editor assistant that translates natural language into deterministic, validated engine operations. Supports multiple AI providers (Anthropic Claude, OpenAI-compatible endpoints). Core capabilities: blueprint graph construction via declarative IR, level prototyping, procedural mesh/texture/material creation, and Python script execution.
+TensAiExample is an Unreal Engine 5.7 project containing the **TensAi** plugin — an AI-powered editor assistant that translates natural language into deterministic, validated engine operations. Supports multiple AI providers (Anthropic Claude, OpenAI-compatible endpoints). Core capabilities: blueprint graph construction via declarative IR, level prototyping, procedural mesh/texture/material creation, C++ code generation, asset management, and Python script execution.
 
 ## Build Commands
 
-This is a standard UE 5.7 C++ project. Build from the `.sln` or via Unreal Build Tool:
+This is a standard UE 5.7 C++ project. Call `UnrealBuildTool.exe` directly (do NOT use `Build.bat` — it has internal unquoted path issues when called from bash):
 
 ```bash
-# Build from command line (adjust engine path as needed)
-"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/Build.bat" TensAiExampleEditor Win64 Development "C:/Unreal 5.7 Projects/TensAiExample/TensAiExample.uproject" -waitmutex
+# Build editor target
+"C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe" \
+  TensAiExampleEditor Win64 Development \
+  -Project="C:/Unreal 5.7 Projects/TensAiExample/TensAiExample.uproject" -waitmutex
 
 # Generate project files
-"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/GenerateProjectFiles.bat" "C:/Unreal 5.7 Projects/TensAiExample/TensAiExample.uproject" -game
+"C:/Program Files/Epic Games/UE_5.7/Engine/Build/BatchFiles/GenerateProjectFiles.bat" \
+  "C:/Unreal 5.7 Projects/TensAiExample/TensAiExample.uproject" -game
 ```
 
 Build targets: `TensAiExampleTarget` (Game) and `TensAiExampleEditorTarget` (Editor). Both use `BuildSettingsVersion.V6` and `IncludeOrderVersion.Unreal5_7`.
@@ -40,11 +43,11 @@ The `TensAi` module conditionally includes editor dependencies behind `Target.bB
 
 **Conversation Manager** (`TensAiConversation`) — Multi-turn agentic conversation with automatic tool invocation loop. Wraps operations in transactions for undo support. Caps at 5 agent iterations per message by default.
 
-**Blueprint Function Library** (`TensAiEditorLibrary`) — 85+ `UFUNCTION`s exposed to Blueprints/Python for graph manipulation, flow control, custom functions, event dispatchers, introspection, input system, UMG widget creation, and component manipulation.
+**Blueprint Function Library** (`TensAiEditorLibrary`) — 100+ `UFUNCTION`s exposed to Blueprints/Python for graph manipulation, flow control, custom functions, event dispatchers, introspection, input system, UMG widget creation, and component manipulation.
 
 ### Agent Actions (AI Tools)
 
-Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (28 action classes, 80+ tools):
+Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (30 action classes, 67 tools):
 
 - **BlueprintAssistAction** — `analyze_blueprint`, `list_blueprint_assets`, `search_classes`, `get_log_errors`, `execute_console_command`
 - **BlueprintIRAction** — `compile_blueprint_ir`, `snapshot_blueprint`, `preview_blueprint_changes`
@@ -57,7 +60,7 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - **TextureGenerationAction** — `generate_texture`, `create_material`
 - **MaterialAction** — `get_material_info`, `set_material_parameters`, `build_material_graph`
 - **PythonScriptAction** — `execute_python`, `get_python_api_help`
-- **EditorContextAction** — `get_editor_context`, `get_selected_actors`, `get_graph_selection`, `select_actors`, `get_actor_properties`, `set_actor_property`, `import_asset`, `list_project_assets`, `take_viewport_screenshot`, `focus_viewport`, `read_file_contents`, `write_file`, `list_directory`, `open_asset_editor`, `undo_redo`, `get_recent_logs`, `focus_graph_node`, `save_asset`, `compile_blueprint`, `notify_user`, `get_viewport_info`
+- **EditorContextAction** — `get_editor_context`, `get_selected_actors`, `get_graph_selection`, `select_actors`, `get_actor_properties`, `set_actor_property`, `import_asset`, `list_project_assets`, `take_viewport_screenshot`, `capture_asset_thumbnail`, `focus_viewport`, `read_file_contents`, `write_file`, `list_directory`, `open_asset_editor`, `undo_redo`, `get_recent_logs`, `focus_graph_node`, `save_asset`, `compile_blueprint`, `notify_user`, `get_viewport_info`
 - **KnowledgeBaseAction** — `query_knowledge_base`
 - **ReflectionAction** — `reflect_type`, `search_functions`
 - **ResearchAction** — `research_subsystem`
@@ -65,22 +68,24 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - **CodeSchemaAction** — `get_api_schema`, `regenerate_api_stubs`
 - **BatchAssetAction** — `batch_execute`
 - **BindingGeneratorAction** — `analyze_api_gap`, `generate_cpp_binding`
-- **NativizeAction** — `nativize_blueprint`, `scaffold_module`
+- **NativizeAction** — `nativize_blueprint`, `scaffold_module`, `analyze_nativize_dependencies`, `batch_nativize`
 - **ReparentAction** — `reparent_blueprint`
 - **PIEControlAction** — `pie_control`, `query_pie_state`
 - **LiveCodingAction** — `live_coding`
 - **WidgetTreeAction** — `widget_tree`
 - **AssetReferenceAction** — `analyze_asset_references`
+- **ManageAssetAction** — `manage_asset`
+- **AnalyzeProjectAction** — `analyze_project`
 - **SelfTestAction** — `self_test`
 - **ToolDiscoveryAction** — `get_available_tools`
 
 ### Python Layer
 
-`Plugins/TensAi/Content/Python/tensai_helpers.py` (4K lines, 140+ functions) provides high-level abstractions over the UE Python API. Auto-loaded by `init_unreal.py` when the editor starts. Covers blueprints, components, properties, variables, actors, transforms, physics, graph manipulation, flow control, input, UMG, and introspection.
+`Plugins/TensAi/Content/Python/tensai_helpers.py` (5.7K lines, 178 functions) provides high-level abstractions over the UE Python API. Auto-loaded by `init_unreal.py` when the editor starts. Covers blueprints, components, properties, variables, actors, transforms, physics, graph manipulation, flow control, input, UMG, and introspection.
 
 ### Knowledge Base
 
-`Plugins/TensAi/Resources/Knowledge/` contains AI-consumable reference docs queried by the `KnowledgeBaseAction` tool at runtime: `PythonAPIReference.md`, `Recipes_FlowControl.md`, `Recipes_Functions.md`, `Recipes_Input.md`, `Recipes_UI.md`, `Recipes_Materials.md`, `Recipes_MaterialGraph.md`, `Recipes_Transforms.md`, `Recipes_LevelBuilding.md`.
+`Plugins/TensAi/Resources/Knowledge/` contains 17 AI-consumable reference docs queried by the `KnowledgeBaseAction` tool at runtime: `PythonAPIReference.md`, `Recipes_Animation.md`, `Recipes_AssetManagement.md`, `Recipes_DataTables.md`, `Recipes_FlowControl.md`, `Recipes_Functions.md`, `Recipes_GameFramework.md`, `Recipes_GameplayTags.md`, `Recipes_Input.md`, `Recipes_LevelBuilding.md`, `Recipes_MaterialGraph.md`, `Recipes_Materials.md`, `Recipes_Nativization.md`, `Recipes_ProjectAnalysis.md`, `Recipes_ProjectSettings.md`, `Recipes_Transforms.md`, `Recipes_UI.md`.
 
 ### Project Context
 
@@ -89,17 +94,21 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 ## Configuration
 
 - **API key:** Stored in `Config/DefaultTensAi.ini` under `[/Script/TensAi.TensAiSettings]`
+- **MCP server:** `bEnableMCPServer=True` and `MCPServerPort=37407` in `Config/DefaultTensAi.ini`
 - **Rendering:** Ray tracing, Substrate, and dynamic GI are enabled in `DefaultEngine.ini`
 - **Default map:** `/Game/Maps/TensAI_DemoMap`
 
 ## Development Conventions
 
 - Agent actions follow a consistent pattern: inherit `UTensAiAgentAction`, register via the subsystem, return JSON results from `Execute()`
+- New action classes must be registered in `TensAiAgentSubsystem.cpp` via `CreateAndRegisterAction<>()` and added to the `ToolCatalog[]` in `TensAiToolDiscoveryAction.cpp`
 - Python helpers use class resolution aliases (e.g., `"StaticMesh"` → `"StaticMeshComponent"`) and always include error handling with safe defaults
 - Editor-only code in the runtime `TensAi` module must be guarded with `#if WITH_EDITOR`
 - All Python execution is wrapped in UE transactions for undo/redo support
 - Blueprint IR is the preferred method for graph construction (deterministic, validated, diffable)
 - Cross-module headers must be in `Public/` directories; use `TENSAI_API` for exported symbols
+- Adding a new `UCLASS` requires a full UBT build (not Live Coding). LC can only modify existing classes.
+- `Build.cs` changes (new module dependencies) require closing the editor and running a full UBT build
 
 ## MCP Tool Usage Rules
 
@@ -109,7 +118,3 @@ When calling TensAi MCP tools (especially `execute_python`), **never speculate o
 - If unsure whether a method exists, **introspect first** (`get_python_api_help` with `dir` or `help`) before writing code that uses it
 - Do not add speculative debug prints or exploratory calls after the main operation — if the task is done, stop
 - A failed `execute_python` call surfaces as an error in the Unreal Editor log, even if the actual work succeeded before the failing line
-
-## Roadmap
-
-See `Plugins/TensAi/ROADMAP.md`.
