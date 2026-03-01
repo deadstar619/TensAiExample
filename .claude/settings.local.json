@@ -3,6 +3,8 @@
     "allow": [
       "Read(*)",
       "Write(*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(head:*)",
@@ -40,7 +42,12 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:unpkg.com)",
       "mcp__tensai__*",
-      "Bash(\"/c/Program Files/Epic Games/UE_5.7/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe\" TensAiExampleEditor:*)"
+      "Bash(\"/c/Program Files/Epic Games/UE_5.7/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe\" TensAiExampleEditor:*)",
+      "Bash(done)",
+      "Bash(test:*)",
+      "Bash(for f in *.md)",
+      "Bash(do wc -l \"$f\")",
+      "Bash(sort:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
