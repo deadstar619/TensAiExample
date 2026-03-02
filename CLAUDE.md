@@ -110,6 +110,30 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - Adding a new `UCLASS` requires a full UBT build (not Live Coding). LC can only modify existing classes.
 - `Build.cs` changes (new module dependencies) require closing the editor and running a full UBT build
 
+## Building Games & Blueprints via MCP
+
+Before starting complex blueprint or game-building tasks (anything beyond a single-node test), **consult the Knowledge Base first**:
+
+1. **Identify relevant topics** — e.g., a Pong game needs: game framework, input, transforms, materials, level building
+2. **Query the knowledge base** — use `query_knowledge_base` MCP tool with relevant keywords (e.g., `"game framework"`, `"input enhanced"`, `"transforms"`)
+3. **Check conventions in auto-memory** — see `ue-conventions.md` for critical UE gotchas that cause silent failures
+
+The Knowledge Base files in `Plugins/TensAi/Resources/Knowledge/Recipes_*.md` contain verified patterns, pin names, common pitfalls, and copy-paste recipes. They are the source of truth for UE API conventions — do not rely on training knowledge alone.
+
+**Topic → Knowledge Base mapping:**
+| Task involves... | Query keywords |
+|---|---|
+| Game architecture (modes, controllers, pawns) | `game framework` |
+| Player input (keyboard, gamepad, Enhanced Input) | `input` |
+| Movement, rotation, interpolation | `transforms` |
+| Materials, colors, textures | `materials`, `material graph` |
+| Level building, spawning actors, lighting | `level building` |
+| UI/HUD widgets | `UI`, `widget` |
+| Flow control (delay, loops, branches) | `flow control` |
+| Custom functions, events, dispatchers | `functions` |
+| Animation, skeletal meshes, montages | `animation` |
+| DataTables, CSV import | `data tables` |
+
 ## MCP Tool Usage Rules
 
 When calling TensAi MCP tools (especially `execute_python`), **never speculate on APIs**:

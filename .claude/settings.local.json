@@ -2,6 +2,9 @@
   "permissions": {
     "allow": [
       "Read(*)",
+      "Read(//C/Program Files/Epic Games/UE_5.7/Engine/**)",
+      "Glob(//C/Program Files/Epic Games/UE_5.7/Engine/**)",
+      "Grep(//C/Program Files/Epic Games/UE_5.7/Engine/**)",
       "Write(*)",
       "Bash(awk:*)",
       "Bash(sed:*)",
@@ -47,7 +50,13 @@
       "Bash(test:*)",
       "Bash(for f in *.md)",
       "Bash(do wc -l \"$f\")",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(cd \"C:/Unreal 5.7 Projects/TensAiExample/Plugins/TensAi/Tools/mcp-bridge\" && npm run build 2>&1)",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(sleep:*)",
+      "Bash(\"/c/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor.exe\":*)"
     ]
   },
   "enableAllProjectMcpServers": true,
