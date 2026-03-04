@@ -110,6 +110,15 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - Adding a new `UCLASS` requires a full UBT build (not Live Coding). LC can only modify existing classes.
 - `Build.cs` changes (new module dependencies) require closing the editor and running a full UBT build
 
+## Workflow Rules
+
+- **Prefer tensai_helpers over raw unreal API**: In `execute_python`, always `import tensai_helpers as ch` and check for a helper function before using raw `unreal` module calls. Helpers are validation-safe and bypass the pre-execution validator that blocks raw `unreal.get_editor_subsystem` calls. Discover with: `print([m for m in dir(ch) if 'keyword' in m.lower()])`.
+- **No speculative code**: Only call APIs verified via `get_python_api_help`, `query_knowledge_base`, or a prior successful call. Never guess at method/property names — introspect first.
+- **PIE verification via logs, not screenshots**: Verify blueprint behavior by reading `get_recent_logs` output after PIE. Do NOT take viewport screenshots to check results.
+- **Flag TensAi issues, don't retry indefinitely**: When a tool call or IR compile fails due to a non-obvious issue, notify the user immediately. One retry with a targeted fix is OK; multiple speculative iterations are not.
+- **LLM-facing gotchas → fix at the source**: When discovering a gotcha any LLM could hit, add parser validation AND update the system prompt in `TensAiProjectContextAnalyzer.cpp`. Don't just save to auto-memory.
+- **Spawning BP actors**: Use `ch.spawn_blueprint_actor(path, label, location)` in `execute_python`, or the `spawn_actor` MCP tool with `{"blueprint": "..."}`. Do NOT use raw `unreal.get_editor_subsystem` or deprecated `EditorLevelLibrary`.
+
 ## Building Games & Blueprints via MCP
 
 Before starting complex blueprint or game-building tasks (anything beyond a single-node test), **consult the Knowledge Base first**:
