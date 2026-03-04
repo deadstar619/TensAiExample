@@ -117,7 +117,7 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - **PIE verification via logs, not screenshots**: Verify blueprint behavior by reading `get_recent_logs` output after PIE. Do NOT take viewport screenshots to check results.
 - **Flag TensAi issues, don't retry indefinitely**: When a tool call or IR compile fails due to a non-obvious issue, notify the user immediately. One retry with a targeted fix is OK; multiple speculative iterations are not.
 - **LLM-facing gotchas → fix at the source**: When discovering a gotcha any LLM could hit, add parser validation AND update the system prompt in `TensAiProjectContextAnalyzer.cpp`. Don't just save to auto-memory.
-- **Spawning BP actors**: Use `ch.spawn_blueprint_actor(path, label, location)` in `execute_python`, or the `spawn_actor` MCP tool with `{"blueprint": "..."}`. Do NOT use raw `unreal.get_editor_subsystem` or deprecated `EditorLevelLibrary`.
+- **Spawning BP actors**: Use `ch.spawn_blueprint_actor(path, label, location)` in `execute_python`. The `spawn_actor` MCP tool only supports built-in classes (StaticMeshActor, lights, etc.) — it does NOT accept blueprint paths. Do NOT use raw `unreal.get_editor_subsystem` or deprecated `EditorLevelLibrary`.
 
 ## Building Games & Blueprints via MCP
 
