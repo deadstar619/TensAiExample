@@ -56,7 +56,12 @@
       "Bash(npm:*)",
       "Bash(npx:*)",
       "Bash(sleep:*)",
-      "Bash(\"/c/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor.exe\":*)"
+      "Bash(\"/c/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor.exe\":*)",
+      "WebFetch(domain:en.imzlp.com)",
+      "WebFetch(domain:ikrima.dev)",
+      "WebFetch(domain:jdelezenne.github.io)",
+      "WebFetch(domain:sourcegraph.com)",
+      "WebFetch(domain:dev.epicgames.com)"
     ]
   },
   "enableAllProjectMcpServers": true,
