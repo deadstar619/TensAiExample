@@ -50,7 +50,8 @@ The `TensAi` module conditionally includes editor dependencies behind `Target.bB
 Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (28 action classes, 63 tools):
 
 - **BlueprintAssistAction** — `analyze_blueprint`, `list_blueprint_assets`, `search_classes`, `get_log_errors`, `execute_console_command`
-- **BlueprintPatchAction** — `patch_blueprint`, `snapshot_blueprint`, `preview_blueprint_changes`
+- **BlueprintPatchAction** — `patch_blueprint` (operations-based: surgical add/remove/connect ops, no auto-layout)
+- **BlueprintIRAction** — `snapshot_blueprint`, `preview_blueprint_changes` (IR-based: full graph reconstruction with auto-layout)
 - **GraphIntrospectionAction** — `inspect_graph_schema`, `enumerate_node_types`, `inspect_node_template`, `validate_connection`, `get_pin_context_actions`, `get_ir_schema`
 - **GraphSemanticAction** — `analyze_graph_semantics`
 - **CompilationDiagnosticsAction** — `get_compilation_diagnostics`
@@ -105,7 +106,8 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - Python helpers use class resolution aliases (e.g., `"StaticMesh"` → `"StaticMeshComponent"`) and always include error handling with safe defaults
 - Editor-only code in the runtime `TensAi` module must be guarded with `#if WITH_EDITOR`
 - All Python execution is wrapped in UE transactions for undo/redo support
-- `patch_blueprint` is the preferred method for graph construction (deterministic, validated, diffable)
+- Two blueprint construction paths: **`patch_blueprint`** (operations-based: surgical add/remove/connect, no IR, no auto-layout) and **`preview_blueprint_changes`** (IR-based: full graph reconstruction with auto-layout). Use `patch_blueprint` for incremental edits; use `preview_blueprint_changes` with an IR JSON string for full graph builds
+- `patch_blueprint` function names use canonical `ClassName::FunctionName` format (e.g., `UKismetSystemLibrary::PrintString`). A/U prefix mismatches are auto-normalized via the reflection index
 - Cross-module headers must be in `Public/` directories; use `TENSAI_API` for exported symbols
 - Adding a new `UCLASS` requires a full UBT build (not Live Coding). LC can only modify existing classes.
 - `Build.cs` changes (new module dependencies) require closing the editor and running a full UBT build
