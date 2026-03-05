@@ -61,7 +61,9 @@
       "WebFetch(domain:ikrima.dev)",
       "WebFetch(domain:jdelezenne.github.io)",
       "WebFetch(domain:sourcegraph.com)",
-      "WebFetch(domain:dev.epicgames.com)"
+      "WebFetch(domain:dev.epicgames.com)",
+      "Bash(\"C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe\" TensAiExampleEditor:*)",
+      "Bash(tail:*3)"
     ]
   },
   "enableAllProjectMcpServers": true,

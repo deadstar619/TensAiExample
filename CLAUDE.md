@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TensAiExample is an Unreal Engine 5.7 project containing the **TensAi** plugin — an AI-powered editor assistant that translates natural language into deterministic, validated engine operations. Supports multiple AI providers (Anthropic Claude, OpenAI-compatible endpoints). Core capabilities: blueprint graph construction via declarative IR, level prototyping, procedural mesh/texture/material creation, C++ code generation, asset management, and Python script execution.
+TensAiExample is an Unreal Engine 5.7 project containing the **TensAi** plugin — an AI-powered editor assistant that translates natural language into deterministic, validated engine operations. Supports multiple AI providers (Anthropic Claude, OpenAI-compatible endpoints). Core capabilities: blueprint graph patching via `patch_blueprint`, level prototyping, procedural mesh/texture/material creation, C++ code generation, asset management, and Python script execution.
 
 ## Build Commands
 
@@ -47,10 +47,10 @@ The `TensAi` module conditionally includes editor dependencies behind `Target.bB
 
 ### Agent Actions (AI Tools)
 
-Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (30 action classes, 67 tools):
+Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToolDescription()`, `GetInputSchema()`, and `Execute()`. Located in `Plugins/TensAi/Source/TensAi/Private/Agent/AgentActions/` (28 action classes, 63 tools):
 
 - **BlueprintAssistAction** — `analyze_blueprint`, `list_blueprint_assets`, `search_classes`, `get_log_errors`, `execute_console_command`
-- **BlueprintIRAction** — `compile_blueprint_ir`, `snapshot_blueprint`, `preview_blueprint_changes`
+- **BlueprintPatchAction** — `patch_blueprint`, `snapshot_blueprint`, `preview_blueprint_changes`
 - **GraphIntrospectionAction** — `inspect_graph_schema`, `enumerate_node_types`, `inspect_node_template`, `validate_connection`, `get_pin_context_actions`, `get_ir_schema`
 - **GraphSemanticAction** — `analyze_graph_semantics`
 - **CompilationDiagnosticsAction** — `get_compilation_diagnostics`
@@ -105,7 +105,7 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - Python helpers use class resolution aliases (e.g., `"StaticMesh"` → `"StaticMeshComponent"`) and always include error handling with safe defaults
 - Editor-only code in the runtime `TensAi` module must be guarded with `#if WITH_EDITOR`
 - All Python execution is wrapped in UE transactions for undo/redo support
-- Blueprint IR is the preferred method for graph construction (deterministic, validated, diffable)
+- `patch_blueprint` is the preferred method for graph construction (deterministic, validated, diffable)
 - Cross-module headers must be in `Public/` directories; use `TENSAI_API` for exported symbols
 - Adding a new `UCLASS` requires a full UBT build (not Live Coding). LC can only modify existing classes.
 - `Build.cs` changes (new module dependencies) require closing the editor and running a full UBT build
@@ -115,9 +115,9 @@ Each action extends `UTensAiAgentAction` and implements `GetToolName()`, `GetToo
 - **Prefer tensai_helpers over raw unreal API**: In `execute_python`, always `import tensai_helpers as ch` and check for a helper function before using raw `unreal` module calls. Helpers are validation-safe and bypass the pre-execution validator that blocks raw `unreal.get_editor_subsystem` calls. Discover with: `print([m for m in dir(ch) if 'keyword' in m.lower()])`.
 - **No speculative code**: Only call APIs verified via `get_python_api_help`, `query_knowledge_base`, or a prior successful call. Never guess at method/property names — introspect first.
 - **PIE verification via logs, not screenshots**: Verify blueprint behavior by reading `get_recent_logs` output after PIE. Do NOT take viewport screenshots to check results.
-- **Flag TensAi issues, don't retry indefinitely**: When a tool call or IR compile fails due to a non-obvious issue, notify the user immediately. One retry with a targeted fix is OK; multiple speculative iterations are not.
+- **Flag TensAi issues, don't retry indefinitely**: When a tool call or `patch_blueprint` fails due to a non-obvious issue, notify the user immediately. One retry with a targeted fix is OK; multiple speculative iterations are not.
 - **LLM-facing gotchas → fix at the source**: When discovering a gotcha any LLM could hit, add parser validation AND update the system prompt in `TensAiProjectContextAnalyzer.cpp`. Don't just save to auto-memory.
-- **Spawning BP actors**: Use `ch.spawn_blueprint_actor(path, label, location)` in `execute_python`. The `spawn_actor` MCP tool only supports built-in classes (StaticMeshActor, lights, etc.) — it does NOT accept blueprint paths. Do NOT use raw `unreal.get_editor_subsystem` or deprecated `EditorLevelLibrary`.
+- **Spawning BP actors**: Use `ch.spawn_blueprint_actor(path, label, location)` in `execute_python`. The `spawn_actor` MCP tool only supports built-in classes (StaticMeshActor, lights, etc.) — it does NOT accept blueprint paths. Do NOT use raw `unreal.get_editor_subsystem`.
 
 ## Building Games & Blueprints via MCP
 
@@ -142,6 +142,7 @@ The Knowledge Base files in `Plugins/TensAi/Resources/Knowledge/Recipes_*.md` co
 | Custom functions, events, dispatchers | `functions` |
 | Animation, skeletal meshes, montages | `animation` |
 | DataTables, CSV import | `data tables` |
+| Timer patterns (SetTimer, ClearTimer, TimerHandle) | `flow control` |
 
 ## MCP Tool Usage Rules
 
