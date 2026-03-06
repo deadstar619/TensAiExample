@@ -44,18 +44,23 @@ Goal:
 
 - remove known debt before broadening scope
 
+Current status:
+
+- Milestone 0 complete
+- `Vergil.Scaffold.*` now passes headlessly without Blueprint deprecation warnings
+
 Tickets:
 
-- `VGR-0001` Replace deprecated timer usage with `Clear and Invalidate Timer by Handle`
-- `VGR-0002` Add a single documented command for running `Vergil.Scaffold.*` headlessly
-- `VGR-0003` Add compile/apply/test diagnostics summary utilities
-- `VGR-0004` Document the currently supported descriptor contracts
+- [x] `VGR-0001` Replace deprecated timer usage with `Clear and Invalidate Timer by Handle`
+- [x] `VGR-0002` Add a single documented command for running `Vergil.Scaffold.*` headlessly
+- [x] `VGR-0003` Add compile/apply/test diagnostics summary utilities
+- [x] `VGR-0004` Document the currently supported descriptor contracts
 
 Acceptance criteria:
 
-- no deprecation warnings in `Vergil.Scaffold.*`
-- one documented headless automation command exists
-- current supported descriptor contracts are documented in-repo
+- [x] no deprecation warnings in `Vergil.Scaffold.*`
+- [x] one documented headless automation command exists
+- [x] current supported descriptor contracts are documented in-repo
 
 ## Milestone 1: Expand The Canonical Asset Model
 Goal:
@@ -275,14 +280,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-0001`
-2. `VGR-1002`
-3. `VGR-1003`
-4. `VGR-1005`
-5. `VGR-2001`
-6. `VGR-4001`
-7. `VGR-4002`
-8. `VGR-4004`
+1. `VGR-1002`
+2. `VGR-1003`
+3. `VGR-1005`
+4. `VGR-2001`
+5. `VGR-4001`
+6. `VGR-4002`
+7. `VGR-4004`
 
 This moves Vergil from a graph scaffold toward real asset authoring.
 

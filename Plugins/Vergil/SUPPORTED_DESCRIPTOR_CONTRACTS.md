@@ -75,4 +75,3 @@ This document describes the current scaffold contracts implemented in code today
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
 - One compile request currently targets one graph plus optional dispatcher definitions. There is no full-asset compile/apply path yet.
-- The current scaffold suite still emits a deprecation warning in `Vergil.Scaffold.TimerDelegateExecution` for `Clear Timer by Handle`. That remaining warning is the work tracked by roadmap ticket `VGR-0001`.

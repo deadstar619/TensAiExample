@@ -38,9 +38,10 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
 - Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
 
-## Current baseline gap
+## Current baseline
 
-- `Vergil.Scaffold.*` currently passes headlessly, but `Vergil.Scaffold.TimerDelegateExecution` still emits the deprecation warning called out by roadmap ticket `VGR-0001`.
+- Milestone 0 is complete.
+- `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 
 ## Planning
 

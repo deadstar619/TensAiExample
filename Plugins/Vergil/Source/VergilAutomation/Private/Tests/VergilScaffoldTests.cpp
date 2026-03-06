@@ -3704,7 +3704,7 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	FVergilGraphNode ClearTimerNode;
 	ClearTimerNode.Id = FGuid::NewGuid();
 	ClearTimerNode.Kind = EVergilNodeKind::Call;
-	ClearTimerNode.Descriptor = TEXT("K2.Call.K2_ClearTimerHandle");
+	ClearTimerNode.Descriptor = TEXT("K2.Call.K2_ClearAndInvalidateTimerHandle");
 	ClearTimerNode.Position = FVector2D(1420.0f, 20.0f);
 	ClearTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
 
@@ -3818,7 +3818,7 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("SetTimerDelegate call should exist."), SetTimerGraphNode);
 	TestNotNull(TEXT("TimerHandle setter should exist."), SetHandleGraphNode);
 	TestNotNull(TEXT("TimerHandle getter should exist."), GetHandleGraphNode);
-	TestNotNull(TEXT("ClearTimerHandle call should exist."), ClearTimerGraphNode);
+	TestNotNull(TEXT("ClearAndInvalidateTimerHandle call should exist."), ClearTimerGraphNode);
 	if (EventNode == nullptr || TimerEventGraphNode == nullptr || SecondsGetterGraphNode == nullptr || LoopingGetterGraphNode == nullptr || SetTimerGraphNode == nullptr || SetHandleGraphNode == nullptr || GetHandleGraphNode == nullptr || ClearTimerGraphNode == nullptr)
 	{
 		return false;
@@ -3848,8 +3848,8 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Looping getter should feed SetTimerDelegate bLooping."), LoopingGraphPin != nullptr && LoopingGraphPin->LinkedTo.Contains(SetTimerLoopingGraphInput));
 	TestTrue(TEXT("SetTimerDelegate return value should feed TimerHandle setter."), SetTimerReturnGraphPin != nullptr && SetTimerReturnGraphPin->LinkedTo.Contains(SetHandleValueGraphPin));
 	TestTrue(TEXT("SetTimerDelegate Then should feed TimerHandle setter execute."), SetTimerThenGraphPin != nullptr && SetTimerThenGraphPin->LinkedTo.Contains(SetHandleExecGraphPin));
-	TestTrue(TEXT("TimerHandle setter Then should feed ClearTimerHandle execute."), SetHandleThenGraphPin != nullptr && SetHandleThenGraphPin->LinkedTo.Contains(ClearTimerExecGraphPin));
-	TestTrue(TEXT("TimerHandle getter should feed ClearTimerHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(ClearTimerHandleGraphPin));
+	TestTrue(TEXT("TimerHandle setter Then should feed ClearAndInvalidateTimerHandle execute."), SetHandleThenGraphPin != nullptr && SetHandleThenGraphPin->LinkedTo.Contains(ClearTimerExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed ClearAndInvalidateTimerHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(ClearTimerHandleGraphPin));
 
 	return true;
 }
