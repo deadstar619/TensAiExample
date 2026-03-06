@@ -174,7 +174,7 @@ Tickets:
 - [x] `VGR-3007` Add post-compile finalize pass
 - [x] `VGR-3008` Split layout/comment work into explicit post-passes
 - [x] `VGR-3009` Add compile statistics and richer result metadata
-- `VGR-3010` Guarantee dry-run and apply share the same planning path
+- [x] `VGR-3010` Guarantee dry-run and apply share the same planning path
 
 Acceptance criteria:
 
@@ -235,6 +235,12 @@ Session note for `VGR-3009` (2026-03-06):
 - `FVergilCompileResult` now carries structured `Statistics` plus ordered `PassRecords`, so compile/apply callers can inspect target graph, requested versus effective schema version, request flags, deterministic per-phase command counts, and the last completed or failed compiler pass without scraping logs.
 - `FVergilBlueprintCompilerService::Compile(...)` now records one pass record per attempted compiler pass, while `UVergilEditorSubsystem` preserves the same statistics surface for dry-run compile, compile+apply, direct command execution, and serialized replay and distinguishes `bApplyRequested` from `bExecutionAttempted`.
 - `Vergil.Scaffold.CompileResultMetadata` now covers successful compile metadata, failed-pass metadata, and compile+apply execution metadata.
+
+Session note for `VGR-3010` (2026-03-06):
+
+- `UVergilEditorSubsystem` now routes dry-run compile and compile+apply through the same internal planning helper before any optional execution, and both compile+apply plus direct command execution use a shared apply helper that executes the `Commands` array already on the result.
+- `FVergilCompileResult.Statistics` now exposes a normalized command-plan fingerprint, planning/apply invocation counts, and a `bExecutionUsedReturnedCommandPlan` flag so callers can verify that apply reused the returned plan instead of silently replanning.
+- `Vergil.Scaffold.DryRunApplyPlanningParity` now verifies dry-run compile and compile+apply return identical normalized command plans for the same request while still recording a single planning invocation and a single apply invocation only on the apply path.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -418,13 +424,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3010`
-2. `VGR-4009`
-3. `VGR-8005`
-4. `VGR-9007`
-5. `VGR-5007`
+1. `VGR-4009`
+2. `VGR-8005`
+3. `VGR-9007`
+4. `VGR-5007`
+5. `VGR-7001`
 
-This keeps pressure on the remaining dry-run pipeline hardening, asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, explicit finalize handling, optional comment/layout post-pass boundaries, and structured compile/apply result metadata.
+This keeps pressure on the remaining asset authoring, release/documentation work, and higher-level tooling now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, explicit finalize handling, optional comment/layout post-pass boundaries, structured compile/apply result metadata, and an explicit dry-run/apply planning-parity contract.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

@@ -2383,6 +2383,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilDryRunApplyPlanningParityTest,
+	"Vergil.Scaffold.DryRunApplyPlanningParity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilCommandSerializationUtilitiesTest,
 	"Vergil.Scaffold.CommandSerializationUtilities",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -2520,11 +2525,15 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Dry-run compile should not report apply requested."), CompileResult.Statistics.bApplyRequested);
 	TestFalse(TEXT("Dry-run compile should not report execution attempted."), CompileResult.Statistics.bExecutionAttempted);
 	TestTrue(TEXT("Compiler output should always record normalized command plans."), CompileResult.Statistics.bCommandPlanNormalized);
+	TestFalse(TEXT("Dry-run compile should not report execution using the returned plan."), CompileResult.Statistics.bExecutionUsedReturnedCommandPlan);
+	TestEqual(TEXT("Dry-run compile should record one planning invocation."), CompileResult.Statistics.PlanningInvocationCount, 1);
+	TestEqual(TEXT("Dry-run compile should record zero apply invocations."), CompileResult.Statistics.ApplyInvocationCount, 0);
 	TestEqual(TEXT("Compile metadata should count target-graph nodes."), CompileResult.Statistics.SourceNodeCount, 1);
 	TestEqual(TEXT("Compile metadata should count target-graph edges."), CompileResult.Statistics.SourceEdgeCount, 0);
 	TestEqual(TEXT("Compile metadata should report the planned command count."), CompileResult.Statistics.PlannedCommandCount, 2);
 	TestEqual(TEXT("Compile metadata should classify graph-structure commands."), CompileResult.Statistics.GraphStructureCommandCount, 2);
 	TestEqual(TEXT("Compile metadata should account for every planned command exactly once."), CompileResult.Statistics.GetTotalAccountedCommandCount(), 2);
+	TestFalse(TEXT("Compile metadata should include a stable command-plan fingerprint."), CompileResult.Statistics.CommandPlanFingerprint.IsEmpty());
 	TestEqual(TEXT("Compile metadata should record every successful pass."), CompileResult.Statistics.GetCompletedPassCount(), 11);
 	TestEqual(TEXT("Compile metadata should record the final completed pass."), CompileResult.Statistics.LastCompletedPassName, FName(TEXT("CommandPlanning")));
 	TestEqual(TEXT("Successful compiles should not record a failed pass."), CompileResult.Statistics.FailedPassName, NAME_None);
@@ -2551,7 +2560,10 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Failed compile metadata should still preserve the requested schema version."), InvalidResult.Statistics.RequestedSchemaVersion, 1);
 	TestEqual(TEXT("Failed compile metadata should still preserve the effective migrated schema version."), InvalidResult.Statistics.EffectiveSchemaVersion, Vergil::SchemaVersion);
 	TestTrue(TEXT("Failed compile metadata should still mark the empty plan as normalized."), InvalidResult.Statistics.bCommandPlanNormalized);
+	TestEqual(TEXT("Failed compile metadata should still record one planning invocation."), InvalidResult.Statistics.PlanningInvocationCount, 1);
+	TestEqual(TEXT("Failed compile metadata should record zero apply invocations."), InvalidResult.Statistics.ApplyInvocationCount, 0);
 	TestEqual(TEXT("Failed compile metadata should plan zero commands."), InvalidResult.Statistics.PlannedCommandCount, 0);
+	TestFalse(TEXT("Failed compile metadata should still include a stable empty-plan fingerprint."), InvalidResult.Statistics.CommandPlanFingerprint.IsEmpty());
 	if (InvalidResult.PassRecords.Num() == 3)
 	{
 		TestEqual(TEXT("The failed pass record should identify semantic validation."), InvalidResult.PassRecords.Last().PassName, FName(TEXT("SemanticValidation")));
@@ -2591,14 +2603,122 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Compile+apply metadata coverage should apply commands."), ApplyResult.bApplied);
 	TestTrue(TEXT("Compile+apply metadata should record that apply was requested."), ApplyResult.Statistics.bApplyRequested);
 	TestTrue(TEXT("Compile+apply metadata should record that execution was attempted."), ApplyResult.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Compile+apply metadata should report execution using the returned plan."), ApplyResult.Statistics.bExecutionUsedReturnedCommandPlan);
 	TestTrue(TEXT("Compile+apply metadata should retain normalized command-plan state."), ApplyResult.Statistics.bCommandPlanNormalized);
+	TestEqual(TEXT("Compile+apply metadata should record one planning invocation."), ApplyResult.Statistics.PlanningInvocationCount, 1);
+	TestEqual(TEXT("Compile+apply metadata should record one apply invocation."), ApplyResult.Statistics.ApplyInvocationCount, 1);
 	TestEqual(TEXT("Compile+apply metadata should preserve the default target graph."), ApplyResult.Statistics.TargetGraphName, FName(TEXT("EventGraph")));
 	TestEqual(TEXT("Compile+apply metadata should count the authored comment node."), ApplyResult.Statistics.SourceNodeCount, 1);
 	TestEqual(TEXT("Compile+apply metadata should keep planned command counts in sync with returned commands."), ApplyResult.Statistics.PlannedCommandCount, ApplyResult.Commands.Num());
 	TestEqual(TEXT("Compile+apply metadata should classify comment authoring as graph-structure work."), ApplyResult.Statistics.GraphStructureCommandCount, ApplyResult.Commands.Num());
 	TestEqual(TEXT("Compile+apply metadata should execute every planned command once."), ApplyResult.ExecutedCommandCount, ApplyResult.Commands.Num());
+	TestFalse(TEXT("Compile+apply metadata should retain a stable command-plan fingerprint."), ApplyResult.Statistics.CommandPlanFingerprint.IsEmpty());
 
 	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
+
+bool FVergilDryRunApplyPlanningParityTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const DryRunBlueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Dry-run test blueprint should be created."), DryRunBlueprint);
+	if (DryRunBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const ApplyBlueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Apply test blueprint should be created."), ApplyBlueprint);
+	if (ApplyBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphNode EventNode;
+	EventNode.Id = FGuid::NewGuid();
+	EventNode.Kind = EVergilNodeKind::Event;
+	EventNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	EventNode.Position = FVector2D(0.0f, 0.0f);
+	EventNode.Metadata.Add(TEXT("Title"), TEXT("BeginPlay"));
+
+	FVergilGraphPin EventExecOut;
+	EventExecOut.Id = FGuid::NewGuid();
+	EventExecOut.Name = TEXT("Then");
+	EventExecOut.Direction = EVergilPinDirection::Output;
+	EventExecOut.bIsExec = true;
+	EventNode.Pins.Add(EventExecOut);
+
+	FVergilGraphNode PrintNode;
+	PrintNode.Id = FGuid::NewGuid();
+	PrintNode.Kind = EVergilNodeKind::Call;
+	PrintNode.Descriptor = TEXT("K2.Call.PrintString");
+	PrintNode.Position = FVector2D(320.0f, 0.0f);
+	PrintNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin PrintExecIn;
+	PrintExecIn.Id = FGuid::NewGuid();
+	PrintExecIn.Name = TEXT("execute");
+	PrintExecIn.Direction = EVergilPinDirection::Input;
+	PrintExecIn.bIsExec = true;
+	PrintNode.Pins.Add(PrintExecIn);
+
+	FVergilGraphPin PrintExecOut;
+	PrintExecOut.Id = FGuid::NewGuid();
+	PrintExecOut.Name = TEXT("then");
+	PrintExecOut.Direction = EVergilPinDirection::Output;
+	PrintExecOut.bIsExec = true;
+	PrintNode.Pins.Add(PrintExecOut);
+
+	FVergilGraphPin PrintMessagePin;
+	PrintMessagePin.Id = FGuid::NewGuid();
+	PrintMessagePin.Name = TEXT("InString");
+	PrintMessagePin.Direction = EVergilPinDirection::Input;
+	PrintNode.Pins.Add(PrintMessagePin);
+	PrintNode.Metadata.Add(TEXT("Input.InString"), TEXT("Dry-run/apply parity"));
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_DryRunApplyPlanningParity");
+	Document.Nodes = { EventNode, PrintNode };
+
+	FVergilGraphEdge ExecEdge;
+	ExecEdge.Id = FGuid::NewGuid();
+	ExecEdge.SourceNodeId = EventNode.Id;
+	ExecEdge.SourcePinId = EventExecOut.Id;
+	ExecEdge.TargetNodeId = PrintNode.Id;
+	ExecEdge.TargetPinId = PrintExecIn.Id;
+	Document.Edges.Add(ExecEdge);
+
+	const FVergilCompileResult DryRunResult = EditorSubsystem->CompileDocument(DryRunBlueprint, Document, false, false, false);
+	const FVergilCompileResult ApplyResult = EditorSubsystem->CompileDocument(ApplyBlueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Dry-run compile should succeed."), DryRunResult.bSucceeded);
+	TestTrue(TEXT("Compile+apply should succeed."), ApplyResult.bSucceeded);
+	TestTrue(TEXT("Compile+apply should apply commands."), ApplyResult.bApplied);
+
+	const FString DryRunSerializedPlan = Vergil::SerializeCommandPlan(DryRunResult.Commands, false);
+	const FString ApplySerializedPlan = Vergil::SerializeCommandPlan(ApplyResult.Commands, false);
+	TestEqual(TEXT("Dry-run and compile+apply should return identical normalized command plans."), DryRunSerializedPlan, ApplySerializedPlan);
+	TestEqual(TEXT("Dry-run and compile+apply should preserve command count parity."), DryRunResult.Commands.Num(), ApplyResult.Commands.Num());
+	TestEqual(TEXT("Dry-run and compile+apply should preserve plan fingerprints."), DryRunResult.Statistics.CommandPlanFingerprint, ApplyResult.Statistics.CommandPlanFingerprint);
+	TestEqual(TEXT("Dry-run and compile+apply should preserve completed pass count."), DryRunResult.Statistics.GetCompletedPassCount(), ApplyResult.Statistics.GetCompletedPassCount());
+	TestEqual(TEXT("Dry-run and compile+apply should preserve pass-record count."), DryRunResult.PassRecords.Num(), ApplyResult.PassRecords.Num());
+	TestEqual(TEXT("Dry-run compile should record exactly one planning invocation."), DryRunResult.Statistics.PlanningInvocationCount, 1);
+	TestEqual(TEXT("Compile+apply should record exactly one planning invocation."), ApplyResult.Statistics.PlanningInvocationCount, 1);
+	TestEqual(TEXT("Dry-run compile should not record any apply invocations."), DryRunResult.Statistics.ApplyInvocationCount, 0);
+	TestEqual(TEXT("Compile+apply should record exactly one apply invocation."), ApplyResult.Statistics.ApplyInvocationCount, 1);
+	TestFalse(TEXT("Dry-run compile should not report execution using the returned plan."), DryRunResult.Statistics.bExecutionUsedReturnedCommandPlan);
+	TestTrue(TEXT("Compile+apply should report execution using the returned plan."), ApplyResult.Statistics.bExecutionUsedReturnedCommandPlan);
+	TestFalse(TEXT("Dry-run compile should not attempt execution."), DryRunResult.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Compile+apply should attempt execution."), ApplyResult.Statistics.bExecutionAttempted);
+	TestEqual(TEXT("Compile+apply should execute every planned command exactly once."), ApplyResult.ExecutedCommandCount, ApplyResult.Commands.Num());
+
 	return true;
 }
 

@@ -25,6 +25,8 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		return Result;
 	}
 
+	Result.Statistics.PlanningInvocationCount = 1;
+
 	FVergilCompilerContext Context(
 		Request.TargetBlueprint,
 		nullptr,

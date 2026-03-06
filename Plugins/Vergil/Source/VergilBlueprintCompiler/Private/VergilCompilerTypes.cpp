@@ -2,6 +2,7 @@
 
 #include "Algo/StableSort.h"
 #include "Dom/JsonObject.h"
+#include "Misc/Crc.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
@@ -208,6 +209,12 @@ namespace
 		EscapedValue.ReplaceInline(TEXT("\r"), TEXT("\\r"));
 		EscapedValue.ReplaceInline(TEXT("\n"), TEXT("\\n"));
 		return EscapedValue;
+	}
+
+	FString BuildCommandPlanFingerprint(const TArray<FVergilCompilerCommand>& Commands)
+	{
+		const FString SerializedPlan = Vergil::SerializeCommandPlan(Commands, false);
+		return FString::Printf(TEXT("%08x"), FCrc::StrCrc32(*SerializedPlan));
 	}
 
 	void AddSerializationDiagnostic(
@@ -587,6 +594,7 @@ int32 FVergilCompileStatistics::GetTotalAccountedCommandCount() const
 
 void FVergilCompileStatistics::RebuildCommandStatistics(const TArray<FVergilCompilerCommand>& Commands)
 {
+	CommandPlanFingerprint = BuildCommandPlanFingerprint(Commands);
 	PlannedCommandCount = Commands.Num();
 	BlueprintDefinitionCommandCount = 0;
 	GraphStructureCommandCount = 0;
@@ -647,7 +655,7 @@ void FVergilCompileStatistics::SetTargetDocumentStatistics(const FVergilGraphDoc
 FString FVergilCompileStatistics::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("graph=%s schema=%d->%d autoLayout=%s comments=%s applyRequested=%s executionAttempted=%s normalized=%s nodes=%d edges=%d planned=%d phases={blueprint=%d graph=%d connections=%d finalize=%d compile=%d post=%d} passes=%d last=%s failed=%s"),
+		TEXT("graph=%s schema=%d->%d autoLayout=%s comments=%s applyRequested=%s executionAttempted=%s normalized=%s fingerprint=%s planCalls=%d applyCalls=%d reusedPlan=%s nodes=%d edges=%d planned=%d phases={blueprint=%d graph=%d connections=%d finalize=%d compile=%d post=%d} passes=%d last=%s failed=%s"),
 		*LexOptionalNameString(TargetGraphName),
 		RequestedSchemaVersion,
 		EffectiveSchemaVersion,
@@ -656,6 +664,10 @@ FString FVergilCompileStatistics::ToDisplayString() const
 		LexBoolString(bApplyRequested),
 		LexBoolString(bExecutionAttempted),
 		LexBoolString(bCommandPlanNormalized),
+		CommandPlanFingerprint.IsEmpty() ? TEXT("<none>") : *CommandPlanFingerprint,
+		PlanningInvocationCount,
+		ApplyInvocationCount,
+		LexBoolString(bExecutionUsedReturnedCommandPlan),
 		SourceNodeCount,
 		SourceEdgeCount,
 		PlannedCommandCount,

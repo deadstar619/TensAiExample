@@ -230,6 +230,18 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileStatistics
 	bool bCommandPlanNormalized = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString CommandPlanFingerprint;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bExecutionUsedReturnedCommandPlan = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 PlanningInvocationCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ApplyInvocationCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	int32 SourceNodeCount = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
