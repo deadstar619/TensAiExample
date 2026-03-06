@@ -1,0 +1,55 @@
+#include "VergilBlueprintCompilerService.h"
+
+#include "Algo/AnyOf.h"
+
+#include "VergilCompilerPasses.h"
+#include "VergilCompilerTypes.h"
+#include "VergilLog.h"
+
+FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompileRequest& Request) const
+{
+	FVergilCompileResult Result;
+
+	if (Request.TargetBlueprint == nullptr)
+	{
+		Result.Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("MissingTargetBlueprint"),
+			TEXT("Compile request requires a target UBlueprint.")));
+		return Result;
+	}
+
+	FVergilCompilerContext Context(
+		Request.TargetBlueprint,
+		nullptr,
+		&Result.Diagnostics,
+		&Result.Commands,
+		Request.TargetGraphName);
+
+	const TArray<TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>> Passes =
+	{
+		MakeShared<FVergilStructuralValidationPass, ESPMode::ThreadSafe>(),
+		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
+	};
+
+	for (const TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>& Pass : Passes)
+	{
+		if (!Pass->Run(Request, Context, Result))
+		{
+			UE_LOG(LogVergil, Warning, TEXT("Vergil compiler pass '%s' failed."), *Pass->GetPassName().ToString());
+			break;
+		}
+	}
+
+	Result.bSucceeded = !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+
+	if (!Result.bSucceeded)
+	{
+		UE_LOG(LogVergil, Warning, TEXT("Vergil compile request failed with %d diagnostics."), Result.Diagnostics.Num());
+	}
+
+	return Result;
+}

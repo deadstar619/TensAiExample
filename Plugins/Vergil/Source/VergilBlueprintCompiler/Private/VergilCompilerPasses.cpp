@@ -1,0 +1,1221 @@
+#include "VergilCompilerPasses.h"
+
+#include "Algo/AnyOf.h"
+
+#include "VergilCompilerTypes.h"
+#include "VergilDiagnostic.h"
+#include "VergilNodeRegistry.h"
+
+namespace
+{
+	void CopyPlannedPins(const FVergilGraphNode& Node, FVergilCompilerCommand& Command)
+	{
+		Command.PlannedPins.Reset();
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			FVergilPlannedPin PlannedPin;
+			PlannedPin.PinId = Pin.Id;
+			PlannedPin.Name = Pin.Name;
+			PlannedPin.bIsInput = (Pin.Direction == EVergilPinDirection::Input);
+			PlannedPin.bIsExec = Pin.bIsExec;
+			Command.PlannedPins.Add(PlannedPin);
+		}
+	}
+
+	FString GetDescriptorSuffix(const FName Descriptor, const FString& Prefix)
+	{
+		const FString DescriptorString = Descriptor.ToString();
+		if (!DescriptorString.StartsWith(Prefix))
+		{
+			return FString();
+		}
+
+		return DescriptorString.RightChop(Prefix.Len());
+	}
+
+	class FVergilCommentNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.Comment");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Kind == EVergilNodeKind::Comment;
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand AddNodeCommand;
+			AddNodeCommand.Type = EVergilCommandType::AddNode;
+			AddNodeCommand.GraphName = Context.GetGraphName();
+			AddNodeCommand.NodeId = Node.Id;
+			AddNodeCommand.Name = GetDescriptor();
+			AddNodeCommand.SecondaryName = Node.Descriptor;
+			AddNodeCommand.Position = Node.Position;
+			AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("CommentText"));
+			if (AddNodeCommand.StringValue.IsEmpty())
+			{
+				AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("Title"));
+			}
+			CopyPlannedPins(Node, AddNodeCommand);
+			Context.AddCommand(AddNodeCommand);
+
+			for (const TPair<FName, FString>& MetadataEntry : Node.Metadata)
+			{
+				FVergilCompilerCommand MetadataCommand;
+				MetadataCommand.Type = EVergilCommandType::SetNodeMetadata;
+				MetadataCommand.GraphName = Context.GetGraphName();
+				MetadataCommand.NodeId = Node.Id;
+				MetadataCommand.Name = MetadataEntry.Key;
+				MetadataCommand.StringValue = MetadataEntry.Value;
+				Context.AddCommand(MetadataCommand);
+			}
+
+			return true;
+		}
+	};
+
+	class FVergilEventNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Event");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Kind == EVergilNodeKind::Event && Node.Descriptor.ToString().StartsWith(TEXT("K2.Event."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString EventName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Event."));
+			if (EventName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingEventName"), TEXT("Event nodes require a descriptor suffix naming the bound function."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *EventName;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilCustomEventNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.CustomEvent");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.CustomEvent."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString EventName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CustomEvent."));
+			if (EventName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingCustomEventName"), TEXT("Custom event nodes require a descriptor suffix naming the event."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *EventName;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilBranchNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Branch");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Branch");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSequenceNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Sequence");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Sequence");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			int32 NumOutputs = 0;
+			for (const FVergilGraphPin& Pin : Node.Pins)
+			{
+				if (!Pin.bIsExec || Pin.Direction != EVergilPinDirection::Output)
+				{
+					continue;
+				}
+
+				if (Pin.Name.ToString().StartsWith(TEXT("Then_")))
+				{
+					++NumOutputs;
+				}
+			}
+
+			if (NumOutputs < 2)
+			{
+				NumOutputs = 2;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = FString::FromInt(NumOutputs);
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilForLoopNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.ForLoop");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.ForLoop");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			if (!Command.Attributes.Contains(TEXT("MacroBlueprintPath")))
+			{
+				Command.Attributes.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+			}
+			if (!Command.Attributes.Contains(TEXT("MacroGraphName")))
+			{
+				Command.Attributes.Add(TEXT("MacroGraphName"), TEXT("ForLoop"));
+			}
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilDelayNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Delay");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Delay");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilBindDelegateNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.BindDelegate");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.BindDelegate."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.BindDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingBindDelegateMetadata"), TEXT("Bind delegate nodes require a descriptor suffix naming the property."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *PropertyName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilRemoveDelegateNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.RemoveDelegate");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.RemoveDelegate."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.RemoveDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingRemoveDelegateMetadata"), TEXT("Remove delegate nodes require a descriptor suffix naming the property."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *PropertyName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilClearDelegateNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.ClearDelegate");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.ClearDelegate."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.ClearDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingClearDelegateMetadata"), TEXT("Clear delegate nodes require a descriptor suffix naming the property."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *PropertyName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilCallDelegateNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.CallDelegate");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.CallDelegate."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CallDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingCallDelegateMetadata"), TEXT("Call delegate nodes require a descriptor suffix naming the property."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *PropertyName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilCreateDelegateNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.CreateDelegate");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor.ToString().StartsWith(TEXT("K2.CreateDelegate."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CreateDelegate."));
+			if (FunctionName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingCreateDelegateFunction"), TEXT("CreateDelegate nodes require a descriptor suffix naming the selected function."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *FunctionName;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilCallNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Call");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Kind == EVergilNodeKind::Call && Node.Descriptor.ToString().StartsWith(TEXT("K2.Call."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Call."));
+			if (FunctionName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingFunctionName"), TEXT("Call nodes require a descriptor suffix naming the function."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *FunctionName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilVariableGetNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.VariableGet");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Kind == EVergilNodeKind::VariableGet && Node.Descriptor.ToString().StartsWith(TEXT("K2.VarGet."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString VariableName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarGet."));
+			if (VariableName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingVariableName"), TEXT("Variable get nodes require a descriptor suffix naming the variable."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *VariableName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilVariableSetNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.VariableSet");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Kind == EVergilNodeKind::VariableSet && Node.Descriptor.ToString().StartsWith(TEXT("K2.VarSet."));
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString VariableName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarSet."));
+			if (VariableName.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingVariableName"), TEXT("Variable set nodes require a descriptor suffix naming the variable."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.SecondaryName = *VariableName;
+			Command.StringValue = Node.Metadata.FindRef(TEXT("OwnerClassPath"));
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSelfNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Self");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Self");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilCastNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Cast");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Cast");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString TargetClassPath = Node.Metadata.FindRef(TEXT("TargetClassPath"));
+			if (TargetClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingTargetClassPath"), TEXT("Cast nodes require metadata TargetClassPath naming the target class."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = TargetClassPath;
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilRerouteNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Reroute");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Reroute");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSelectNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.Select");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.Select");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString IndexCategory = Node.Metadata.FindRef(TEXT("IndexPinCategory"));
+			const FString ValueCategory = Node.Metadata.FindRef(TEXT("ValuePinCategory"));
+			if (IndexCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingSelectIndexCategory"), TEXT("Select nodes require metadata IndexPinCategory."), Node.Id);
+				return false;
+			}
+
+			if (ValueCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingSelectValueCategory"), TEXT("Select nodes require metadata ValuePinCategory."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSwitchIntNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.SwitchInt");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.SwitchInt");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSwitchStringNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.SwitchString");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.SwitchString");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilSwitchEnumNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.SwitchEnum");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.SwitchEnum");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString EnumPath = Node.Metadata.FindRef(TEXT("EnumPath"));
+			if (EnumPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingSwitchEnumPath"), TEXT("Switch enum nodes require metadata EnumPath."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilFormatTextNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.FormatText");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.FormatText");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString FormatPattern = Node.Metadata.FindRef(TEXT("FormatPattern"));
+			if (FormatPattern.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingFormatPattern"), TEXT("Format text nodes require metadata FormatPattern."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilMakeStructNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.MakeStruct");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.MakeStruct");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString StructPath = Node.Metadata.FindRef(TEXT("StructPath"));
+			if (StructPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingMakeStructPath"), TEXT("Make struct nodes require metadata StructPath."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilBreakStructNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.BreakStruct");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.BreakStruct");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString StructPath = Node.Metadata.FindRef(TEXT("StructPath"));
+			if (StructPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingBreakStructPath"), TEXT("Break struct nodes require metadata StructPath."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilMakeArrayNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.MakeArray");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.MakeArray");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString ValueCategory = Node.Metadata.FindRef(TEXT("ValuePinCategory"));
+			if (ValueCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingMakeArrayValueCategory"), TEXT("Make array nodes require metadata ValuePinCategory."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilMakeSetNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.MakeSet");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.MakeSet");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString ValueCategory = Node.Metadata.FindRef(TEXT("ValuePinCategory"));
+			if (ValueCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingMakeSetValueCategory"), TEXT("Make set nodes require metadata ValuePinCategory."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilMakeMapNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.MakeMap");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.MakeMap");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString KeyCategory = Node.Metadata.FindRef(TEXT("KeyPinCategory"));
+			if (KeyCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingMakeMapKeyCategory"), TEXT("Make map nodes require metadata KeyPinCategory."), Node.Id);
+				return false;
+			}
+
+			const FString ValueCategory = Node.Metadata.FindRef(TEXT("ValuePinCategory"));
+			if (ValueCategory.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingMakeMapValueCategory"), TEXT("Make map nodes require metadata ValuePinCategory."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilGenericNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.Generic");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return !Node.Descriptor.IsNone();
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand AddNodeCommand;
+			AddNodeCommand.Type = EVergilCommandType::AddNode;
+			AddNodeCommand.GraphName = Context.GetGraphName();
+			AddNodeCommand.NodeId = Node.Id;
+			AddNodeCommand.Name = Node.Descriptor;
+			AddNodeCommand.SecondaryName = StaticEnum<EVergilNodeKind>()->GetNameByValue(static_cast<int64>(Node.Kind));
+			AddNodeCommand.Position = Node.Position;
+			CopyPlannedPins(Node, AddNodeCommand);
+			Context.AddCommand(AddNodeCommand);
+
+			for (const TPair<FName, FString>& MetadataEntry : Node.Metadata)
+			{
+				FVergilCompilerCommand MetadataCommand;
+				MetadataCommand.Type = EVergilCommandType::SetNodeMetadata;
+				MetadataCommand.GraphName = Context.GetGraphName();
+				MetadataCommand.NodeId = Node.Id;
+				MetadataCommand.Name = MetadataEntry.Key;
+				MetadataCommand.StringValue = MetadataEntry.Value;
+				Context.AddCommand(MetadataCommand);
+			}
+
+			return true;
+		}
+	};
+
+	void EnsureGenericFallbackHandler()
+	{
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCommentNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilEventNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCustomEventNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBranchNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSequenceNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilForLoopNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilDelayNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBindDelegateNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilRemoveDelegateNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilClearDelegateNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCallDelegateNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCreateDelegateNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCallNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableGetNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableSetNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSelfNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCastNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilRerouteNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSelectNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSwitchIntNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSwitchStringNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSwitchEnumNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilFormatTextNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilMakeStructNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBreakStructNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilMakeArrayNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilMakeSetNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilMakeMapNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilGenericNodeHandler, ESPMode::ThreadSafe>());
+	}
+}
+
+FName FVergilStructuralValidationPass::GetPassName() const
+{
+	return TEXT("StructuralValidation");
+}
+
+bool FVergilStructuralValidationPass::Run(const FVergilCompileRequest& Request, FVergilCompilerContext& Context, FVergilCompileResult& Result) const
+{
+	Request.Document.IsStructurallyValid(&Result.Diagnostics);
+	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilCommandPlanningPass::GetPassName() const
+{
+	return TEXT("CommandPlanning");
+}
+
+bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVergilCompilerContext& Context, FVergilCompileResult& Result) const
+{
+	EnsureGenericFallbackHandler();
+
+	for (const FVergilDispatcherDefinition& Dispatcher : Request.Document.Dispatchers)
+	{
+		FVergilCompilerCommand EnsureDispatcherCommand;
+		EnsureDispatcherCommand.Type = EVergilCommandType::EnsureDispatcher;
+		EnsureDispatcherCommand.SecondaryName = Dispatcher.Name;
+		Result.Commands.Add(EnsureDispatcherCommand);
+
+		for (const FVergilDispatcherParameter& Parameter : Dispatcher.Parameters)
+		{
+			FVergilCompilerCommand ParameterCommand;
+			ParameterCommand.Type = EVergilCommandType::AddDispatcherParameter;
+			ParameterCommand.SecondaryName = Dispatcher.Name;
+			ParameterCommand.Name = Parameter.Name;
+			ParameterCommand.Attributes.Add(TEXT("PinCategory"), Parameter.PinCategory.ToString());
+			if (!Parameter.PinSubCategory.IsNone())
+			{
+				ParameterCommand.Attributes.Add(TEXT("PinSubCategory"), Parameter.PinSubCategory.ToString());
+			}
+			if (!Parameter.ObjectPath.IsEmpty())
+			{
+				ParameterCommand.Attributes.Add(TEXT("ObjectPath"), Parameter.ObjectPath);
+			}
+			if (Parameter.bIsArray)
+			{
+				ParameterCommand.Attributes.Add(TEXT("bIsArray"), TEXT("true"));
+			}
+			Result.Commands.Add(ParameterCommand);
+		}
+	}
+
+	FVergilCompilerCommand EnsureGraphCommand;
+	EnsureGraphCommand.Type = EVergilCommandType::EnsureGraph;
+	EnsureGraphCommand.GraphName = Context.GetGraphName();
+	EnsureGraphCommand.Name = Request.TargetGraphName;
+	Result.Commands.Add(EnsureGraphCommand);
+
+	for (const FVergilGraphNode& Node : Request.Document.Nodes)
+	{
+		const TSharedPtr<IVergilNodeHandler, ESPMode::ThreadSafe> Handler = FVergilNodeRegistry::Get().FindHandler(Node);
+		if (!Handler.IsValid())
+		{
+			Result.Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("UnhandledNodeDescriptor"),
+				FString::Printf(TEXT("No registered handler exists for descriptor '%s'."), *Node.Descriptor.ToString()),
+				Node.Id));
+			continue;
+		}
+
+		if (!Handler->BuildCommands(Node, Context))
+		{
+			Result.Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("CommandPlanningFailed"),
+				FString::Printf(TEXT("Handler '%s' failed while planning node '%s'."), *Handler->GetDescriptor().ToString(), *Node.Descriptor.ToString()),
+				Node.Id));
+		}
+	}
+
+	for (const FVergilGraphEdge& Edge : Request.Document.Edges)
+	{
+		FVergilCompilerCommand ConnectCommand;
+		ConnectCommand.Type = EVergilCommandType::ConnectPins;
+		ConnectCommand.GraphName = Context.GetGraphName();
+		ConnectCommand.SourceNodeId = Edge.SourceNodeId;
+		ConnectCommand.SourcePinId = Edge.SourcePinId;
+		ConnectCommand.TargetNodeId = Edge.TargetNodeId;
+		ConnectCommand.TargetPinId = Edge.TargetPinId;
+		Result.Commands.Add(ConnectCommand);
+	}
+
+	for (const FVergilGraphNode& Node : Request.Document.Nodes)
+	{
+		if (!Node.Descriptor.ToString().StartsWith(TEXT("K2.CreateDelegate.")))
+		{
+			continue;
+		}
+
+		const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CreateDelegate."));
+		if (FunctionName.IsEmpty())
+		{
+			Result.Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingCreateDelegateFinalizeFunction"),
+				TEXT("CreateDelegate finalization requires a descriptor suffix naming the selected function."),
+				Node.Id));
+			continue;
+		}
+
+		FVergilCompilerCommand FinalizeCommand;
+		FinalizeCommand.Type = EVergilCommandType::FinalizeNode;
+		FinalizeCommand.GraphName = Context.GetGraphName();
+		FinalizeCommand.NodeId = Node.Id;
+		FinalizeCommand.Name = TEXT("Vergil.K2.CreateDelegate");
+		FinalizeCommand.SecondaryName = *FunctionName;
+		FinalizeCommand.Attributes = Node.Metadata;
+		Result.Commands.Add(FinalizeCommand);
+	}
+
+	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
