@@ -1,5 +1,6 @@
 #include "VergilCommandExecutor.h"
 
+#include "Components/SceneComponent.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
@@ -34,6 +35,8 @@
 #include "K2Node_RemoveDelegate.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -48,7 +51,33 @@ namespace
 		TMap<FName, UEdGraph*> GraphsByName;
 		TMap<FGuid, UEdGraphNode*> NodesById;
 		TMap<FGuid, UEdGraphPin*> PinsById;
+		TSet<FGuid> RemovedNodeIds;
 	};
+
+	FName ResolveCommandGraphName(const FVergilCompilerCommand& Command)
+	{
+		if ((Command.Type == EVergilCommandType::EnsureFunctionGraph || Command.Type == EVergilCommandType::EnsureMacroGraph)
+			&& !Command.SecondaryName.IsNone()
+			&& (Command.GraphName.IsNone() || Command.GraphName == TEXT("EventGraph")))
+		{
+			return Command.SecondaryName;
+		}
+
+		if (!Command.GraphName.IsNone())
+		{
+			return Command.GraphName;
+		}
+
+		if ((Command.Type == EVergilCommandType::EnsureFunctionGraph
+			|| Command.Type == EVergilCommandType::EnsureMacroGraph
+			|| Command.Type == EVergilCommandType::EnsureGraph)
+			&& !Command.SecondaryName.IsNone())
+		{
+			return Command.SecondaryName;
+		}
+
+		return FName(TEXT("EventGraph"));
+	}
 
 	UEdGraph* FindGraphByName(UBlueprint* Blueprint, const FName GraphName)
 	{
@@ -72,6 +101,24 @@ namespace
 			if (Graph != nullptr && Graph->GetFName() == GraphName)
 			{
 				return Graph;
+			}
+		}
+
+		return nullptr;
+	}
+
+	UEdGraphNode* FindGraphNodeByGuid(UEdGraph* Graph, const FGuid& NodeId)
+	{
+		if (Graph == nullptr || !NodeId.IsValid())
+		{
+			return nullptr;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (Node != nullptr && Node->NodeGuid == NodeId)
+			{
+				return Node;
 			}
 		}
 
@@ -142,25 +189,159 @@ namespace
 		return nullptr;
 	}
 
+	USCS_Node* FindComponentNode(UBlueprint* Blueprint, const FName ComponentName)
+	{
+		if (Blueprint == nullptr || Blueprint->SimpleConstructionScript == nullptr || ComponentName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node != nullptr && Node->GetVariableName() == ComponentName)
+			{
+				return Node;
+			}
+		}
+
+		return nullptr;
+	}
+
+	FString CanonicalizeLookupName(FString Value, const bool bStripBoolPrefix)
+	{
+		Value.ReplaceInline(TEXT("_"), TEXT(""));
+		Value.ReplaceInline(TEXT(" "), TEXT(""));
+		if (bStripBoolPrefix && Value.Len() > 1 && Value[0] == TCHAR('b') && FChar::IsUpper(Value[1]))
+		{
+			Value.RightChopInline(1, EAllowShrinking::No);
+		}
+
+		return Value.ToLower();
+	}
+
+	bool IsEquivalentLookupName(const FName RequestedName, const FName CandidateName)
+	{
+		if (RequestedName == CandidateName)
+		{
+			return true;
+		}
+
+		const FString RequestedRaw = RequestedName.ToString();
+		const FString CandidateRaw = CandidateName.ToString();
+		if (RequestedRaw.Equals(CandidateRaw, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		const FString RequestedCanonical = CanonicalizeLookupName(RequestedRaw, false);
+		const FString CandidateCanonical = CanonicalizeLookupName(CandidateRaw, false);
+		if (RequestedCanonical == CandidateCanonical)
+		{
+			return true;
+		}
+
+		return CanonicalizeLookupName(RequestedRaw, true) == CandidateCanonical
+			|| RequestedCanonical == CanonicalizeLookupName(CandidateRaw, true)
+			|| CanonicalizeLookupName(RequestedRaw, true) == CanonicalizeLookupName(CandidateRaw, true);
+	}
+
+	FProperty* FindPropertyFlexible(UStruct* Owner, const FName PropertyName)
+	{
+		if (Owner == nullptr || PropertyName.IsNone())
+		{
+			return nullptr;
+		}
+
+		if (FProperty* DirectProperty = FindFProperty<FProperty>(Owner, PropertyName))
+		{
+			return DirectProperty;
+		}
+
+		for (TFieldIterator<FProperty> It(Owner, EFieldIteratorFlags::IncludeSuper); It; ++It)
+		{
+			if (FProperty* CandidateProperty = *It; CandidateProperty != nullptr && IsEquivalentLookupName(PropertyName, CandidateProperty->GetFName()))
+			{
+				return CandidateProperty;
+			}
+		}
+
+		return nullptr;
+	}
+
+	bool ImportPropertyValue(UObject* TargetObject, FProperty* Property, const FString& SerializedValue)
+	{
+		if (TargetObject == nullptr || Property == nullptr)
+		{
+			return false;
+		}
+
+		void* const ValueAddress = Property->ContainerPtrToValuePtr<void>(TargetObject);
+		if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+		{
+			if (StructProperty->Struct == TBaseStructure<FVector>::Get())
+			{
+				FVector ParsedVector;
+				if (ParsedVector.InitFromString(SerializedValue))
+				{
+					*Property->ContainerPtrToValuePtr<FVector>(TargetObject) = ParsedVector;
+					return true;
+				}
+			}
+			else if (StructProperty->Struct == TBaseStructure<FRotator>::Get())
+			{
+				FRotator ParsedRotator;
+				if (ParsedRotator.InitFromString(SerializedValue))
+				{
+					*Property->ContainerPtrToValuePtr<FRotator>(TargetObject) = ParsedRotator;
+					return true;
+				}
+			}
+		}
+
+		if (Property->ImportText_Direct(*SerializedValue, ValueAddress, TargetObject, PPF_None) != nullptr)
+		{
+			return true;
+		}
+
+		if (CastField<FStructProperty>(Property) != nullptr && !SerializedValue.StartsWith(TEXT("(")))
+		{
+			const FString WrappedImportText = FString::Printf(TEXT("(%s)"), *SerializedValue);
+			return Property->ImportText_Direct(*WrappedImportText, ValueAddress, TargetObject, PPF_None) != nullptr;
+		}
+
+		return false;
+	}
+
 	UEdGraph* ResolveOrCreateGraph(
 		UBlueprint* Blueprint,
 		const FVergilCompilerCommand& Command,
 		FVergilExecutionState& State,
 		TArray<FVergilDiagnostic>& Diagnostics)
 	{
-		const FName GraphName = Command.GraphName.IsNone() ? FName(TEXT("EventGraph")) : Command.GraphName;
+		const FName GraphName = ResolveCommandGraphName(Command);
 		if (UEdGraph** ExistingGraph = State.GraphsByName.Find(GraphName))
 		{
 			return *ExistingGraph;
 		}
 
 		UEdGraph* Graph = FindGraphByName(Blueprint, GraphName);
-		if (Graph == nullptr && Command.Type == EVergilCommandType::EnsureGraph)
+		if (Graph == nullptr
+			&& (Command.Type == EVergilCommandType::EnsureGraph
+				|| Command.Type == EVergilCommandType::EnsureFunctionGraph
+				|| Command.Type == EVergilCommandType::EnsureMacroGraph))
 		{
 			Graph = FBlueprintEditorUtils::CreateNewGraph(Blueprint, GraphName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
 			if (Graph != nullptr)
 			{
-				if (GraphName == TEXT("EventGraph"))
+				if (Command.Type == EVergilCommandType::EnsureMacroGraph)
+				{
+					FBlueprintEditorUtils::AddMacroGraph(Blueprint, Graph, true, static_cast<UClass*>(nullptr));
+				}
+				else if (Command.Type == EVergilCommandType::EnsureFunctionGraph)
+				{
+					FBlueprintEditorUtils::AddFunctionGraph(Blueprint, Graph, true, static_cast<UFunction*>(nullptr));
+				}
+				else if (GraphName == TEXT("EventGraph"))
 				{
 					FBlueprintEditorUtils::AddUbergraphPage(Blueprint, Graph);
 				}
@@ -196,12 +377,29 @@ namespace
 			|| Command.Type == EVergilCommandType::AddDispatcherParameter
 			|| Command.Type == EVergilCommandType::EnsureVariable
 			|| Command.Type == EVergilCommandType::SetVariableMetadata
-			|| Command.Type == EVergilCommandType::SetVariableDefault;
+			|| Command.Type == EVergilCommandType::SetVariableDefault
+			|| Command.Type == EVergilCommandType::EnsureFunctionGraph
+			|| Command.Type == EVergilCommandType::EnsureMacroGraph
+			|| Command.Type == EVergilCommandType::EnsureComponent
+			|| Command.Type == EVergilCommandType::AttachComponent
+			|| Command.Type == EVergilCommandType::SetComponentProperty
+			|| Command.Type == EVergilCommandType::EnsureInterface
+			|| Command.Type == EVergilCommandType::RenameMember;
+	}
+
+	bool IsPostBlueprintCompileCommand(const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::SetClassDefault;
 	}
 
 	bool IsPostCompileFinalizeCommand(const FVergilCompilerCommand& Command)
 	{
 		return Command.Type == EVergilCommandType::FinalizeNode;
+	}
+
+	bool IsExplicitCompileCommand(const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::CompileBlueprint;
 	}
 
 	bool IsExecConnectionCommand(const FVergilCompilerCommand& Command, const FVergilExecutionState& State)
@@ -414,6 +612,11 @@ namespace
 				continue;
 			}
 
+			if (State.RemovedNodeIds.Contains(Command.NodeId))
+			{
+				continue;
+			}
+
 			UEdGraph* Graph = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics);
 			if (Graph == nullptr)
 			{
@@ -422,14 +625,7 @@ namespace
 			}
 
 			UEdGraphNode* Node = nullptr;
-			for (UEdGraphNode* CandidateNode : Graph->Nodes)
-			{
-				if (CandidateNode != nullptr && CandidateNode->NodeGuid == Command.NodeId)
-				{
-					Node = CandidateNode;
-					break;
-				}
-			}
+			Node = FindGraphNodeByGuid(Graph, Command.NodeId);
 
 			if (Node == nullptr)
 			{
@@ -1196,6 +1392,486 @@ namespace
 		Blueprint->Modify();
 		Variable->DefaultValue = Command.StringValue;
 		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+		return true;
+	}
+
+	bool ExecuteEnsureComponent(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone() || Command.StringValue.IsEmpty())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidEnsureComponentCommand"),
+				TEXT("Component creation requires a target blueprint, component name, and component class path."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Blueprint->SimpleConstructionScript == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("BlueprintMissingSimpleConstructionScript"),
+				TEXT("Component commands require a blueprint with a simple construction script."),
+				Command.NodeId));
+			return false;
+		}
+
+		UClass* const ComponentClass = ResolveClassReference(Command.StringValue);
+		if (ComponentClass == nullptr || !ComponentClass->IsChildOf(UActorComponent::StaticClass()))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidComponentClass"),
+				FString::Printf(TEXT("Unable to resolve component class '%s'."), *Command.StringValue),
+				Command.NodeId));
+			return false;
+		}
+
+		if (USCS_Node* ExistingNode = FindComponentNode(Blueprint, Command.SecondaryName))
+		{
+			if (ExistingNode->ComponentTemplate == nullptr || ExistingNode->ComponentTemplate->GetClass() != ComponentClass)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ComponentClassMismatch"),
+					FString::Printf(
+						TEXT("Component '%s' already exists with class '%s', not requested class '%s'."),
+						*Command.SecondaryName.ToString(),
+						ExistingNode->ComponentTemplate != nullptr ? *ExistingNode->ComponentTemplate->GetClass()->GetPathName() : TEXT("<null>"),
+						*ComponentClass->GetPathName()),
+					Command.NodeId));
+				return false;
+			}
+
+			return true;
+		}
+
+		Blueprint->Modify();
+		Blueprint->SimpleConstructionScript->Modify();
+
+		USCS_Node* const NewNode = Blueprint->SimpleConstructionScript->CreateNode(ComponentClass, Command.SecondaryName);
+		if (NewNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("CreateComponentNodeFailed"),
+				FString::Printf(TEXT("Unable to create component '%s'."), *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		Blueprint->SimpleConstructionScript->AddNode(NewNode);
+		return true;
+	}
+
+	bool ExecuteAttachComponent(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone() || Command.Name.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidAttachComponentCommand"),
+				TEXT("Component attachment requires a target blueprint, child component name, and parent component name."),
+				Command.NodeId));
+			return false;
+		}
+
+		USCS_Node* const ChildNode = FindComponentNode(Blueprint, Command.SecondaryName);
+		USCS_Node* const ParentNode = FindComponentNode(Blueprint, Command.Name);
+		if (ChildNode == nullptr || ParentNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentAttachmentTargetMissing"),
+				FString::Printf(
+					TEXT("Unable to resolve child '%s' or parent '%s' for component attachment."),
+					*Command.SecondaryName.ToString(),
+					*Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (ChildNode == ParentNode)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentSelfAttachment"),
+				FString::Printf(TEXT("Component '%s' cannot be attached to itself."), *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Cast<USceneComponent>(ChildNode->ComponentTemplate) == nullptr || Cast<USceneComponent>(ParentNode->ComponentTemplate) == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentAttachmentRequiresSceneComponents"),
+				TEXT("Component attachment requires both child and parent to derive from USceneComponent."),
+				Command.NodeId));
+			return false;
+		}
+
+		USimpleConstructionScript* const SimpleConstructionScript = Blueprint->SimpleConstructionScript;
+		USCS_Node* const ExistingParentNode = SimpleConstructionScript != nullptr ? SimpleConstructionScript->FindParentNode(ChildNode) : nullptr;
+		const bool bWasRootNode = SimpleConstructionScript != nullptr && SimpleConstructionScript->GetRootNodes().Contains(ChildNode);
+
+		Blueprint->Modify();
+		if (SimpleConstructionScript != nullptr)
+		{
+			SimpleConstructionScript->Modify();
+		}
+		ChildNode->Modify();
+		ParentNode->Modify();
+
+		if (ExistingParentNode != nullptr && ExistingParentNode != ParentNode)
+		{
+			ExistingParentNode->Modify();
+			ExistingParentNode->RemoveChildNode(ChildNode, false);
+		}
+		else if (bWasRootNode && SimpleConstructionScript != nullptr)
+		{
+			SimpleConstructionScript->RemoveNode(ChildNode, false);
+		}
+
+		if (ExistingParentNode != ParentNode)
+		{
+			ParentNode->AddChildNode(ChildNode, bWasRootNode);
+		}
+
+		ChildNode->bIsParentComponentNative = false;
+		ChildNode->ParentComponentOrVariableName = NAME_None;
+		ChildNode->ParentComponentOwnerClassName = NAME_None;
+		ChildNode->AttachToName = Command.StringValue.IsEmpty() ? NAME_None : FName(*Command.StringValue);
+		if (SimpleConstructionScript != nullptr)
+		{
+			SimpleConstructionScript->ValidateSceneRootNodes();
+		}
+		return true;
+	}
+
+	bool ExecuteSetComponentProperty(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone() || Command.Name.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidSetComponentPropertyCommand"),
+				TEXT("Component property commands require a target blueprint, component name, and property name."),
+				Command.NodeId));
+			return false;
+		}
+
+		USCS_Node* const ComponentNode = FindComponentNode(Blueprint, Command.SecondaryName);
+		if (ComponentNode == nullptr || ComponentNode->ComponentTemplate == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentPropertyTargetMissing"),
+				FString::Printf(TEXT("Unable to resolve component '%s' while setting property '%s'."), *Command.SecondaryName.ToString(), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		FProperty* const Property = FindPropertyFlexible(ComponentNode->ComponentTemplate->GetClass(), Command.Name);
+		if (Property == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentPropertyMissing"),
+				FString::Printf(TEXT("Component '%s' does not expose property '%s'."), *Command.SecondaryName.ToString(), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		Blueprint->Modify();
+		ComponentNode->Modify();
+		ComponentNode->ComponentTemplate->Modify();
+		if (!ImportPropertyValue(ComponentNode->ComponentTemplate, Property, Command.StringValue))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentPropertyImportFailed"),
+				FString::Printf(
+					TEXT("Unable to import value '%s' into component '%s' property '%s'."),
+					*Command.StringValue,
+					*Command.SecondaryName.ToString(),
+					*Property->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ExecuteEnsureInterface(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.StringValue.IsEmpty())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidEnsureInterfaceCommand"),
+				TEXT("Interface commands require a target blueprint and interface class path."),
+				Command.NodeId));
+			return false;
+		}
+
+		UClass* const InterfaceClass = ResolveClassReference(Command.StringValue);
+		if (InterfaceClass == nullptr || !InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidInterfaceClass"),
+				FString::Printf(TEXT("Unable to resolve interface class '%s'."), *Command.StringValue),
+				Command.NodeId));
+			return false;
+		}
+
+		TArray<UClass*> ImplementedInterfaces;
+		FBlueprintEditorUtils::FindImplementedInterfaces(Blueprint, true, ImplementedInterfaces);
+		if (ImplementedInterfaces.Contains(InterfaceClass))
+		{
+			return true;
+		}
+
+		Blueprint->Modify();
+		if (!FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceClass->GetClassPathName()))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ImplementInterfaceFailed"),
+				FString::Printf(TEXT("Unable to implement interface '%s'."), *InterfaceClass->GetPathName()),
+				Command.NodeId));
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ExecuteSetClassDefault(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.Name.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidSetClassDefaultCommand"),
+				TEXT("Class default commands require a target blueprint and property name."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Blueprint->GeneratedClass == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("GeneratedClassMissing"),
+				TEXT("Class default commands require a compiled generated class."),
+				Command.NodeId));
+			return false;
+		}
+
+		UObject* const ClassDefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
+		FProperty* const Property = FindPropertyFlexible(Blueprint->GeneratedClass, Command.Name);
+		if (ClassDefaultObject == nullptr || Property == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ClassDefaultPropertyMissing"),
+				FString::Printf(TEXT("Unable to resolve class default property '%s'."), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		ClassDefaultObject->Modify();
+		if (!ImportPropertyValue(ClassDefaultObject, Property, Command.StringValue))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ClassDefaultImportFailed"),
+				FString::Printf(TEXT("Unable to import value '%s' into class default property '%s'."), *Command.StringValue, *Property->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ExecuteRemoveNode(
+		UBlueprint* Blueprint,
+		const FVergilCompilerCommand& Command,
+		FVergilExecutionState& State,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (State.RemovedNodeIds.Contains(Command.NodeId))
+		{
+			return true;
+		}
+
+		UEdGraph* const Graph = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics);
+		if (Graph == nullptr)
+		{
+			return false;
+		}
+
+		UEdGraphNode* Node = State.NodesById.FindRef(Command.NodeId);
+		if (Node == nullptr || Node->GetGraph() != Graph)
+		{
+			Node = FindGraphNodeByGuid(Graph, Command.NodeId);
+		}
+
+		if (Node == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("RemoveNodeTargetMissing"),
+				FString::Printf(TEXT("Unable to resolve node '%s' in graph '%s' for removal."), *Command.NodeId.ToString(), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		Graph->Modify();
+		Node->Modify();
+		Node->BreakAllNodeLinks();
+		Graph->RemoveNode(Node);
+
+		State.NodesById.Remove(Command.NodeId);
+		State.RemovedNodeIds.Add(Command.NodeId);
+		for (auto PinIt = State.PinsById.CreateIterator(); PinIt; ++PinIt)
+		{
+			if (PinIt.Value() != nullptr && PinIt.Value()->GetOwningNode() == Node)
+			{
+				PinIt.RemoveCurrent();
+			}
+		}
+
+		return true;
+	}
+
+	bool ExecuteRenameMember(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.Name.IsNone() || Command.SecondaryName.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidRenameMemberCommand"),
+				TEXT("Member rename commands require a target blueprint, old name, and new name."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Command.Name == Command.SecondaryName)
+		{
+			return true;
+		}
+
+		const FString MemberType = GetCommandAttribute(Command, TEXT("MemberType")).ToLower();
+		Blueprint->Modify();
+
+		if (MemberType == TEXT("variable") || MemberType == TEXT("dispatcher"))
+		{
+			if (!HasBlueprintMemberVariable(Blueprint, Command.Name))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("RenameVariableTargetMissing"),
+					FString::Printf(TEXT("Unable to resolve member variable '%s' for rename."), *Command.Name.ToString()),
+					Command.NodeId));
+				return false;
+			}
+
+			FBlueprintEditorUtils::RenameMemberVariable(Blueprint, Command.Name, Command.SecondaryName);
+			return true;
+		}
+
+		if (MemberType == TEXT("functiongraph") || MemberType == TEXT("macrograph"))
+		{
+			UEdGraph* const Graph = FindGraphByName(Blueprint, Command.Name);
+			if (Graph == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("RenameGraphTargetMissing"),
+					FString::Printf(TEXT("Unable to resolve graph '%s' for rename."), *Command.Name.ToString()),
+					Command.NodeId));
+				return false;
+			}
+
+			FBlueprintEditorUtils::RenameGraph(Graph, Command.SecondaryName.ToString());
+			return true;
+		}
+
+		if (MemberType == TEXT("component"))
+		{
+			USCS_Node* const ComponentNode = FindComponentNode(Blueprint, Command.Name);
+			if (ComponentNode == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("RenameComponentTargetMissing"),
+					FString::Printf(TEXT("Unable to resolve component '%s' for rename."), *Command.Name.ToString()),
+					Command.NodeId));
+				return false;
+			}
+
+			FBlueprintEditorUtils::RenameComponentMemberVariable(Blueprint, ComponentNode, Command.SecondaryName);
+			return true;
+		}
+
+		Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("UnsupportedRenameMemberType"),
+			FString::Printf(TEXT("Unsupported rename member type '%s'."), *MemberType),
+			Command.NodeId));
+		return false;
+	}
+
+	bool ExecuteMoveNode(
+		UBlueprint* Blueprint,
+		const FVergilCompilerCommand& Command,
+		FVergilExecutionState& State,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		UEdGraph* const Graph = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics);
+		if (Graph == nullptr)
+		{
+			return false;
+		}
+
+		UEdGraphNode* Node = State.NodesById.FindRef(Command.NodeId);
+		if (Node == nullptr || Node->GetGraph() != Graph)
+		{
+			Node = FindGraphNodeByGuid(Graph, Command.NodeId);
+		}
+
+		if (Node == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MoveNodeTargetMissing"),
+				FString::Printf(TEXT("Unable to resolve node '%s' in graph '%s' for movement."), *Command.NodeId.ToString(), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		Node->Modify();
+		Node->NodePosX = FMath::RoundToInt(Command.Position.X);
+		Node->NodePosY = FMath::RoundToInt(Command.Position.Y);
+		return true;
+	}
+
+	bool ExecuteCompileBlueprint(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidCompileBlueprintCommand"),
+				TEXT("Compile commands require a target blueprint."),
+				Command.NodeId));
+			return false;
+		}
+
+		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 		return true;
 	}
 
@@ -2439,6 +3115,8 @@ bool FVergilCommandExecutor::Execute(
 	bool bExecutedBlueprintDefinitionChange = false;
 	bool bExecutedGraphStructuralChange = false;
 	bool bExecutedFinalizeChange = false;
+	bool bExecutedPostBlueprintCompileChange = false;
+	bool bExecutedExplicitCompile = false;
 
 	auto ExecuteSingleCommand = [&](const FVergilCompilerCommand& Command, bool& bOutChanged) -> bool
 	{
@@ -2472,8 +3150,35 @@ bool FVergilCommandExecutor::Execute(
 			bOutChanged = bCommandSucceeded;
 			break;
 
+		case EVergilCommandType::EnsureFunctionGraph:
+		case EVergilCommandType::EnsureMacroGraph:
 		case EVergilCommandType::EnsureGraph:
 			bCommandSucceeded = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics) != nullptr;
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::EnsureComponent:
+			bCommandSucceeded = ExecuteEnsureComponent(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::AttachComponent:
+			bCommandSucceeded = ExecuteAttachComponent(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::SetComponentProperty:
+			bCommandSucceeded = ExecuteSetComponentProperty(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::EnsureInterface:
+			bCommandSucceeded = ExecuteEnsureInterface(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::SetClassDefault:
+			bCommandSucceeded = ExecuteSetClassDefault(Blueprint, Command, Diagnostics);
 			bOutChanged = bCommandSucceeded;
 			break;
 
@@ -2492,8 +3197,28 @@ bool FVergilCommandExecutor::Execute(
 			bOutChanged = bCommandSucceeded;
 			break;
 
+		case EVergilCommandType::RemoveNode:
+			bCommandSucceeded = ExecuteRemoveNode(Blueprint, Command, State, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::RenameMember:
+			bCommandSucceeded = ExecuteRenameMember(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::MoveNode:
+			bCommandSucceeded = ExecuteMoveNode(Blueprint, Command, State, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
 		case EVergilCommandType::FinalizeNode:
 			bCommandSucceeded = ExecuteFinalizeNode(Command, State, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::CompileBlueprint:
+			bCommandSucceeded = ExecuteCompileBlueprint(Blueprint, Command, Diagnostics);
 			bOutChanged = bCommandSucceeded;
 			break;
 
@@ -2533,7 +3258,11 @@ bool FVergilCommandExecutor::Execute(
 
 	for (const FVergilCompilerCommand& Command : Commands)
 	{
-		if (IsBlueprintDefinitionCommand(Command) || IsPostCompileFinalizeCommand(Command) || Command.Type == EVergilCommandType::ConnectPins)
+		if (IsBlueprintDefinitionCommand(Command)
+			|| IsPostBlueprintCompileCommand(Command)
+			|| IsPostCompileFinalizeCommand(Command)
+			|| IsExplicitCompileCommand(Command)
+			|| Command.Type == EVergilCommandType::ConnectPins)
 		{
 			continue;
 		}
@@ -2630,7 +3359,40 @@ bool FVergilCommandExecutor::Execute(
 		}
 	}
 
-	if (!bExecutedBlueprintDefinitionChange && !bExecutedGraphStructuralChange && !bExecutedFinalizeChange)
+	for (const FVergilCompilerCommand& Command : Commands)
+	{
+		if (!IsExplicitCompileCommand(Command))
+		{
+			continue;
+		}
+
+		bool bCommandChanged = false;
+		ExecuteSingleCommand(Command, bCommandChanged);
+		bExecutedExplicitCompile |= bCommandChanged;
+	}
+
+	if (bExecutedExplicitCompile)
+	{
+		RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+	}
+
+	for (const FVergilCompilerCommand& Command : Commands)
+	{
+		if (!IsPostBlueprintCompileCommand(Command))
+		{
+			continue;
+		}
+
+		bool bCommandChanged = false;
+		ExecuteSingleCommand(Command, bCommandChanged);
+		bExecutedPostBlueprintCompileChange |= bCommandChanged;
+	}
+
+	if (!bExecutedBlueprintDefinitionChange
+		&& !bExecutedGraphStructuralChange
+		&& !bExecutedFinalizeChange
+		&& !bExecutedPostBlueprintCompileChange
+		&& !bExecutedExplicitCompile)
 	{
 		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 	}

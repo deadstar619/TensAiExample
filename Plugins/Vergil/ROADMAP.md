@@ -21,7 +21,7 @@ Known current state:
 - module split is in place
 - a canonical graph document exists
 - deterministic command planning exists
-- editor command execution exists for a limited K2 subset
+- editor command execution exists for a limited K2 subset plus an explicit asset-mutation command surface for variables, function/macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile
 - the agent layer is still a minimal audit subsystem
 
 Current major gaps:
@@ -93,7 +93,7 @@ Goal:
 
 Tickets:
 
-- `VGR-2001` Extend command types with:
+- [x] `VGR-2001` Extend command types with:
   - `EnsureVariable`
   - `SetVariableMetadata`
   - `SetVariableDefault`
@@ -148,7 +148,7 @@ Goal:
 
 Tickets:
 
-- `VGR-4001` Implement variable creation/default application
+- [x] `VGR-4001` Implement variable creation/default application
 - `VGR-4002` Implement function graph creation/update
 - `VGR-4003` Implement macro graph creation/update
 - `VGR-4004` Implement component hierarchy authoring
@@ -281,15 +281,15 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-2001`
-2. `VGR-4001`
-3. `VGR-4002`
-4. `VGR-4004`
-5. `VGR-1010`
-6. `VGR-1001`
-7. `VGR-1004`
+1. `VGR-4002`
+2. `VGR-4004`
+3. `VGR-4005`
+4. `VGR-1006`
+5. `VGR-4006`
+6. `VGR-1007`
+7. `VGR-4007`
 
-This moves Vergil from a graph scaffold toward real asset authoring.
+This moves Vergil from explicit command coverage toward document-driven asset authoring.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

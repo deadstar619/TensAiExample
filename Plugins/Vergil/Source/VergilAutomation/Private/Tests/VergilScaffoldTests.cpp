@@ -5,6 +5,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "EdGraphNode_Comment.h"
 #include "Engine/Blueprint.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddDelegate.h"
@@ -45,6 +47,7 @@
 #include "VergilEditorSubsystem.h"
 #include "VergilGraphDocument.h"
 #include "VergilNodeRegistry.h"
+#include "VergilAutomationTestInterface.h"
 
 namespace
 {
@@ -106,6 +109,49 @@ namespace
 			if (Node != nullptr && Node->NodeGuid == NodeId)
 			{
 				return Cast<TNode>(Node);
+			}
+		}
+
+		return nullptr;
+	}
+
+	UEdGraph* FindBlueprintGraphByName(UBlueprint* Blueprint, const FName GraphName)
+	{
+		if (Blueprint == nullptr)
+		{
+			return nullptr;
+		}
+
+		if (GraphName == TEXT("EventGraph"))
+		{
+			return FBlueprintEditorUtils::FindEventGraph(Blueprint);
+		}
+
+		TArray<UEdGraph*> AllGraphs;
+		Blueprint->GetAllGraphs(AllGraphs);
+		for (UEdGraph* Graph : AllGraphs)
+		{
+			if (Graph != nullptr && Graph->GetFName() == GraphName)
+			{
+				return Graph;
+			}
+		}
+
+		return nullptr;
+	}
+
+	USCS_Node* FindBlueprintComponentNode(UBlueprint* Blueprint, const FName ComponentName)
+	{
+		if (Blueprint == nullptr || Blueprint->SimpleConstructionScript == nullptr || ComponentName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node != nullptr && Node->GetVariableName() == ComponentName)
+			{
+				return Node;
 			}
 		}
 
@@ -1014,9 +1060,9 @@ bool FVergilFunctionGraphEnsureTest::RunTest(const FString& Parameters)
 	}
 
 	FVergilCompilerCommand EnsureFunctionGraph;
-	EnsureFunctionGraph.Type = EVergilCommandType::EnsureGraph;
+	EnsureFunctionGraph.Type = EVergilCommandType::EnsureFunctionGraph;
 	EnsureFunctionGraph.GraphName = TEXT("VergilGeneratedFunction");
-	EnsureFunctionGraph.Name = EnsureFunctionGraph.GraphName;
+	EnsureFunctionGraph.SecondaryName = EnsureFunctionGraph.GraphName;
 
 	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { EnsureFunctionGraph });
 
@@ -1024,21 +1070,317 @@ bool FVergilFunctionGraphEnsureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Function graph ensure command should mutate the blueprint."), Result.bApplied);
 	TestEqual(TEXT("Exactly one ensure command should execute."), Result.ExecutedCommandCount, 1);
 
-	TArray<UEdGraph*> AllGraphs;
-	Blueprint->GetAllGraphs(AllGraphs);
+	UEdGraph* const FunctionGraph = FindBlueprintGraphByName(Blueprint, TEXT("VergilGeneratedFunction"));
+	TestNotNull(TEXT("Function graph should be created by EnsureFunctionGraph."), FunctionGraph);
+	return FunctionGraph != nullptr;
+}
 
-	UEdGraph* FunctionGraph = nullptr;
-	for (UEdGraph* Graph : AllGraphs)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilMacroGraphEnsureTest,
+	"Vergil.Scaffold.MacroGraphEnsure",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilMacroGraphEnsureTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
 	{
-		if (Graph != nullptr && Graph->GetFName() == TEXT("VergilGeneratedFunction"))
-		{
-			FunctionGraph = Graph;
-			break;
-		}
+		return false;
 	}
 
-	TestNotNull(TEXT("Function graph should be created by EnsureGraph."), FunctionGraph);
-	return FunctionGraph != nullptr;
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilCompilerCommand EnsureMacroGraph;
+	EnsureMacroGraph.Type = EVergilCommandType::EnsureMacroGraph;
+	EnsureMacroGraph.GraphName = TEXT("VergilGeneratedMacro");
+	EnsureMacroGraph.SecondaryName = EnsureMacroGraph.GraphName;
+
+	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { EnsureMacroGraph });
+
+	TestTrue(TEXT("Macro graph ensure command should apply cleanly."), Result.bSucceeded);
+	TestTrue(TEXT("Macro graph ensure command should mutate the blueprint."), Result.bApplied);
+	TestEqual(TEXT("Exactly one ensure command should execute."), Result.ExecutedCommandCount, 1);
+
+	UEdGraph* const MacroGraph = FindBlueprintGraphByName(Blueprint, TEXT("VergilGeneratedMacro"));
+	TestNotNull(TEXT("Macro graph should be created by EnsureMacroGraph."), MacroGraph);
+	return MacroGraph != nullptr;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilExplicitCommandSurfaceExecutionTest,
+	"Vergil.Scaffold.ExplicitCommandSurfaceExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilExplicitCommandSurfaceExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FName OldFunctionName(TEXT("OldFunction"));
+	const FName RenamedFunctionName(TEXT("RenamedFunction"));
+	const FName OldMacroName(TEXT("OldMacro"));
+	const FName RenamedMacroName(TEXT("RenamedMacro"));
+	const FName RootComponentName(TEXT("Root"));
+	const FName VisualComponentName(TEXT("Visual"));
+	const FName RenamedVisualComponentName(TEXT("RenamedVisual"));
+	const FName OldVariableName(TEXT("PendingFlag"));
+	const FName RenamedVariableName(TEXT("RenamedFlag"));
+	const FName AttachSocketName(TEXT("WeaponSocket"));
+	const FVector DesiredRelativeLocation(25.0f, 50.0f, 75.0f);
+
+	TArray<FVergilCompilerCommand> Commands;
+
+	FVergilCompilerCommand EnsureFunctionGraph;
+	EnsureFunctionGraph.Type = EVergilCommandType::EnsureFunctionGraph;
+	EnsureFunctionGraph.GraphName = OldFunctionName;
+	EnsureFunctionGraph.SecondaryName = OldFunctionName;
+	Commands.Add(EnsureFunctionGraph);
+
+	FVergilCompilerCommand EnsureMacroGraph;
+	EnsureMacroGraph.Type = EVergilCommandType::EnsureMacroGraph;
+	EnsureMacroGraph.GraphName = OldMacroName;
+	EnsureMacroGraph.SecondaryName = OldMacroName;
+	Commands.Add(EnsureMacroGraph);
+
+	FVergilCompilerCommand EnsureRootComponent;
+	EnsureRootComponent.Type = EVergilCommandType::EnsureComponent;
+	EnsureRootComponent.SecondaryName = RootComponentName;
+	EnsureRootComponent.StringValue = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	Commands.Add(EnsureRootComponent);
+
+	FVergilCompilerCommand EnsureVisualComponent;
+	EnsureVisualComponent.Type = EVergilCommandType::EnsureComponent;
+	EnsureVisualComponent.SecondaryName = VisualComponentName;
+	EnsureVisualComponent.StringValue = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	Commands.Add(EnsureVisualComponent);
+
+	FVergilCompilerCommand RenameComponent;
+	RenameComponent.Type = EVergilCommandType::RenameMember;
+	RenameComponent.Name = VisualComponentName;
+	RenameComponent.SecondaryName = RenamedVisualComponentName;
+	RenameComponent.Attributes.Add(TEXT("MemberType"), TEXT("Component"));
+	Commands.Add(RenameComponent);
+
+	FVergilCompilerCommand AttachVisualComponent;
+	AttachVisualComponent.Type = EVergilCommandType::AttachComponent;
+	AttachVisualComponent.Name = RootComponentName;
+	AttachVisualComponent.SecondaryName = RenamedVisualComponentName;
+	AttachVisualComponent.StringValue = AttachSocketName.ToString();
+	Commands.Add(AttachVisualComponent);
+
+	FVergilCompilerCommand SetVisualLocation;
+	SetVisualLocation.Type = EVergilCommandType::SetComponentProperty;
+	SetVisualLocation.Name = TEXT("RelativeLocation");
+	SetVisualLocation.SecondaryName = RenamedVisualComponentName;
+	SetVisualLocation.StringValue = DesiredRelativeLocation.ToString();
+	Commands.Add(SetVisualLocation);
+
+	FVergilCompilerCommand SetVisualHiddenInGame;
+	SetVisualHiddenInGame.Type = EVergilCommandType::SetComponentProperty;
+	SetVisualHiddenInGame.Name = TEXT("HiddenInGame");
+	SetVisualHiddenInGame.SecondaryName = RenamedVisualComponentName;
+	SetVisualHiddenInGame.StringValue = TEXT("True");
+	Commands.Add(SetVisualHiddenInGame);
+
+	FVergilCompilerCommand EnsureInterface;
+	EnsureInterface.Type = EVergilCommandType::EnsureInterface;
+	EnsureInterface.StringValue = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+	Commands.Add(EnsureInterface);
+
+	FVergilCompilerCommand EnsureVariable;
+	EnsureVariable.Type = EVergilCommandType::EnsureVariable;
+	EnsureVariable.SecondaryName = OldVariableName;
+	EnsureVariable.Attributes.Add(TEXT("PinCategory"), TEXT("bool"));
+	Commands.Add(EnsureVariable);
+
+	FVergilCompilerCommand RenameVariable;
+	RenameVariable.Type = EVergilCommandType::RenameMember;
+	RenameVariable.Name = OldVariableName;
+	RenameVariable.SecondaryName = RenamedVariableName;
+	RenameVariable.Attributes.Add(TEXT("MemberType"), TEXT("Variable"));
+	Commands.Add(RenameVariable);
+
+	FVergilCompilerCommand RenameFunctionGraph;
+	RenameFunctionGraph.Type = EVergilCommandType::RenameMember;
+	RenameFunctionGraph.Name = OldFunctionName;
+	RenameFunctionGraph.SecondaryName = RenamedFunctionName;
+	RenameFunctionGraph.Attributes.Add(TEXT("MemberType"), TEXT("FunctionGraph"));
+	Commands.Add(RenameFunctionGraph);
+
+	FVergilCompilerCommand RenameMacroGraph;
+	RenameMacroGraph.Type = EVergilCommandType::RenameMember;
+	RenameMacroGraph.Name = OldMacroName;
+	RenameMacroGraph.SecondaryName = RenamedMacroName;
+	RenameMacroGraph.Attributes.Add(TEXT("MemberType"), TEXT("MacroGraph"));
+	Commands.Add(RenameMacroGraph);
+
+	FVergilCompilerCommand CompileBlueprint;
+	CompileBlueprint.Type = EVergilCommandType::CompileBlueprint;
+	Commands.Add(CompileBlueprint);
+
+	FVergilCompilerCommand SetClassDefault;
+	SetClassDefault.Type = EVergilCommandType::SetClassDefault;
+	SetClassDefault.Name = RenamedVariableName;
+	SetClassDefault.StringValue = TEXT("True");
+	Commands.Add(SetClassDefault);
+
+	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, Commands);
+
+	TestTrue(TEXT("Explicit command surface plan should apply cleanly."), Result.bSucceeded);
+	TestTrue(TEXT("Explicit command surface plan should mutate the blueprint."), Result.bApplied);
+	TestEqual(TEXT("Every explicit command should execute exactly once."), Result.ExecutedCommandCount, Commands.Num());
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	TestNull(TEXT("Old function graph name should be gone after rename."), FindBlueprintGraphByName(Blueprint, OldFunctionName));
+	TestNotNull(TEXT("Renamed function graph should exist."), FindBlueprintGraphByName(Blueprint, RenamedFunctionName));
+	TestNull(TEXT("Old macro graph name should be gone after rename."), FindBlueprintGraphByName(Blueprint, OldMacroName));
+	TestNotNull(TEXT("Renamed macro graph should exist."), FindBlueprintGraphByName(Blueprint, RenamedMacroName));
+
+	USCS_Node* const RootNode = FindBlueprintComponentNode(Blueprint, RootComponentName);
+	USCS_Node* const VisualNode = FindBlueprintComponentNode(Blueprint, RenamedVisualComponentName);
+	TestNotNull(TEXT("Root component node should exist."), RootNode);
+	TestNotNull(TEXT("Renamed visual component node should exist."), VisualNode);
+	if (RootNode == nullptr || VisualNode == nullptr)
+	{
+		return false;
+	}
+
+	USCS_Node* const VisualParentNode = Blueprint->SimpleConstructionScript != nullptr
+		? Blueprint->SimpleConstructionScript->FindParentNode(VisualNode)
+		: nullptr;
+	TestTrue(TEXT("Renamed visual component should remain attached under the root component."), VisualParentNode == RootNode);
+	TestEqual(TEXT("Renamed visual component should retain its attach socket."), VisualNode->AttachToName, AttachSocketName);
+
+	UStaticMeshComponent* const VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
+	TestNotNull(TEXT("Renamed visual component should retain a static mesh component template."), VisualTemplate);
+	if (VisualTemplate == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Component property command should set the relative location."), VisualTemplate->GetRelativeLocation(), DesiredRelativeLocation);
+
+	FBoolProperty* const HiddenInGameProperty = FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("bHiddenInGame"));
+	TestNotNull(TEXT("Static mesh component should expose bHiddenInGame."), HiddenInGameProperty);
+	TestTrue(TEXT("Component property command should set HiddenInGame via flexible property lookup."), HiddenInGameProperty != nullptr && HiddenInGameProperty->GetPropertyValue_InContainer(VisualTemplate));
+
+	TArray<UClass*> ImplementedInterfaces;
+	FBlueprintEditorUtils::FindImplementedInterfaces(Blueprint, true, ImplementedInterfaces);
+	TestTrue(TEXT("Explicit interface command should add the test interface."), ImplementedInterfaces.Contains(UVergilAutomationTestInterface::StaticClass()));
+
+	TestNull(TEXT("Old variable name should be gone after rename."), FindBlueprintVariableDescription(Blueprint, OldVariableName));
+	TestNotNull(TEXT("Renamed variable should exist after rename."), FindBlueprintVariableDescription(Blueprint, RenamedVariableName));
+
+	UClass* const GeneratedClass = Blueprint->GeneratedClass.Get();
+	TestNotNull(TEXT("Generated class should exist after explicit compile."), GeneratedClass);
+	FBoolProperty* const RenamedVariableProperty = GeneratedClass != nullptr
+		? FindFProperty<FBoolProperty>(GeneratedClass, RenamedVariableName)
+		: nullptr;
+	TestNotNull(TEXT("Generated class should expose the renamed bool property."), RenamedVariableProperty);
+	TestTrue(
+		TEXT("Class default command should set the renamed bool property on the CDO."),
+		RenamedVariableProperty != nullptr
+			&& GeneratedClass != nullptr
+			&& RenamedVariableProperty->GetPropertyValue_InContainer(GeneratedClass->GetDefaultObject()));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilMoveAndRemoveNodeExecutionTest,
+	"Vergil.Scaffold.MoveAndRemoveNodeExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilMoveAndRemoveNodeExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FGuid MovedNodeId = FGuid::NewGuid();
+	const FGuid RemovedNodeId = FGuid::NewGuid();
+
+	FVergilCompilerCommand AddMovedComment;
+	AddMovedComment.Type = EVergilCommandType::AddNode;
+	AddMovedComment.GraphName = TEXT("EventGraph");
+	AddMovedComment.NodeId = MovedNodeId;
+	AddMovedComment.Name = TEXT("Vergil.Comment");
+	AddMovedComment.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilCompilerCommand AddRemovedComment;
+	AddRemovedComment.Type = EVergilCommandType::AddNode;
+	AddRemovedComment.GraphName = TEXT("EventGraph");
+	AddRemovedComment.NodeId = RemovedNodeId;
+	AddRemovedComment.Name = TEXT("Vergil.Comment");
+	AddRemovedComment.Position = FVector2D(120.0f, 0.0f);
+
+	FVergilCompilerCommand MoveMovedComment;
+	MoveMovedComment.Type = EVergilCommandType::MoveNode;
+	MoveMovedComment.GraphName = TEXT("EventGraph");
+	MoveMovedComment.NodeId = MovedNodeId;
+	MoveMovedComment.Position = FVector2D(640.0f, 320.0f);
+
+	FVergilCompilerCommand RemoveComment;
+	RemoveComment.Type = EVergilCommandType::RemoveNode;
+	RemoveComment.GraphName = TEXT("EventGraph");
+	RemoveComment.NodeId = RemovedNodeId;
+
+	const TArray<FVergilCompilerCommand> Commands = { AddMovedComment, AddRemovedComment, MoveMovedComment, RemoveComment };
+	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, Commands);
+
+	TestTrue(TEXT("Move/remove node command plan should apply cleanly."), Result.bSucceeded);
+	TestTrue(TEXT("Move/remove node command plan should mutate the blueprint."), Result.bApplied);
+	TestEqual(TEXT("Every move/remove command should execute exactly once."), Result.ExecutedCommandCount, Commands.Num());
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphNode_Comment* const MovedComment = FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, MovedNodeId);
+	UEdGraphNode_Comment* const RemovedComment = FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, RemovedNodeId);
+	TestNotNull(TEXT("Moved comment node should still exist."), MovedComment);
+	TestNull(TEXT("Removed comment node should no longer exist."), RemovedComment);
+	TestEqual(TEXT("Move node command should update X position."), MovedComment != nullptr ? MovedComment->NodePosX : INDEX_NONE, 640);
+	TestEqual(TEXT("Move node command should update Y position."), MovedComment != nullptr ? MovedComment->NodePosY : INDEX_NONE, 320);
+
+	return MovedComment != nullptr && RemovedComment == nullptr;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

@@ -11,11 +11,22 @@ enum class EVergilCommandType : uint8
 	EnsureVariable,
 	SetVariableMetadata,
 	SetVariableDefault,
+	EnsureFunctionGraph,
+	EnsureMacroGraph,
+	EnsureComponent,
+	AttachComponent,
+	SetComponentProperty,
+	EnsureInterface,
+	SetClassDefault,
 	EnsureGraph,
 	AddNode,
 	SetNodeMetadata,
 	ConnectPins,
-	FinalizeNode
+	RemoveNode,
+	RenameMember,
+	MoveNode,
+	FinalizeNode,
+	CompileBlueprint
 };
 
 USTRUCT(BlueprintType)

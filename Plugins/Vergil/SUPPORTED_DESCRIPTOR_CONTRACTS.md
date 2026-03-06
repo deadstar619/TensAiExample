@@ -10,7 +10,8 @@ This document describes the current scaffold contracts implemented in code today
 - `Tags` are accepted by the model but currently ignored by compile/apply.
 - `Functions` are currently part of the canonical model and structural validation surface only. Compile/apply does not author function graphs or signatures yet.
 - `Components` are currently part of the canonical model and structural validation surface only. Compile/apply does not author Blueprint component hierarchies or template properties yet.
-- Asset-level authoring beyond variables and dispatchers is not implemented yet. There is no current compile/apply support for Blueprint metadata, functions, macros, components, interfaces, class defaults, or construction script definitions.
+- Asset-level authoring beyond variables and dispatchers is not implemented yet through document compile/apply. There is no current lowering from document-authored functions, macros, components, interfaces, class defaults, or construction script definitions into command plans.
+- Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 
 ## Structural validation rules
 
@@ -67,6 +68,21 @@ This document describes the current scaffold contracts implemented in code today
 - `TemplateProperties` stores raw component-template property overrides as property-name to serialized-value string pairs for future application work.
 - Component definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint component hierarchies or template properties.
 
+## Explicit command plan contracts
+
+- `EnsureVariable`, `SetVariableMetadata`, and `SetVariableDefault` are supported through direct command-plan execution and remain the current end-to-end path for document-authored variable definitions.
+- `EnsureFunctionGraph` creates or resolves a Blueprint function graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.
+- `EnsureMacroGraph` creates or resolves a Blueprint macro graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.
+- `EnsureComponent` requires `SecondaryName` for the component name and `StringValue` for the component class path.
+- `AttachComponent` requires `SecondaryName` for the child component name, `Name` for the parent component name, and optionally `StringValue` for the attach socket or bone name.
+- `SetComponentProperty` requires `SecondaryName` for the component name, `Name` for the property name, and `StringValue` for the serialized property value. Property lookup is case-insensitive and tolerates Unreal bool-prefix naming such as `HiddenInGame` vs `bHiddenInGame`. Standard `FVector` and `FRotator` text forms are accepted.
+- `EnsureInterface` requires `StringValue` to resolve to a Blueprint interface class path.
+- `SetClassDefault` requires `Name` for the generated-class property name and `StringValue` for the serialized default value. The target Blueprint must already have a compiled generated class.
+- `RenameMember` requires `Name` for the existing member name, `SecondaryName` for the new name, and `Attributes["MemberType"]` set to one of `Variable`, `Dispatcher`, `FunctionGraph`, `MacroGraph`, or `Component`.
+- `MoveNode` and `RemoveNode` require `GraphName` plus `NodeId` to identify the existing node to mutate.
+- `CompileBlueprint` performs an explicit editor compile of the target Blueprint.
+- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler still does not lower `Functions`, `Components`, implemented interfaces, or class-default definitions into those commands automatically.
+
 ## Dispatcher contracts
 
 - Dispatchers are authored from `Dispatchers` on the document.
@@ -122,4 +138,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function and component definitions are modeled and validated, but they are not yet part of compile/apply execution.
+- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function, component, interface, and class-default definitions are modeled and partially supported through direct command execution, but they are not yet lowered from the document compiler into compile/apply execution.

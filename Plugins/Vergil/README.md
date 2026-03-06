@@ -39,15 +39,17 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored member variables are now part of that supported contract surface, including type/flag/metadata/default authoring.
 - Document-authored function definitions are now part of the canonical model and structural validation surface, but function graph/signature authoring remains future work.
 - Document-authored component definitions are now part of the canonical model and structural validation surface, but component hierarchy/template authoring remains future work.
+- Direct command-plan execution now supports explicit function/macro graph creation, component creation/attachment/property mutation, interface application, class default writes, member renames, node removal/movement, and explicit Blueprint compile commands.
 - Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
 
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1002`, `VGR-1003`, and `VGR-1005` are complete.
+- `VGR-1002`, `VGR-1003`, `VGR-1005`, `VGR-2001`, and `VGR-4001` are complete.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function definitions now exist in the canonical asset model with structural validation for names, purity/access flags, and typed inputs/outputs.
 - Document-authored component definitions now exist in the canonical asset model with structural validation for name conflicts, parent attachments, relative transforms, and template-property keys.
+- The explicit editor command surface now covers function graphs, macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile commands, even though document lowering for those asset-model slices is still future work.
 - `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 
 ## Planning
