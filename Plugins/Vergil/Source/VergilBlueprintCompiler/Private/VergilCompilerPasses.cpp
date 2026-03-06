@@ -1,6 +1,7 @@
 #include "VergilCompilerPasses.h"
 
 #include "Algo/AnyOf.h"
+#include "Components/ActorComponent.h"
 #include "EdGraph/EdGraph.h"
 #include "Engine/Blueprint.h"
 #include "UObject/UnrealType.h"
@@ -404,7 +405,7 @@ namespace
 			return DirectObject;
 		}
 
-		return LoadObject<UObject>(nullptr, *TrimmedReference);
+		return StaticLoadObject(UObject::StaticClass(), nullptr, *TrimmedReference, nullptr, LOAD_NoWarn);
 	}
 
 	UClass* ResolveClassReference(const FString& Reference)
@@ -420,12 +421,12 @@ namespace
 			return DirectClass;
 		}
 
-		if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *TrimmedReference))
+		if (UClass* LoadedClass = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, *TrimmedReference, nullptr, LOAD_NoWarn)))
 		{
 			return LoadedClass;
 		}
 
-		return LoadClass<UObject>(nullptr, *TrimmedReference);
+		return LoadClass<UObject>(nullptr, *TrimmedReference, nullptr, LOAD_NoWarn);
 	}
 
 	UEdGraph* ResolveMacroGraphReference(const FString& BlueprintPath, const FName GraphName)
@@ -472,12 +473,251 @@ namespace
 		}
 
 		const FString* ExistingValue = Metadata.Find(Key);
-		if (ExistingValue != nullptr && ExistingValue->TrimStartAndEnd() == TrimmedValue)
+		if (ExistingValue != nullptr && *ExistingValue == TrimmedValue)
 		{
 			return false;
 		}
 
 		Metadata.Add(Key, TrimmedValue);
+		return true;
+	}
+
+	bool SetNormalizedStringValue(FString& Value, const FString& NewValue)
+	{
+		const FString TrimmedValue = NewValue.TrimStartAndEnd();
+		if (Value == TrimmedValue)
+		{
+			return false;
+		}
+
+		Value = TrimmedValue;
+		return true;
+	}
+
+	bool SetNormalizedNameValue(FName& Value, const FString& NewValue)
+	{
+		const FString TrimmedValue = NewValue.TrimStartAndEnd();
+		if (Value.ToString() == TrimmedValue)
+		{
+			return false;
+		}
+
+		Value = TrimmedValue.IsEmpty() ? NAME_None : FName(*TrimmedValue);
+		return true;
+	}
+
+	void AddTypeResolutionDiagnostic(
+		FVergilCompilerContext& Context,
+		const FName Code,
+		const FString& Message,
+		const FGuid& SourceId = FGuid())
+	{
+		Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, Code, Message, SourceId);
+	}
+
+	bool IsSupportedResolvedTypeCategory(const FString& CategoryValue)
+	{
+		const FString Category = CategoryValue.TrimStartAndEnd().ToLower();
+		return Category == TEXT("bool")
+			|| Category == TEXT("int")
+			|| Category == TEXT("float")
+			|| Category == TEXT("double")
+			|| Category == TEXT("string")
+			|| Category == TEXT("name")
+			|| Category == TEXT("text")
+			|| Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool TypeCategoryRequiresObjectPath(const FString& CategoryValue)
+	{
+		const FString Category = CategoryValue.TrimStartAndEnd().ToLower();
+		return Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool ResolveNormalizedClassPath(const FString& Reference, FString& OutNormalizedPath)
+	{
+		if (UClass* const Class = ResolveClassReference(Reference))
+		{
+			OutNormalizedPath = Class->GetPathName();
+			return true;
+		}
+
+		OutNormalizedPath.Reset();
+		return false;
+	}
+
+	bool ResolveNormalizedEnumPath(const FString& Reference, FString& OutNormalizedPath)
+	{
+		if (UEnum* const Enum = Cast<UEnum>(ResolveObjectReference(Reference)))
+		{
+			OutNormalizedPath = Enum->GetPathName();
+			return true;
+		}
+
+		OutNormalizedPath.Reset();
+		return false;
+	}
+
+	bool ResolveNormalizedStructPath(const FString& Reference, FString& OutNormalizedPath)
+	{
+		if (UScriptStruct* const Struct = Cast<UScriptStruct>(ResolveObjectReference(Reference)))
+		{
+			OutNormalizedPath = Struct->GetPathName();
+			return true;
+		}
+
+		OutNormalizedPath.Reset();
+		return false;
+	}
+
+	bool ResolveNormalizedPinTypeMetadata(
+		const FString& CategoryValue,
+		const FString& ObjectPathValue,
+		FString& OutNormalizedCategory,
+		FString& OutNormalizedObjectPath,
+		FString& OutError)
+	{
+		OutNormalizedCategory = CategoryValue.TrimStartAndEnd().ToLower();
+		OutNormalizedObjectPath.Reset();
+
+		if (OutNormalizedCategory.IsEmpty())
+		{
+			OutError = TEXT("Missing type category.");
+			return false;
+		}
+
+		if (!IsSupportedResolvedTypeCategory(OutNormalizedCategory))
+		{
+			OutError = FString::Printf(TEXT("Unsupported pin category '%s'."), *OutNormalizedCategory);
+			return false;
+		}
+
+		if (!TypeCategoryRequiresObjectPath(OutNormalizedCategory))
+		{
+			return true;
+		}
+
+		const FString TrimmedObjectPath = ObjectPathValue.TrimStartAndEnd();
+		if (TrimmedObjectPath.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Type category '%s' requires an object path."), *OutNormalizedCategory);
+			return false;
+		}
+
+		if (OutNormalizedCategory == TEXT("enum"))
+		{
+			if (ResolveNormalizedEnumPath(TrimmedObjectPath, OutNormalizedObjectPath))
+			{
+				return true;
+			}
+
+			OutError = FString::Printf(TEXT("Unable to resolve enum object '%s'."), *TrimmedObjectPath);
+			return false;
+		}
+
+		if (OutNormalizedCategory == TEXT("object"))
+		{
+			if (ResolveNormalizedClassPath(TrimmedObjectPath, OutNormalizedObjectPath))
+			{
+				return true;
+			}
+
+			OutError = FString::Printf(TEXT("Unable to resolve object class '%s'."), *TrimmedObjectPath);
+			return false;
+		}
+
+		if (OutNormalizedCategory == TEXT("class"))
+		{
+			if (ResolveNormalizedClassPath(TrimmedObjectPath, OutNormalizedObjectPath))
+			{
+				return true;
+			}
+
+			OutError = FString::Printf(TEXT("Unable to resolve class type '%s'."), *TrimmedObjectPath);
+			return false;
+		}
+
+		if (ResolveNormalizedStructPath(TrimmedObjectPath, OutNormalizedObjectPath))
+		{
+			return true;
+		}
+
+		OutError = FString::Printf(TEXT("Unable to resolve struct '%s'."), *TrimmedObjectPath);
+		return false;
+	}
+
+	bool ResolveAndNormalizeTypeReference(
+		FVergilVariableTypeReference& Type,
+		const FString& ContextLabel,
+		const FName DiagnosticCode,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		FString NormalizedCategory;
+		FString NormalizedObjectPath;
+		FString TypeError;
+		if (!ResolveNormalizedPinTypeMetadata(Type.PinCategory.ToString(), Type.ObjectPath, NormalizedCategory, NormalizedObjectPath, TypeError))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				DiagnosticCode,
+				FString::Printf(TEXT("%s is invalid: %s"), *ContextLabel, *TypeError));
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedNameValue(Type.PinCategory, NormalizedCategory);
+		bOutChanged |= SetNormalizedStringValue(Type.ObjectPath, NormalizedObjectPath);
+
+		if (Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			FString NormalizedValueCategory;
+			FString NormalizedValueObjectPath;
+			if (!ResolveNormalizedPinTypeMetadata(Type.ValuePinCategory.ToString(), Type.ValueObjectPath, NormalizedValueCategory, NormalizedValueObjectPath, TypeError))
+			{
+				AddTypeResolutionDiagnostic(
+					Context,
+					DiagnosticCode,
+					FString::Printf(TEXT("%s value type is invalid: %s"), *ContextLabel, *TypeError));
+				return false;
+			}
+
+			bOutChanged |= SetNormalizedNameValue(Type.ValuePinCategory, NormalizedValueCategory);
+			bOutChanged |= SetNormalizedStringValue(Type.ValueObjectPath, NormalizedValueObjectPath);
+		}
+
+		return true;
+	}
+
+	bool ResolveAndNormalizeDispatcherParameter(
+		FVergilDispatcherParameter& Parameter,
+		const FName DispatcherName,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		FString NormalizedCategory;
+		FString NormalizedObjectPath;
+		FString TypeError;
+		if (!ResolveNormalizedPinTypeMetadata(Parameter.PinCategory.ToString(), Parameter.ObjectPath, NormalizedCategory, NormalizedObjectPath, TypeError))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				TEXT("DispatcherParameterTypeInvalid"),
+				FString::Printf(
+					TEXT("Dispatcher '%s' parameter '%s' is invalid: %s"),
+					*DispatcherName.ToString(),
+					*Parameter.Name.ToString(),
+					*TypeError));
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedNameValue(Parameter.PinCategory, NormalizedCategory);
+		bOutChanged |= SetNormalizedStringValue(Parameter.ObjectPath, NormalizedObjectPath);
 		return true;
 	}
 
@@ -519,6 +759,292 @@ namespace
 		return GraphName == ConstructionScriptGraphName
 			? Document.ConstructionScriptNodes
 			: Document.Nodes;
+	}
+
+	bool ResolveAndNormalizeNodePinTypeMetadata(
+		FVergilGraphNode& Node,
+		const FName CategoryKey,
+		const FName ObjectPathKey,
+		const FName DiagnosticCode,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		FString NormalizedCategory;
+		FString NormalizedObjectPath;
+		FString TypeError;
+		if (!ResolveNormalizedPinTypeMetadata(
+			Node.Metadata.FindRef(CategoryKey),
+			Node.Metadata.FindRef(ObjectPathKey),
+			NormalizedCategory,
+			NormalizedObjectPath,
+			TypeError))
+		{
+			AddTypeResolutionDiagnostic(Context, DiagnosticCode, TypeError, Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, CategoryKey, NormalizedCategory);
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, ObjectPathKey, NormalizedObjectPath);
+		return true;
+	}
+
+	bool ResolveAndNormalizeCastNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		const FString TargetClassPath = Node.Metadata.FindRef(TEXT("TargetClassPath")).TrimStartAndEnd();
+		FString NormalizedClassPath;
+		if (!ResolveNormalizedClassPath(TargetClassPath, NormalizedClassPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				TEXT("CastTargetClassNotFound"),
+				FString::Printf(TEXT("Unable to resolve cast target class '%s'."), *TargetClassPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("TargetClassPath"), NormalizedClassPath);
+		return true;
+	}
+
+	bool ResolveAndNormalizeSelectNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		return ResolveAndNormalizeNodePinTypeMetadata(Node, TEXT("IndexPinCategory"), TEXT("IndexObjectPath"), TEXT("InvalidSelectIndexType"), Context, bOutChanged)
+			&& ResolveAndNormalizeNodePinTypeMetadata(Node, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), TEXT("InvalidSelectValueType"), Context, bOutChanged);
+	}
+
+	bool ResolveAndNormalizeSwitchEnumNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		const FString EnumPath = Node.Metadata.FindRef(TEXT("EnumPath")).TrimStartAndEnd();
+		FString NormalizedEnumPath;
+		if (!ResolveNormalizedEnumPath(EnumPath, NormalizedEnumPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				TEXT("SwitchEnumNotFound"),
+				FString::Printf(TEXT("Unable to resolve switch enum '%s'."), *EnumPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("EnumPath"), NormalizedEnumPath);
+		return true;
+	}
+
+	bool ResolveAndNormalizeStructNodeType(
+		FVergilGraphNode& Node,
+		const FName DiagnosticCode,
+		const TCHAR* ContextLabel,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FString StructPath = Node.Metadata.FindRef(TEXT("StructPath")).TrimStartAndEnd();
+		FString NormalizedStructPath;
+		if (!ResolveNormalizedStructPath(StructPath, NormalizedStructPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				DiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve %s '%s'."), ContextLabel, *StructPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("StructPath"), NormalizedStructPath);
+		return true;
+	}
+
+	bool ResolveAndNormalizeContainerNodeType(
+		FVergilGraphNode& Node,
+		const FName CategoryKey,
+		const FName ObjectPathKey,
+		const FName DiagnosticCode,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		return ResolveAndNormalizeNodePinTypeMetadata(Node, CategoryKey, ObjectPathKey, DiagnosticCode, Context, bOutChanged);
+	}
+
+	bool ResolveDocumentTypeMetadata(FVergilGraphDocument& WorkingDocument, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		bool bIsValid = true;
+
+		for (FVergilVariableDefinition& Variable : WorkingDocument.Variables)
+		{
+			bIsValid &= ResolveAndNormalizeTypeReference(
+				Variable.Type,
+				FString::Printf(TEXT("Variable '%s' type"), *Variable.Name.ToString()),
+				TEXT("VariableTypeInvalid"),
+				Context,
+				bOutChanged);
+		}
+
+		for (FVergilFunctionDefinition& Function : WorkingDocument.Functions)
+		{
+			for (FVergilFunctionParameterDefinition& Parameter : Function.Inputs)
+			{
+				bIsValid &= ResolveAndNormalizeTypeReference(
+					Parameter.Type,
+					FString::Printf(TEXT("Function graph '%s' parameter '%s'"), *Function.Name.ToString(), *Parameter.Name.ToString()),
+					TEXT("FunctionSignatureParameterTypeInvalid"),
+					Context,
+					bOutChanged);
+			}
+
+			for (FVergilFunctionParameterDefinition& Parameter : Function.Outputs)
+			{
+				bIsValid &= ResolveAndNormalizeTypeReference(
+					Parameter.Type,
+					FString::Printf(TEXT("Function graph '%s' parameter '%s'"), *Function.Name.ToString(), *Parameter.Name.ToString()),
+					TEXT("FunctionSignatureParameterTypeInvalid"),
+					Context,
+					bOutChanged);
+			}
+		}
+
+		for (FVergilMacroDefinition& Macro : WorkingDocument.Macros)
+		{
+			for (FVergilMacroParameterDefinition& Parameter : Macro.Inputs)
+			{
+				if (Parameter.bIsExec)
+				{
+					continue;
+				}
+
+				bIsValid &= ResolveAndNormalizeTypeReference(
+					Parameter.Type,
+					FString::Printf(TEXT("Macro graph '%s' parameter '%s'"), *Macro.Name.ToString(), *Parameter.Name.ToString()),
+					TEXT("MacroSignatureParameterTypeInvalid"),
+					Context,
+					bOutChanged);
+			}
+
+			for (FVergilMacroParameterDefinition& Parameter : Macro.Outputs)
+			{
+				if (Parameter.bIsExec)
+				{
+					continue;
+				}
+
+				bIsValid &= ResolveAndNormalizeTypeReference(
+					Parameter.Type,
+					FString::Printf(TEXT("Macro graph '%s' parameter '%s'"), *Macro.Name.ToString(), *Parameter.Name.ToString()),
+					TEXT("MacroSignatureParameterTypeInvalid"),
+					Context,
+					bOutChanged);
+			}
+		}
+
+		for (FVergilDispatcherDefinition& Dispatcher : WorkingDocument.Dispatchers)
+		{
+			for (FVergilDispatcherParameter& Parameter : Dispatcher.Parameters)
+			{
+				bIsValid &= ResolveAndNormalizeDispatcherParameter(Parameter, Dispatcher.Name, Context, bOutChanged);
+			}
+		}
+
+		for (FVergilComponentDefinition& Component : WorkingDocument.Components)
+		{
+			const FString ComponentClassPath = Component.ComponentClassPath.TrimStartAndEnd();
+			FString NormalizedClassPath;
+			if (!ResolveNormalizedClassPath(ComponentClassPath, NormalizedClassPath))
+			{
+				AddTypeResolutionDiagnostic(
+					Context,
+					TEXT("InvalidComponentClass"),
+					FString::Printf(TEXT("Unable to resolve component class '%s'."), *ComponentClassPath));
+				bIsValid = false;
+				continue;
+			}
+
+			UClass* const ComponentClass = ResolveClassReference(NormalizedClassPath);
+			if (ComponentClass == nullptr || !ComponentClass->IsChildOf(UActorComponent::StaticClass()))
+			{
+				AddTypeResolutionDiagnostic(
+					Context,
+					TEXT("InvalidComponentClass"),
+					FString::Printf(TEXT("Unable to resolve component class '%s'."), *ComponentClassPath));
+				bIsValid = false;
+				continue;
+			}
+
+			bOutChanged |= SetNormalizedStringValue(Component.ComponentClassPath, NormalizedClassPath);
+		}
+
+		for (FVergilInterfaceDefinition& Interface : WorkingDocument.Interfaces)
+		{
+			const FString InterfaceClassPath = Interface.InterfaceClassPath.TrimStartAndEnd();
+			FString NormalizedClassPath;
+			if (!ResolveNormalizedClassPath(InterfaceClassPath, NormalizedClassPath))
+			{
+				AddTypeResolutionDiagnostic(
+					Context,
+					TEXT("InvalidInterfaceClass"),
+					FString::Printf(TEXT("Unable to resolve interface class '%s'."), *InterfaceClassPath));
+				bIsValid = false;
+				continue;
+			}
+
+			UClass* const InterfaceClass = ResolveClassReference(NormalizedClassPath);
+			if (InterfaceClass == nullptr || !InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+			{
+				AddTypeResolutionDiagnostic(
+					Context,
+					TEXT("InvalidInterfaceClass"),
+					FString::Printf(TEXT("Unable to resolve interface class '%s'."), *InterfaceClassPath));
+				bIsValid = false;
+				continue;
+			}
+
+			bOutChanged |= SetNormalizedStringValue(Interface.InterfaceClassPath, NormalizedClassPath);
+		}
+
+		return bIsValid;
+	}
+
+	bool ResolveNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		if (Node.Descriptor == TEXT("K2.Cast"))
+		{
+			return ResolveAndNormalizeCastNodeType(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.Select"))
+		{
+			return ResolveAndNormalizeSelectNodeTypes(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.SwitchEnum"))
+		{
+			return ResolveAndNormalizeSwitchEnumNodeType(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeStruct"))
+		{
+			return ResolveAndNormalizeStructNodeType(Node, TEXT("MakeStructTypeNotFound"), TEXT("make struct type"), Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.BreakStruct"))
+		{
+			return ResolveAndNormalizeStructNodeType(Node, TEXT("BreakStructTypeNotFound"), TEXT("break struct type"), Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeArray"))
+		{
+			return ResolveAndNormalizeContainerNodeType(Node, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), TEXT("InvalidMakeArrayValueType"), Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeSet"))
+		{
+			return ResolveAndNormalizeContainerNodeType(Node, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), TEXT("InvalidMakeSetValueType"), Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeMap"))
+		{
+			return ResolveAndNormalizeContainerNodeType(Node, TEXT("KeyPinCategory"), TEXT("KeyObjectPath"), TEXT("InvalidMakeMapKeyType"), Context, bOutChanged)
+				&& ResolveAndNormalizeContainerNodeType(Node, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), TEXT("InvalidMakeMapValueType"), Context, bOutChanged);
+		}
+
+		return true;
 	}
 
 	FVergilDocumentSymbolTables BuildDocumentSymbolTables(const FVergilCompilerContext& Context)
@@ -1880,12 +2406,19 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
-			Command.StringValue = TargetClassPath;
+			Command.StringValue = NormalizedNode.Metadata.FindRef(TEXT("TargetClassPath"));
 			Command.Position = Node.Position;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
@@ -1949,13 +2482,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2039,13 +2579,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2109,13 +2656,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2144,13 +2698,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2179,13 +2740,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2214,13 +2782,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2256,13 +2831,20 @@ namespace
 				return false;
 			}
 
+			FVergilGraphNode NormalizedNode = Node;
+			bool bIgnoredChanges = false;
+			if (!ResolveNodeTypes(NormalizedNode, Context, bIgnoredChanges))
+			{
+				return false;
+			}
+
 			FVergilCompilerCommand Command;
 			Command.Type = EVergilCommandType::AddNode;
 			Command.GraphName = Context.GetGraphName();
 			Command.NodeId = Node.Id;
 			Command.Name = GetDescriptor();
 			Command.Position = Node.Position;
-			Command.Attributes = Node.Metadata;
+			Command.Attributes = NormalizedNode.Metadata;
 			CopyPlannedPins(Node, Command);
 			Context.AddCommand(Command);
 			return true;
@@ -2444,6 +3026,37 @@ bool FVergilSymbolResolutionPass::Run(
 	for (FVergilGraphNode& Node : TargetNodes)
 	{
 		bIsValid &= ResolveNodeSymbols(Node, SymbolTables, Context, bMadeChanges);
+	}
+
+	if (bMadeChanges)
+	{
+		Context.SetWorkingDocument(MoveTemp(WorkingDocument));
+	}
+
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilTypeResolutionPass::GetPassName() const
+{
+	return TEXT("TypeResolution");
+}
+
+bool FVergilTypeResolutionPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	FVergilGraphDocument WorkingDocument = Context.GetDocument();
+	TArray<FVergilGraphNode>& TargetNodes = GetMutableTargetGraphNodes(WorkingDocument, Context.GetGraphName());
+
+	bool bMadeChanges = false;
+	bool bIsValid = ResolveDocumentTypeMetadata(WorkingDocument, Context, bMadeChanges);
+	for (FVergilGraphNode& Node : TargetNodes)
+	{
+		bIsValid &= ResolveNodeTypes(Node, Context, bMadeChanges);
 	}
 
 	if (bMadeChanges)

@@ -1031,6 +1031,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.SymbolResolutionPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilTypeResolutionPassTest,
+	"Vergil.Scaffold.TypeResolutionPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1371,6 +1376,431 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid macro references should fail symbol resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid macro references should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid macro references should report ForLoopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("ForLoopMacroNotFound")));
+	}
+
+	return true;
+}
+
+bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto FindDefinitionCommand = [](
+		const TArray<FVergilCompilerCommand>& Commands,
+		const EVergilCommandType CommandType,
+		const FName SecondaryName) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([CommandType, SecondaryName](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == CommandType && Command.SecondaryName == SecondaryName;
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+	UEnum* const MovementModeEnum = LoadObject<UEnum>(nullptr, TEXT("/Script/Engine.EMovementMode"));
+	TestNotNull(TEXT("Type resolution coverage requires EMovementMode."), MovementModeEnum);
+	if (MovementModeEnum == nullptr)
+	{
+		return false;
+	}
+
+	UScriptStruct* const VectorStruct = TBaseStructure<FVector>::Get();
+	TestNotNull(TEXT("Type resolution coverage requires FVector."), VectorStruct);
+	if (VectorStruct == nullptr)
+	{
+		return false;
+	}
+
+	{
+		FVergilVariableDefinition Variable;
+		Variable.Name = TEXT("ActorModeMap");
+		Variable.Type.PinCategory = TEXT("OBJECT");
+		Variable.Type.ObjectPath = TEXT("   /Script/Engine.Actor   ");
+		Variable.Type.ContainerType = EVergilVariableContainerType::Map;
+		Variable.Type.ValuePinCategory = TEXT("ENUM");
+		Variable.Type.ValueObjectPath = TEXT("   /Script/Engine.EMovementMode   ");
+
+		FVergilFunctionDefinition Function;
+		Function.Name = TEXT("ResolveTarget");
+		FVergilFunctionParameterDefinition FunctionInput;
+		FunctionInput.Name = TEXT("Target");
+		FunctionInput.Type.PinCategory = TEXT("OBJECT");
+		FunctionInput.Type.ObjectPath = TEXT("   /Script/Engine.Actor   ");
+		Function.Inputs.Add(FunctionInput);
+		FVergilFunctionParameterDefinition FunctionOutput;
+		FunctionOutput.Name = TEXT("TargetClass");
+		FunctionOutput.Type.PinCategory = TEXT("CLASS");
+		FunctionOutput.Type.ObjectPath = TEXT("   /Script/Engine.Actor   ");
+		Function.Outputs.Add(FunctionOutput);
+
+		FVergilDispatcherDefinition Dispatcher;
+		Dispatcher.Name = TEXT("OnResolved");
+		FVergilDispatcherParameter DispatcherParameter;
+		DispatcherParameter.Name = TEXT("ResolvedStruct");
+		DispatcherParameter.PinCategory = TEXT("STRUCT");
+		DispatcherParameter.ObjectPath = TEXT("   /Script/CoreUObject.Vector   ");
+		Dispatcher.Parameters.Add(DispatcherParameter);
+
+		FVergilMacroDefinition Macro;
+		Macro.Name = TEXT("ResolveMacro");
+		FVergilMacroParameterDefinition MacroInput;
+		MacroInput.Name = TEXT("ItemType");
+		MacroInput.Type.PinCategory = TEXT("CLASS");
+		MacroInput.Type.ObjectPath = TEXT("   /Script/Engine.Actor   ");
+		Macro.Inputs.Add(MacroInput);
+
+		FVergilComponentDefinition Component;
+		Component.Name = TEXT("ActorComponentA");
+		Component.ComponentClassPath = TEXT("   /Script/Engine.ActorComponent   ");
+
+		FVergilInterfaceDefinition Interface;
+		Interface.InterfaceClassPath = TEXT("   /Script/CoreUObject.Interface   ");
+
+		FVergilGraphNode CastNode;
+		CastNode.Id = FGuid::NewGuid();
+		CastNode.Kind = EVergilNodeKind::Custom;
+		CastNode.Descriptor = TEXT("K2.Cast");
+		CastNode.Metadata.Add(TEXT("TargetClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphNode SelectNode;
+		SelectNode.Id = FGuid::NewGuid();
+		SelectNode.Kind = EVergilNodeKind::Custom;
+		SelectNode.Descriptor = TEXT("K2.Select");
+		SelectNode.Metadata.Add(TEXT("IndexPinCategory"), TEXT(" ENUM "));
+		SelectNode.Metadata.Add(TEXT("IndexObjectPath"), TEXT("   /Script/Engine.EMovementMode   "));
+		SelectNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT(" OBJECT "));
+		SelectNode.Metadata.Add(TEXT("ValueObjectPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphNode SwitchNode;
+		SwitchNode.Id = FGuid::NewGuid();
+		SwitchNode.Kind = EVergilNodeKind::ControlFlow;
+		SwitchNode.Descriptor = TEXT("K2.SwitchEnum");
+		SwitchNode.Metadata.Add(TEXT("EnumPath"), TEXT("   /Script/Engine.EMovementMode   "));
+
+		FVergilGraphNode MakeStructNode;
+		MakeStructNode.Id = FGuid::NewGuid();
+		MakeStructNode.Kind = EVergilNodeKind::Custom;
+		MakeStructNode.Descriptor = TEXT("K2.MakeStruct");
+		MakeStructNode.Metadata.Add(TEXT("StructPath"), TEXT("   /Script/CoreUObject.Vector   "));
+
+		FVergilGraphNode BreakStructNode;
+		BreakStructNode.Id = FGuid::NewGuid();
+		BreakStructNode.Kind = EVergilNodeKind::Custom;
+		BreakStructNode.Descriptor = TEXT("K2.BreakStruct");
+		BreakStructNode.Metadata.Add(TEXT("StructPath"), TEXT("   /Script/CoreUObject.Vector   "));
+
+		FVergilGraphNode MakeArrayNode;
+		MakeArrayNode.Id = FGuid::NewGuid();
+		MakeArrayNode.Kind = EVergilNodeKind::Custom;
+		MakeArrayNode.Descriptor = TEXT("K2.MakeArray");
+		MakeArrayNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT(" CLASS "));
+		MakeArrayNode.Metadata.Add(TEXT("ValueObjectPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphNode MakeSetNode;
+		MakeSetNode.Id = FGuid::NewGuid();
+		MakeSetNode.Kind = EVergilNodeKind::Custom;
+		MakeSetNode.Descriptor = TEXT("K2.MakeSet");
+		MakeSetNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT(" OBJECT "));
+		MakeSetNode.Metadata.Add(TEXT("ValueObjectPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphNode MakeMapNode;
+		MakeMapNode.Id = FGuid::NewGuid();
+		MakeMapNode.Kind = EVergilNodeKind::Custom;
+		MakeMapNode.Descriptor = TEXT("K2.MakeMap");
+		MakeMapNode.Metadata.Add(TEXT("KeyPinCategory"), TEXT(" OBJECT "));
+		MakeMapNode.Metadata.Add(TEXT("KeyObjectPath"), TEXT("   /Script/Engine.Actor   "));
+		MakeMapNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT(" STRUCT "));
+		MakeMapNode.Metadata.Add(TEXT("ValueObjectPath"), TEXT("   /Script/CoreUObject.Vector   "));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_Normalized");
+		Request.Document.Variables.Add(Variable);
+		Request.Document.Functions.Add(Function);
+		Request.Document.Dispatchers.Add(Dispatcher);
+		Request.Document.Macros.Add(Macro);
+		Request.Document.Components.Add(Component);
+		Request.Document.Interfaces.Add(Interface);
+		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("Supported typed definitions and wildcard node metadata should resolve during compilation."), Result.bSucceeded);
+
+		const FVergilCompilerCommand* const VariableCommand = FindDefinitionCommand(Result.Commands, EVergilCommandType::EnsureVariable, Variable.Name);
+		TestNotNull(TEXT("Resolved variables should still lower into EnsureVariable commands."), VariableCommand);
+		if (VariableCommand != nullptr)
+		{
+			TestEqual(TEXT("Variable key type category should normalize to lowercase."), VariableCommand->Attributes.FindRef(TEXT("PinCategory")), FString(TEXT("object")));
+			TestEqual(TEXT("Variable key object path should normalize to the resolved class path."), VariableCommand->Attributes.FindRef(TEXT("ObjectPath")), AActor::StaticClass()->GetPathName());
+			TestEqual(TEXT("Variable map value type category should normalize to lowercase."), VariableCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("enum")));
+			TestEqual(TEXT("Variable map value object path should normalize to the resolved enum path."), VariableCommand->Attributes.FindRef(TEXT("ValueObjectPath")), MovementModeEnum->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const FunctionCommand = FindDefinitionCommand(Result.Commands, EVergilCommandType::EnsureFunctionGraph, Function.Name);
+		TestNotNull(TEXT("Resolved functions should still lower into EnsureFunctionGraph commands."), FunctionCommand);
+		if (FunctionCommand != nullptr)
+		{
+			TestEqual(TEXT("Function input type category should normalize to lowercase."), FunctionCommand->Attributes.FindRef(TEXT("Input_0_PinCategory")), FString(TEXT("object")));
+			TestEqual(TEXT("Function input type object path should normalize to the resolved class path."), FunctionCommand->Attributes.FindRef(TEXT("Input_0_ObjectPath")), AActor::StaticClass()->GetPathName());
+			TestEqual(TEXT("Function output type category should normalize to lowercase."), FunctionCommand->Attributes.FindRef(TEXT("Output_0_PinCategory")), FString(TEXT("class")));
+			TestEqual(TEXT("Function output type object path should normalize to the resolved class path."), FunctionCommand->Attributes.FindRef(TEXT("Output_0_ObjectPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const DispatcherCommand = Result.Commands.FindByPredicate([&Dispatcher](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddDispatcherParameter
+				&& Command.SecondaryName == Dispatcher.Name
+				&& Command.Name == TEXT("ResolvedStruct");
+		});
+		TestNotNull(TEXT("Resolved dispatchers should still lower into AddDispatcherParameter commands."), DispatcherCommand);
+		if (DispatcherCommand != nullptr)
+		{
+			TestEqual(TEXT("Dispatcher parameter type category should normalize to lowercase."), DispatcherCommand->Attributes.FindRef(TEXT("PinCategory")), FString(TEXT("struct")));
+			TestEqual(TEXT("Dispatcher parameter object path should normalize to the resolved struct path."), DispatcherCommand->Attributes.FindRef(TEXT("ObjectPath")), VectorStruct->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const MacroCommand = FindDefinitionCommand(Result.Commands, EVergilCommandType::EnsureMacroGraph, Macro.Name);
+		TestNotNull(TEXT("Resolved macros should still lower into EnsureMacroGraph commands."), MacroCommand);
+		if (MacroCommand != nullptr)
+		{
+			TestEqual(TEXT("Macro parameter type category should normalize to lowercase."), MacroCommand->Attributes.FindRef(TEXT("Input_0_PinCategory")), FString(TEXT("class")));
+			TestEqual(TEXT("Macro parameter object path should normalize to the resolved class path."), MacroCommand->Attributes.FindRef(TEXT("Input_0_ObjectPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		TestTrue(TEXT("Resolved component class paths should normalize in planned commands."), Result.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::EnsureComponent
+				&& Command.SecondaryName == TEXT("ActorComponentA")
+				&& Command.StringValue == UActorComponent::StaticClass()->GetPathName();
+		}));
+		TestTrue(TEXT("Resolved interface class paths should normalize in planned commands."), Result.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::EnsureInterface
+				&& Command.StringValue == UInterface::StaticClass()->GetPathName();
+		}));
+
+		const FVergilCompilerCommand* const PlannedCastCommand = FindNodeCommand(Result.Commands, CastNode.Id);
+		TestNotNull(TEXT("Resolved cast nodes should still lower into AddNode commands."), PlannedCastCommand);
+		if (PlannedCastCommand != nullptr)
+		{
+			TestEqual(TEXT("Cast target class paths should normalize before planning."), PlannedCastCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedSelectCommand = FindNodeCommand(Result.Commands, SelectNode.Id);
+		TestNotNull(TEXT("Resolved select nodes should still lower into AddNode commands."), PlannedSelectCommand);
+		if (PlannedSelectCommand != nullptr)
+		{
+			TestEqual(TEXT("Select index categories should normalize to lowercase."), PlannedSelectCommand->Attributes.FindRef(TEXT("IndexPinCategory")), FString(TEXT("enum")));
+			TestEqual(TEXT("Select index enum paths should normalize to the resolved enum path."), PlannedSelectCommand->Attributes.FindRef(TEXT("IndexObjectPath")), MovementModeEnum->GetPathName());
+			TestEqual(TEXT("Select value categories should normalize to lowercase."), PlannedSelectCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("object")));
+			TestEqual(TEXT("Select value object paths should normalize to the resolved class path."), PlannedSelectCommand->Attributes.FindRef(TEXT("ValueObjectPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedSwitchCommand = FindNodeCommand(Result.Commands, SwitchNode.Id);
+		TestNotNull(TEXT("Resolved switch enum nodes should still lower into AddNode commands."), PlannedSwitchCommand);
+		if (PlannedSwitchCommand != nullptr)
+		{
+			TestEqual(TEXT("Switch enum paths should normalize to the resolved enum path."), PlannedSwitchCommand->Attributes.FindRef(TEXT("EnumPath")), MovementModeEnum->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedMakeStructCommand = FindNodeCommand(Result.Commands, MakeStructNode.Id);
+		TestNotNull(TEXT("Resolved make struct nodes should still lower into AddNode commands."), PlannedMakeStructCommand);
+		if (PlannedMakeStructCommand != nullptr)
+		{
+			TestEqual(TEXT("Make struct paths should normalize to the resolved struct path."), PlannedMakeStructCommand->Attributes.FindRef(TEXT("StructPath")), VectorStruct->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedMakeArrayCommand = FindNodeCommand(Result.Commands, MakeArrayNode.Id);
+		TestNotNull(TEXT("Resolved make array nodes should still lower into AddNode commands."), PlannedMakeArrayCommand);
+		if (PlannedMakeArrayCommand != nullptr)
+		{
+			TestEqual(TEXT("Make array value categories should normalize to lowercase."), PlannedMakeArrayCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("class")));
+			TestEqual(TEXT("Make array value object paths should normalize to the resolved class path."), PlannedMakeArrayCommand->Attributes.FindRef(TEXT("ValueObjectPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedBreakStructCommand = FindNodeCommand(Result.Commands, BreakStructNode.Id);
+		TestNotNull(TEXT("Resolved break struct nodes should still lower into AddNode commands."), PlannedBreakStructCommand);
+		if (PlannedBreakStructCommand != nullptr)
+		{
+			TestEqual(TEXT("Break struct paths should normalize to the resolved struct path."), PlannedBreakStructCommand->Attributes.FindRef(TEXT("StructPath")), VectorStruct->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedMakeSetCommand = FindNodeCommand(Result.Commands, MakeSetNode.Id);
+		TestNotNull(TEXT("Resolved make set nodes should still lower into AddNode commands."), PlannedMakeSetCommand);
+		if (PlannedMakeSetCommand != nullptr)
+		{
+			TestEqual(TEXT("Make set value categories should normalize to lowercase."), PlannedMakeSetCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("object")));
+			TestEqual(TEXT("Make set value object paths should normalize to the resolved class path."), PlannedMakeSetCommand->Attributes.FindRef(TEXT("ValueObjectPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedMakeMapCommand = FindNodeCommand(Result.Commands, MakeMapNode.Id);
+		TestNotNull(TEXT("Resolved make map nodes should still lower into AddNode commands."), PlannedMakeMapCommand);
+		if (PlannedMakeMapCommand != nullptr)
+		{
+			TestEqual(TEXT("Make map key categories should normalize to lowercase."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("KeyPinCategory")), FString(TEXT("object")));
+			TestEqual(TEXT("Make map key object paths should normalize to the resolved class path."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("KeyObjectPath")), AActor::StaticClass()->GetPathName());
+			TestEqual(TEXT("Make map value categories should normalize to lowercase."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("struct")));
+			TestEqual(TEXT("Make map value object paths should normalize to the resolved struct path."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("ValueObjectPath")), VectorStruct->GetPathName());
+		}
+	}
+
+	{
+		FVergilVariableDefinition InvalidVariable;
+		InvalidVariable.Name = TEXT("MissingType");
+		InvalidVariable.Type.PinCategory = TEXT("object");
+		InvalidVariable.Type.ObjectPath = TEXT("/Script/Engine.DoesNotExist");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidVariable");
+		Request.Document.Variables.Add(InvalidVariable);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid variable types should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid variable types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid variable types should report VariableTypeInvalid."), ContainsDiagnostic(Result.Diagnostics, TEXT("VariableTypeInvalid")));
+	}
+
+	{
+		FVergilFunctionDefinition InvalidFunction;
+		InvalidFunction.Name = TEXT("InvalidFunction");
+		FVergilFunctionParameterDefinition InvalidOutput;
+		InvalidOutput.Name = TEXT("Result");
+		InvalidOutput.Type.PinCategory = TEXT("struct");
+		InvalidOutput.Type.ObjectPath = TEXT("/Script/CoreUObject.DoesNotExist");
+		InvalidFunction.Outputs.Add(InvalidOutput);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidFunction");
+		Request.Document.Functions.Add(InvalidFunction);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid function signature types should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid function signature types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid function signature types should report FunctionSignatureParameterTypeInvalid."), ContainsDiagnostic(Result.Diagnostics, TEXT("FunctionSignatureParameterTypeInvalid")));
+	}
+
+	{
+		FVergilDispatcherDefinition InvalidDispatcher;
+		InvalidDispatcher.Name = TEXT("InvalidDispatcher");
+		FVergilDispatcherParameter InvalidParameter;
+		InvalidParameter.Name = TEXT("Target");
+		InvalidParameter.PinCategory = TEXT("class");
+		InvalidParameter.ObjectPath = TEXT("/Script/Engine.DoesNotExist");
+		InvalidDispatcher.Parameters.Add(InvalidParameter);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidDispatcher");
+		Request.Document.Dispatchers.Add(InvalidDispatcher);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid dispatcher parameter types should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid dispatcher parameter types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid dispatcher parameter types should report DispatcherParameterTypeInvalid."), ContainsDiagnostic(Result.Diagnostics, TEXT("DispatcherParameterTypeInvalid")));
+	}
+
+	{
+		FVergilMacroDefinition InvalidMacro;
+		InvalidMacro.Name = TEXT("InvalidMacro");
+		FVergilMacroParameterDefinition InvalidParameter;
+		InvalidParameter.Name = TEXT("Payload");
+		InvalidParameter.Type.PinCategory = TEXT("enum");
+		InvalidParameter.Type.ObjectPath = TEXT("/Script/Engine.DoesNotExist");
+		InvalidMacro.Outputs.Add(InvalidParameter);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidMacro");
+		Request.Document.Macros.Add(InvalidMacro);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid macro parameter types should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid macro parameter types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid macro parameter types should report MacroSignatureParameterTypeInvalid."), ContainsDiagnostic(Result.Diagnostics, TEXT("MacroSignatureParameterTypeInvalid")));
+	}
+
+	{
+		FVergilComponentDefinition InvalidComponent;
+		InvalidComponent.Name = TEXT("InvalidComponent");
+		InvalidComponent.ComponentClassPath = AActor::StaticClass()->GetPathName();
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidComponent");
+		Request.Document.Components.Add(InvalidComponent);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid component classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid component classes should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid component classes should report InvalidComponentClass."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidComponentClass")));
+	}
+
+	{
+		FVergilInterfaceDefinition InvalidInterface;
+		InvalidInterface.InterfaceClassPath = AActor::StaticClass()->GetPathName();
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidInterface");
+		Request.Document.Interfaces.Add(InvalidInterface);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid interface classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid interface classes should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid interface classes should report InvalidInterfaceClass."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidInterfaceClass")));
+	}
+
+	{
+		FVergilGraphNode InvalidCastNode;
+		InvalidCastNode.Id = FGuid::NewGuid();
+		InvalidCastNode.Kind = EVergilNodeKind::Custom;
+		InvalidCastNode.Descriptor = TEXT("K2.Cast");
+		InvalidCastNode.Metadata.Add(TEXT("TargetClassPath"), TEXT("/Script/Engine.DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidCast");
+		Request.Document.Nodes.Add(InvalidCastNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid cast target classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid cast target classes should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid cast target classes should report CastTargetClassNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("CastTargetClassNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidSelectNode;
+		InvalidSelectNode.Id = FGuid::NewGuid();
+		InvalidSelectNode.Kind = EVergilNodeKind::Custom;
+		InvalidSelectNode.Descriptor = TEXT("K2.Select");
+		InvalidSelectNode.Metadata.Add(TEXT("IndexPinCategory"), TEXT("bool"));
+		InvalidSelectNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT("unsupported"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidSelect");
+		Request.Document.Nodes.Add(InvalidSelectNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid wildcard node categories should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid wildcard node categories should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid wildcard node categories should report InvalidSelectValueType."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidSelectValueType")));
 	}
 
 	return true;

@@ -168,7 +168,7 @@ Tickets:
 - [x] `VGR-3001` Add schema migration pass
 - [x] `VGR-3002` Add semantic validation pass
 - [x] `VGR-3003` Add symbol resolution pass
-- `VGR-3004` Add type resolution and wildcard resolution pass
+- [x] `VGR-3004` Add type resolution and wildcard resolution pass
 - `VGR-3005` Add node lowering pass
 - `VGR-3006` Add connection legality validation pass
 - `VGR-3007` Add post-compile finalize pass
@@ -199,6 +199,12 @@ Session note for `VGR-3003` (2026-03-06):
 - `FVergilSymbolResolutionPass` now runs after semantic validation and before command planning, resolving callable/member symbols against the document, the target Blueprint, and inherited/native owners before any commands are emitted.
 - Successful inherited/native resolutions now normalize owner metadata back into the compiler working document, so planned `K2.Call.*`, variable, delegate, and `K2.ForLoop` commands stop relying on late implicit owner defaults.
 - `Vergil.Scaffold.SymbolResolutionPass` now covers normalized native-call owner paths plus explicit failure coverage for missing function, variable, delegate-signature, create-delegate, and for-loop macro symbols with zero planned commands on failure.
+
+Session note for `VGR-3004` (2026-03-06):
+
+- `FVergilTypeResolutionPass` now runs after symbol resolution and before command planning, resolving and normalizing authored type metadata across variable/function/macro/dispatcher definitions, component and interface class paths, and typed or wildcard-heavy K2 node metadata.
+- Object-backed type references now normalize to canonical class, enum, or struct paths in the compiler working document, so planned commands stop depending on raw authored whitespace or alternate path spellings for typed surfaces.
+- `Vergil.Scaffold.TypeResolutionPass` now covers successful normalization for definitions plus typed K2 nodes and explicit zero-command failures for invalid variable, function, dispatcher, macro, component, interface, cast, and wildcard-node type references.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -382,13 +388,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3004`
+1. `VGR-3005`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
-5. `VGR-3005`
+5. `VGR-3006`
 
-This keeps pressure on the remaining type/lowering pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, and symbol resolution stages.
+This keeps pressure on the remaining lowering/legality pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, and type resolution stages.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

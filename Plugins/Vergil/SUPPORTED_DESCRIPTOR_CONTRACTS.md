@@ -16,7 +16,7 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
-- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, and then command planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, and then command planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -79,6 +79,15 @@ This document describes the current scaffold contracts implemented in code today
 - `K2.CustomEvent.*` may optionally declare `DelegatePropertyName` plus `DelegateOwnerClassPath` metadata for delegate signatures. The symbol pass resolves those signatures before planning, and external-owner resolutions are normalized back into `DelegateOwnerClassPath`.
 - `K2.CreateDelegate.*` currently resolves against target-graph custom events, document-authored function definitions, and existing Blueprint or parent-class functions. Ambiguous local matches fail explicitly.
 - `K2.ForLoop` macro references now resolve during the symbol pass, and omitted `MacroBlueprintPath` / `MacroGraphName` metadata is normalized to the engine `StandardMacros` `ForLoop` default before planning.
+
+## Type resolution contracts
+
+- `FVergilTypeResolutionPass` now runs after symbol resolution and before command planning.
+- The type pass normalizes authored type metadata across variable definitions, function signatures, macro signatures, dispatcher parameters, component class paths, interface class paths, and explicit typed-node metadata on the active graph surface.
+- Supported logical type categories remain `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
+- `enum`, `object`, `class`, and `struct` references now resolve to canonical object paths before planning, so planned commands stop depending on raw authored whitespace or alternate path spellings.
+- The type pass currently resolves explicit type metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
+- Failed type resolution stops compilation before command planning, so invalid authored type references now return zero planned commands.
 
 ## Blueprint metadata contracts
 
@@ -210,18 +219,18 @@ This document describes the current scaffold contracts implemented in code today
 | `K2.Sequence` | any | none | Output exec pins named like `Then_0`, `Then_1`, and so on determine sequence width. |
 | `K2.ForLoop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `ForLoop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. |
 | `K2.Delay` | any | none | Lowers to `UKismetSystemLibrary::Delay`. |
-| `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class. |
+| `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class during type resolution and is normalized before planning. |
 | `K2.Reroute` | any | none | Creates a knot node. |
-| `K2.Select` | any | `IndexPinCategory`, `ValuePinCategory` | Optional `IndexObjectPath`, `ValueObjectPath`, and `NumOptions`. Enum index selects use `IndexObjectPath` for the enum. |
+| `K2.Select` | any | `IndexPinCategory`, `ValuePinCategory` | Optional `IndexObjectPath`, `ValueObjectPath`, and `NumOptions`. Enum index selects use `IndexObjectPath` for the enum, and explicit type metadata is resolved before planning. |
 | `K2.SwitchInt` | any | none | Planned exec output pins define the case labels and must parse as integers. |
 | `K2.SwitchString` | any | none | Planned exec output pins define the case labels. Optional `CaseSensitive` metadata configures comparison behavior. |
-| `K2.SwitchEnum` | any | `EnumPath` | Enum path must resolve to a `UEnum`. |
+| `K2.SwitchEnum` | any | `EnumPath` | Enum path must resolve to a `UEnum` during type resolution and is normalized before planning. |
 | `K2.FormatText` | any | `FormatPattern` | Creates a format text node and reconstructs argument pins from the format pattern. |
-| `K2.MakeStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct`. |
-| `K2.BreakStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct`. |
-| `K2.MakeArray` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. |
-| `K2.MakeSet` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. |
-| `K2.MakeMap` | any | `KeyPinCategory`, `ValuePinCategory` | Optional `KeyObjectPath`, `ValueObjectPath`, and `NumPairs`. `NumPairs` must be at least `1`. |
+| `K2.MakeStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct` during type resolution and is normalized before planning. |
+| `K2.BreakStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct` during type resolution and is normalized before planning. |
+| `K2.MakeArray` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. Explicit value-type metadata resolves before planning. |
+| `K2.MakeSet` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. Explicit value-type metadata resolves before planning. |
+| `K2.MakeMap` | any | `KeyPinCategory`, `ValuePinCategory` | Optional `KeyObjectPath`, `ValueObjectPath`, and `NumPairs`. `NumPairs` must be at least `1`. Explicit key/value type metadata resolves before planning. |
 | `K2.BindDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
 | `K2.RemoveDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
 | `K2.ClearDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
