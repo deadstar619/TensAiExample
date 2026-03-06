@@ -2378,6 +2378,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCompileResultMetadataTest,
+	"Vergil.Scaffold.CompileResultMetadata",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilCommandSerializationUtilitiesTest,
 	"Vergil.Scaffold.CommandSerializationUtilities",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -2477,6 +2482,123 @@ bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Test summary reports planned command count."), TestSummary.PlannedCommandCount, 5);
 	TestEqual(TEXT("Test summary reports executed command count."), TestSummary.ExecutedCommandCount, 1);
 
+	return true;
+}
+
+bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
+{
+	FVergilNodeRegistry::Get().Reset();
+	FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestSpecificNodeHandler, ESPMode::ThreadSafe>());
+
+	FVergilGraphNode SpecificNode;
+	SpecificNode.Id = FGuid::NewGuid();
+	SpecificNode.Kind = EVergilNodeKind::Custom;
+	SpecificNode.Descriptor = TEXT("Test.Special");
+	SpecificNode.Position = FVector2D(128.0f, 64.0f);
+
+	FVergilGraphDocument CompileDocument;
+	CompileDocument.SchemaVersion = 1;
+	CompileDocument.BlueprintPath = TEXT("/Game/Tests/BP_CompileResultMetadata");
+	CompileDocument.Nodes.Add(SpecificNode);
+
+	FVergilCompileRequest CompileRequest;
+	CompileRequest.TargetBlueprint = MakeTestBlueprint();
+	CompileRequest.Document = CompileDocument;
+	CompileRequest.TargetGraphName = TEXT("EventGraph");
+	CompileRequest.bAutoLayout = false;
+	CompileRequest.bGenerateComments = false;
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult CompileResult = CompilerService.Compile(CompileRequest);
+
+	TestTrue(TEXT("Compile result metadata test should compile successfully."), CompileResult.bSucceeded);
+	TestEqual(TEXT("Compile metadata should preserve the target graph."), CompileResult.Statistics.TargetGraphName, FName(TEXT("EventGraph")));
+	TestEqual(TEXT("Compile metadata should preserve the requested schema version."), CompileResult.Statistics.RequestedSchemaVersion, 1);
+	TestEqual(TEXT("Compile metadata should record the effective migrated schema version."), CompileResult.Statistics.EffectiveSchemaVersion, Vergil::SchemaVersion);
+	TestFalse(TEXT("Compile metadata should preserve the requested auto-layout flag."), CompileResult.Statistics.bAutoLayoutRequested);
+	TestFalse(TEXT("Compile metadata should preserve the requested comment-generation flag."), CompileResult.Statistics.bGenerateCommentsRequested);
+	TestFalse(TEXT("Dry-run compile should not report apply requested."), CompileResult.Statistics.bApplyRequested);
+	TestFalse(TEXT("Dry-run compile should not report execution attempted."), CompileResult.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Compiler output should always record normalized command plans."), CompileResult.Statistics.bCommandPlanNormalized);
+	TestEqual(TEXT("Compile metadata should count target-graph nodes."), CompileResult.Statistics.SourceNodeCount, 1);
+	TestEqual(TEXT("Compile metadata should count target-graph edges."), CompileResult.Statistics.SourceEdgeCount, 0);
+	TestEqual(TEXT("Compile metadata should report the planned command count."), CompileResult.Statistics.PlannedCommandCount, 2);
+	TestEqual(TEXT("Compile metadata should classify graph-structure commands."), CompileResult.Statistics.GraphStructureCommandCount, 2);
+	TestEqual(TEXT("Compile metadata should account for every planned command exactly once."), CompileResult.Statistics.GetTotalAccountedCommandCount(), 2);
+	TestEqual(TEXT("Compile metadata should record every successful pass."), CompileResult.Statistics.GetCompletedPassCount(), 11);
+	TestEqual(TEXT("Compile metadata should record the final completed pass."), CompileResult.Statistics.LastCompletedPassName, FName(TEXT("CommandPlanning")));
+	TestEqual(TEXT("Successful compiles should not record a failed pass."), CompileResult.Statistics.FailedPassName, NAME_None);
+	TestEqual(TEXT("Compile metadata should retain one pass record per attempted pass."), CompileResult.PassRecords.Num(), 11);
+	TestTrue(TEXT("Compile statistics display text should include the target graph."), CompileResult.Statistics.ToDisplayString().Contains(TEXT("graph=EventGraph")));
+	if (CompileResult.PassRecords.Num() == 11)
+	{
+		TestEqual(TEXT("The first recorded pass should be schema migration."), CompileResult.PassRecords[0].PassName, FName(TEXT("SchemaMigration")));
+		TestTrue(TEXT("The first recorded pass should succeed."), CompileResult.PassRecords[0].bSucceeded);
+		TestEqual(TEXT("The last recorded pass should be command planning."), CompileResult.PassRecords.Last().PassName, FName(TEXT("CommandPlanning")));
+		TestEqual(TEXT("The last recorded pass should retain the planned command count."), CompileResult.PassRecords.Last().PlannedCommandCount, 2);
+		TestTrue(TEXT("Pass-record display text should include the pass name."), CompileResult.PassRecords[0].ToDisplayString().Contains(TEXT("SchemaMigration")));
+	}
+
+	FVergilCompileRequest InvalidRequest = CompileRequest;
+	InvalidRequest.TargetGraphName = TEXT("UnsupportedGraph");
+
+	const FVergilCompileResult InvalidResult = CompilerService.Compile(InvalidRequest);
+	TestFalse(TEXT("Unsupported compile targets should fail."), InvalidResult.bSucceeded);
+	TestEqual(TEXT("Failed compile metadata should identify the failing pass."), InvalidResult.Statistics.FailedPassName, FName(TEXT("SemanticValidation")));
+	TestEqual(TEXT("Failed compile metadata should preserve the last completed pass."), InvalidResult.Statistics.LastCompletedPassName, FName(TEXT("StructuralValidation")));
+	TestEqual(TEXT("Failed compile metadata should only count passes completed before failure."), InvalidResult.Statistics.GetCompletedPassCount(), 2);
+	TestEqual(TEXT("Failed compile metadata should record only the attempted passes."), InvalidResult.PassRecords.Num(), 3);
+	TestEqual(TEXT("Failed compile metadata should still preserve the requested schema version."), InvalidResult.Statistics.RequestedSchemaVersion, 1);
+	TestEqual(TEXT("Failed compile metadata should still preserve the effective migrated schema version."), InvalidResult.Statistics.EffectiveSchemaVersion, Vergil::SchemaVersion);
+	TestTrue(TEXT("Failed compile metadata should still mark the empty plan as normalized."), InvalidResult.Statistics.bCommandPlanNormalized);
+	TestEqual(TEXT("Failed compile metadata should plan zero commands."), InvalidResult.Statistics.PlannedCommandCount, 0);
+	if (InvalidResult.PassRecords.Num() == 3)
+	{
+		TestEqual(TEXT("The failed pass record should identify semantic validation."), InvalidResult.PassRecords.Last().PassName, FName(TEXT("SemanticValidation")));
+		TestFalse(TEXT("The failed pass record should be marked unsuccessful."), InvalidResult.PassRecords.Last().bSucceeded);
+		TestEqual(TEXT("The failed pass record should retain a zero command count."), InvalidResult.PassRecords.Last().PlannedCommandCount, 0);
+	}
+
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		FVergilNodeRegistry::Get().Reset();
+		return false;
+	}
+
+	UBlueprint* const ApplyBlueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created for apply metadata coverage."), ApplyBlueprint);
+	if (ApplyBlueprint == nullptr)
+	{
+		FVergilNodeRegistry::Get().Reset();
+		return false;
+	}
+
+	FVergilGraphNode CommentNode;
+	CommentNode.Id = FGuid::NewGuid();
+	CommentNode.Kind = EVergilNodeKind::Comment;
+	CommentNode.Descriptor = TEXT("UI.Comment");
+	CommentNode.Position = FVector2D(64.0f, 96.0f);
+	CommentNode.Metadata.Add(TEXT("CommentText"), TEXT("Compile metadata apply coverage"));
+
+	FVergilGraphDocument ApplyDocument;
+	ApplyDocument.BlueprintPath = TEXT("/Game/Tests/BP_CompileResultMetadataApply");
+	ApplyDocument.Nodes.Add(CommentNode);
+
+	const FVergilCompileResult ApplyResult = EditorSubsystem->CompileDocument(ApplyBlueprint, ApplyDocument, false, true, true);
+	TestTrue(TEXT("Compile+apply metadata coverage should succeed."), ApplyResult.bSucceeded);
+	TestTrue(TEXT("Compile+apply metadata coverage should apply commands."), ApplyResult.bApplied);
+	TestTrue(TEXT("Compile+apply metadata should record that apply was requested."), ApplyResult.Statistics.bApplyRequested);
+	TestTrue(TEXT("Compile+apply metadata should record that execution was attempted."), ApplyResult.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Compile+apply metadata should retain normalized command-plan state."), ApplyResult.Statistics.bCommandPlanNormalized);
+	TestEqual(TEXT("Compile+apply metadata should preserve the default target graph."), ApplyResult.Statistics.TargetGraphName, FName(TEXT("EventGraph")));
+	TestEqual(TEXT("Compile+apply metadata should count the authored comment node."), ApplyResult.Statistics.SourceNodeCount, 1);
+	TestEqual(TEXT("Compile+apply metadata should keep planned command counts in sync with returned commands."), ApplyResult.Statistics.PlannedCommandCount, ApplyResult.Commands.Num());
+	TestEqual(TEXT("Compile+apply metadata should classify comment authoring as graph-structure work."), ApplyResult.Statistics.GraphStructureCommandCount, ApplyResult.Commands.Num());
+	TestEqual(TEXT("Compile+apply metadata should execute every planned command once."), ApplyResult.ExecutedCommandCount, ApplyResult.Commands.Num());
+
+	FVergilNodeRegistry::Get().Reset();
 	return true;
 }
 

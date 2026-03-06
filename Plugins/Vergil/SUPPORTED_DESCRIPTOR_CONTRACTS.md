@@ -18,10 +18,21 @@ This document describes the current scaffold contracts implemented in code today
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
 - The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and then command planning.
 - `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` now gates the dedicated layout post-pass boundary. The layout pass currently emits no commands until the future layout API lands.
+- `FVergilCompileResult` now includes `Statistics` plus ordered `PassRecords`. Compiler-produced results report target graph, requested/effective schema version, requested auto-layout/comment flags, normalized per-phase command counts, and the last completed or failed compiler pass without requiring log scraping.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
 - Command plans now expose stable debug strings plus versioned JSON serialization/deserialization helpers for inspection and replay.
+
+## Compile result contracts
+
+- `FVergilCompileResult.Statistics.TargetGraphName` records the requested compile target for compiler-produced results. Direct `ExecuteCommandPlan(...)` and serialized replay infer a graph name only when every command targets the same graph; otherwise the field remains unset.
+- `FVergilCompileResult.Statistics.RequestedSchemaVersion` reflects the authored request/document schema, while `EffectiveSchemaVersion` reflects the document version actually consumed after any schema-migration pass work.
+- `FVergilCompileResult.Statistics.bAutoLayoutRequested` and `bGenerateCommentsRequested` reflect the compile request flags. `bApplyRequested` indicates whether the caller asked for command execution, and `bExecutionAttempted` indicates whether execution actually ran.
+- `FVergilCompileResult.Statistics` always tracks target-graph node/edge counts plus deterministic command counts for blueprint-definition, graph-structure, connection, finalize, explicit-compile, and post-blueprint-compile phases. `PlannedCommandCount` is the normalized command-plan length.
+- `FVergilCompileResult.Statistics.bCommandPlanNormalized` is set when the returned `Commands` array has already been phase-normalized. Compiler output and direct command execution both normalize before returning.
+- `FVergilCompileResult.Statistics.CompletedPassNames`, `LastCompletedPassName`, and `FailedPassName` describe compiler-pipeline progress. Successful compiles leave `FailedPassName` unset. Direct command execution does not populate compiler-pass progress because no compiler pipeline ran.
+- `FVergilCompileResult.PassRecords` are emitted in attempted-pass order for compiler-produced results only. Each record captures the pass name, whether that pass returned success, the cumulative diagnostic/error counts after the pass, and the planned-command count visible at that point in the pipeline.
 
 ## Structural validation rules
 

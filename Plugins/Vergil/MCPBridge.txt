@@ -1,0 +1,165 @@
+MCP BRIDGE  
+
+• The existing TensAi transport already proves the Live Coding-safe part on the editor side; the Windows-specific part is mostly in the bridge’s offline process/build helpers. I’m going to answer with that split: generic core, platform adapters, and LC-safe editor constraints.
+
+• Then I would split it much harder than TensAi currently does.
+
+  Core rule
+
+  - Vergil should own editor semantics.
+  - The MCP bridge should own MCP semantics.
+  - Platform-specific process/build logic should be isolated behind adapters.
+  - No layer should know about Claude, Codex, Cursor, or Windows unless that is its explicit job.
+
+  What I’d build
+
+  1. VergilMCPServer inside Unreal
+  2. vergil-mcp-bridge out of process
+  3. platform-runtime adapters behind the bridge
+
+  Editor-side server
+  Make this as thin and OS-agnostic as possible.
+
+  - Use FHttpServerModule, not raw sockets.
+  - Keep all request handling on the game thread.
+  - Do not keep long-lived raw UObject* state across requests if you can resolve it on demand.
+  - Expose only protocol-neutral endpoints:
+      - /api/health
+      - /api/tools
+      - /api/tools/call
+      - /api/events/subscribe
+  - Tool handlers call into UVergilEditorSubsystem, nothing else.
+  - No provider-specific concepts.
+  - No OS-specific process management in the editor module.
+
+  That is the part that survives Live Coding best. The comment in TensAiMCPServer.h:22 points at the right idea: FHttpServerModule is tick-driven on the game thread, so Live Coding pauses execution instead of racing a background socket thread.
+
+  Bridge
+  This should be pure MCP and cross-client.
+
+  - Speak standard MCP over stdio.
+  - Optionally also support SSE/WebSocket-facing modes later.
+  - Know how to:
+      - discover the editor
+      - proxy tool calls
+      - buffer events
+      - expose generic bridge-native tools
+  - Not know anything about Claude/Codex beyond MCP itself.
+
+  I would structure it like this:
+
+  vergil-mcp-bridge/
+    core/
+      mcp-server
+      connection-manager
+      event-buffer
+      tool-registry
+    transports/
+      stdio
+      sse
+    editor/
+      unreal-http-client
+      unreal-event-channel
+    platform/
+      windows
+      macos
+      linux
+
+  Platform abstraction
+  This is where TensAi is currently too Windows-shaped. Its bridge uses tasklist, taskkill, fixed UE install assumptions, and Windows log paths. That should move behind interfaces.
+
+  Example interfaces:
+
+  - ProcessOps
+  - EditorLaunchOps
+  - BuildOps
+  - CrashLogOps
+  - PathDiscoveryOps
+
+  Then implement:
+
+  - WindowsPlatformOps
+  - MacPlatformOps
+  - LinuxPlatformOps
+
+  If a capability is unsupported on a platform, advertise that explicitly instead of faking parity. For example:
+
+  - build_project: supported everywhere if UBT path can be resolved
+  - get_crash_log: maybe different per OS
+  - launch_editor: supported everywhere, but path discovery differs
+  - dismiss_crash_reporter: platform-dependent
+
+  The bridge should publish capabilities, not assumptions.
+
+  Live Coding requirement
+  Treat this as two separate requirements.
+
+  Bridge survival:
+
+  - The bridge must be a separate process.
+  - It should not die if the editor stalls, reloads, or restarts.
+  - Heartbeat timeout should mean stalled, not immediately disconnected.
+  - Tool calls during LC should fail fast or wait, but the MCP session should remain alive.
+
+  Editor-server survival:
+
+  - Use game-thread, tick-based HTTP handling.
+  - Avoid background threads touching UE objects.
+  - Re-resolve subsystems/tool registries after reload instead of caching fragile pointers.
+  - Rebind routes/delegates in subsystem/module init.
+  - Keep the tool registry declarative so tools_changed can be rebroadcast after reload.
+
+  I would explicitly model bridge connection state as:
+
+  - disconnected
+  - connecting
+  - connected
+  - stalled_live_coding
+  - restarting
+
+  That prevents clients from treating Live Coding as a crash.
+
+  Tool design
+  Vergil should stay deterministic, so the tool layer should reflect that.
+
+  Good tools:
+
+  - compile_document
+  - compile_document_to_graph
+  - execute_command_plan
+  - execute_serialized_command_plan
+  - serialize_command_plan
+  - get_supported_contracts
+  - get_recent_audit_entries
+
+  Avoid:
+
+  - generic hidden editor mutation tools
+  - provider-driven “agent magic” at the Vergil layer
+
+  My recommendation
+  Build three repos/modules mentally, even if they live in one plugin tree:
+
+  - VergilEditor API: deterministic Blueprint authoring
+  - VergilMCPServer: Unreal transport shim, Live Coding-safe
+  - VergilMCPBridge: cross-platform MCP bridge with per-OS adapters
+
+  If you want, I can turn this into a concrete proposed directory layout plus a first-pass tool/capability matrix for Windows/macOS/Linux.
+
+CRASH REPORT - MODALS
+
+ The engine source makes the split fairly clear:
+
+  - The crash reporter is treated as an out-of-process monitor/reporting process, not an in-editor Slate window. In EngineAnalyticsSessionSummary.cpp:69, the editor looks for CrashReportClientEditor; in EngineAnalyticsSessionSummary.cpp:188 it stores a MonitorPid; and in
+    EngineAnalyticsSessionSummary.cpp:351 it checks an out-of-process crash reporter exit code. That means crash-reporter dismissal is feasible, but it has to be done by the external bridge as a process-management operation. I could not inspect the actual CrashReportClient program
+    source in this launcher install, so the “dismiss by process kill” part is an inference from these engine-side references plus the installed binaries.
+  - Editor modal dialogs are different. Slate exposes exactly the hooks you would need: AddModalWindow, OnPreTick, GetActiveModalWindow, GeneratePathToWidgetUnchecked, ProcessKeyDownEvent, and RequestDestroyWindow in SlateApplication.h:428. The modal loop in SlateApplication.cpp:2196
+    keeps ticking while the modal is open, and SlateApplication.cpp:1728 shows PreTickEvent.Broadcast(...). So an in-editor subsystem can keep running during a blocking modal, inspect the active Slate tree, and dismiss many dialogs by button lookup, Enter/Escape, or
+    RequestDestroyWindow.
+
+  So the conclusion is:
+
+  - Crash reporter dismissal: possible, but only out-of-process in the bridge.
+  - Slate modal dialog dismissal: possible in-engine via Slate APIs.
+  - One universal implementation for both: no.
+  - One overall system handling both: yes, if you split responsibility that way.

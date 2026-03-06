@@ -197,6 +197,11 @@ namespace
 		return Value.IsValid() ? Value.ToString(EGuidFormats::DigitsWithHyphensLower) : FString();
 	}
 
+	FString LexOptionalNameString(const FName Value)
+	{
+		return Value.IsNone() ? FString(TEXT("<none>")) : Value.ToString();
+	}
+
 	FString EscapeDisplayValue(const FString& Value)
 	{
 		FString EscapedValue = Value;
@@ -554,6 +559,117 @@ namespace
 	}
 }
 
+FString FVergilCompilePassRecord::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("%s succeeded=%s diagnostics=%d errors=%d planned=%d"),
+		*LexOptionalNameString(PassName),
+		LexBoolString(bSucceeded),
+		DiagnosticCount,
+		ErrorCount,
+		PlannedCommandCount);
+}
+
+int32 FVergilCompileStatistics::GetCompletedPassCount() const
+{
+	return CompletedPassNames.Num();
+}
+
+int32 FVergilCompileStatistics::GetTotalAccountedCommandCount() const
+{
+	return BlueprintDefinitionCommandCount
+		+ GraphStructureCommandCount
+		+ ConnectionCommandCount
+		+ FinalizeCommandCount
+		+ ExplicitCompileCommandCount
+		+ PostBlueprintCompileCommandCount;
+}
+
+void FVergilCompileStatistics::RebuildCommandStatistics(const TArray<FVergilCompilerCommand>& Commands)
+{
+	PlannedCommandCount = Commands.Num();
+	BlueprintDefinitionCommandCount = 0;
+	GraphStructureCommandCount = 0;
+	ConnectionCommandCount = 0;
+	FinalizeCommandCount = 0;
+	ExplicitCompileCommandCount = 0;
+	PostBlueprintCompileCommandCount = 0;
+
+	for (const FVergilCompilerCommand& Command : Commands)
+	{
+		switch (GetDeterministicCommandPhase(Command))
+		{
+		case 0:
+			++BlueprintDefinitionCommandCount;
+			break;
+
+		case 1:
+			++GraphStructureCommandCount;
+			break;
+
+		case 2:
+			++ConnectionCommandCount;
+			break;
+
+		case 3:
+			++FinalizeCommandCount;
+			break;
+
+		case 4:
+			++ExplicitCompileCommandCount;
+			break;
+
+		case 5:
+			++PostBlueprintCompileCommandCount;
+			break;
+
+		default:
+			break;
+		}
+	}
+}
+
+void FVergilCompileStatistics::SetTargetDocumentStatistics(const FVergilGraphDocument& Document)
+{
+	EffectiveSchemaVersion = Document.SchemaVersion;
+
+	if (TargetGraphName == TEXT("UserConstructionScript"))
+	{
+		SourceNodeCount = Document.ConstructionScriptNodes.Num();
+		SourceEdgeCount = Document.ConstructionScriptEdges.Num();
+		return;
+	}
+
+	SourceNodeCount = Document.Nodes.Num();
+	SourceEdgeCount = Document.Edges.Num();
+}
+
+FString FVergilCompileStatistics::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("graph=%s schema=%d->%d autoLayout=%s comments=%s applyRequested=%s executionAttempted=%s normalized=%s nodes=%d edges=%d planned=%d phases={blueprint=%d graph=%d connections=%d finalize=%d compile=%d post=%d} passes=%d last=%s failed=%s"),
+		*LexOptionalNameString(TargetGraphName),
+		RequestedSchemaVersion,
+		EffectiveSchemaVersion,
+		LexBoolString(bAutoLayoutRequested),
+		LexBoolString(bGenerateCommentsRequested),
+		LexBoolString(bApplyRequested),
+		LexBoolString(bExecutionAttempted),
+		LexBoolString(bCommandPlanNormalized),
+		SourceNodeCount,
+		SourceEdgeCount,
+		PlannedCommandCount,
+		BlueprintDefinitionCommandCount,
+		GraphStructureCommandCount,
+		ConnectionCommandCount,
+		FinalizeCommandCount,
+		ExplicitCompileCommandCount,
+		PostBlueprintCompileCommandCount,
+		GetCompletedPassCount(),
+		*LexOptionalNameString(LastCompletedPassName),
+		*LexOptionalNameString(FailedPassName));
+}
+
 FString FVergilPlannedPin::ToDisplayString() const
 {
 	TArray<FString> Tokens;
@@ -868,21 +984,27 @@ FVergilDiagnosticSummary Vergil::SummarizeDiagnostics(const TArray<FVergilDiagno
 FVergilExecutionSummary Vergil::SummarizeCompileResult(const FVergilCompileResult& Result)
 {
 	FVergilExecutionSummary Summary;
+	const int32 PlannedCommandCount = Result.Statistics.PlannedCommandCount > 0 || Result.Commands.Num() == 0
+		? Result.Statistics.PlannedCommandCount
+		: Result.Commands.Num();
 	Summary.Label = TEXT("Compile");
 	Summary.Diagnostics = SummarizeDiagnostics(Result.Diagnostics);
 	Summary.bSucceeded = Result.bSucceeded && !Summary.Diagnostics.HasErrors();
-	Summary.PlannedCommandCount = Result.Commands.Num();
+	Summary.PlannedCommandCount = PlannedCommandCount;
 	return Summary;
 }
 
 FVergilExecutionSummary Vergil::SummarizeApplyResult(const FVergilCompileResult& Result)
 {
 	FVergilExecutionSummary Summary;
+	const int32 PlannedCommandCount = Result.Statistics.PlannedCommandCount > 0 || Result.Commands.Num() == 0
+		? Result.Statistics.PlannedCommandCount
+		: Result.Commands.Num();
 	Summary.Label = TEXT("Apply");
 	Summary.Diagnostics = SummarizeDiagnostics(Result.Diagnostics);
 	Summary.bApplied = Result.bApplied;
 	Summary.bSucceeded = Result.bApplied && !Summary.Diagnostics.HasErrors();
-	Summary.PlannedCommandCount = Result.Commands.Num();
+	Summary.PlannedCommandCount = PlannedCommandCount;
 	Summary.ExecutedCommandCount = Result.ExecutedCommandCount;
 	return Summary;
 }

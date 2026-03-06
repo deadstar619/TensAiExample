@@ -7,7 +7,32 @@
 
 namespace
 {
-	void RefreshCompileResultState(FVergilCompileResult& Result)
+	FName InferCommandPlanTargetGraphName(const TArray<FVergilCompilerCommand>& Commands)
+	{
+		FName InferredGraphName = NAME_None;
+		for (const FVergilCompilerCommand& Command : Commands)
+		{
+			if (Command.GraphName.IsNone())
+			{
+				continue;
+			}
+
+			if (InferredGraphName.IsNone())
+			{
+				InferredGraphName = Command.GraphName;
+				continue;
+			}
+
+			if (InferredGraphName != Command.GraphName)
+			{
+				return NAME_None;
+			}
+		}
+
+		return InferredGraphName;
+	}
+
+	void RefreshCompileResultState(FVergilCompileResult& Result, const bool bInferTargetGraphName = false)
 	{
 		Result.bSucceeded = true;
 		for (const FVergilDiagnostic& Diagnostic : Result.Diagnostics)
@@ -18,6 +43,13 @@ namespace
 				break;
 			}
 		}
+
+		if (bInferTargetGraphName && Result.Statistics.TargetGraphName.IsNone())
+		{
+			Result.Statistics.TargetGraphName = InferCommandPlanTargetGraphName(Result.Commands);
+		}
+
+		Result.Statistics.RebuildCommandStatistics(Result.Commands);
 	}
 
 	void LogCommandPlanIfPresent(const TCHAR* Label, const TArray<FVergilCompilerCommand>& Commands)
@@ -30,6 +62,25 @@ namespace
 
 		UE_LOG(LogVergil, Verbose, TEXT("%s (%d commands)\n%s"), Label, Commands.Num(), *Vergil::DescribeCommandPlan(Commands));
 		UE_LOG(LogVergil, VeryVerbose, TEXT("%s json=%s"), Label, *Vergil::SerializeCommandPlan(Commands, false));
+	}
+
+	void LogCompileResultMetadata(const TCHAR* Label, const FVergilCompileResult& Result)
+	{
+		UE_LOG(LogVergil, Verbose, TEXT("%s stats: %s"), Label, *Result.Statistics.ToDisplayString());
+
+		if (Result.PassRecords.Num() == 0)
+		{
+			return;
+		}
+
+		TArray<FString> Lines;
+		Lines.Reserve(Result.PassRecords.Num());
+		for (const FVergilCompilePassRecord& PassRecord : Result.PassRecords)
+		{
+			Lines.Add(PassRecord.ToDisplayString());
+		}
+
+		UE_LOG(LogVergil, VeryVerbose, TEXT("%s passes:\n%s"), Label, *FString::Join(Lines, TEXT("\n")));
 	}
 }
 
@@ -78,15 +129,19 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocumentToGraph(
 
 	const FVergilBlueprintCompilerService CompilerService;
 	FVergilCompileResult Result = CompilerService.Compile(Request);
+	Result.Statistics.bApplyRequested = bApplyCommands;
 	LogCommandPlanIfPresent(TEXT("Vergil planned command plan"), Result.Commands);
 	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString());
+	LogCompileResultMetadata(TEXT("Vergil compile result"), Result);
 
 	if (bApplyCommands && Result.bSucceeded)
 	{
 		const FVergilCommandExecutor Executor;
+		Result.Statistics.bExecutionAttempted = true;
 		Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
 		RefreshCompileResultState(Result);
 		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
+		LogCompileResultMetadata(TEXT("Vergil apply result"), Result);
 	}
 
 	return Result;
@@ -96,13 +151,18 @@ FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blue
 {
 	FVergilCompileResult Result;
 	Result.Commands = Commands;
+	Result.Statistics.bApplyRequested = true;
+	Result.Statistics.bExecutionAttempted = true;
 	Vergil::NormalizeCommandPlan(Result.Commands);
+	Result.Statistics.bCommandPlanNormalized = true;
+	RefreshCompileResultState(Result, true);
 	LogCommandPlanIfPresent(TEXT("Vergil direct command plan"), Result.Commands);
 
 	const FVergilCommandExecutor Executor;
 	Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
-	RefreshCompileResultState(Result);
+	RefreshCompileResultState(Result, true);
 	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
+	LogCompileResultMetadata(TEXT("Vergil direct apply result"), Result);
 	return Result;
 }
 
@@ -114,10 +174,12 @@ FString UVergilEditorSubsystem::SerializeCommandPlan(const TArray<FVergilCompile
 FVergilCompileResult UVergilEditorSubsystem::ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const
 {
 	FVergilCompileResult Result;
+	Result.Statistics.bApplyRequested = true;
 	if (!Vergil::DeserializeCommandPlan(SerializedCommandPlan, Result.Commands, &Result.Diagnostics))
 	{
 		RefreshCompileResultState(Result);
 		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
+		LogCompileResultMetadata(TEXT("Vergil serialized apply result"), Result);
 		return Result;
 	}
 

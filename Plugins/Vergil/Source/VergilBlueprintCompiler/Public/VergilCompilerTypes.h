@@ -178,6 +178,101 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilCompilePassRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName PassName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bSucceeded = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 DiagnosticCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ErrorCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 PlannedCommandCount = 0;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilCompileStatistics
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName TargetGraphName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 RequestedSchemaVersion = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 EffectiveSchemaVersion = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bAutoLayoutRequested = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bGenerateCommentsRequested = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bApplyRequested = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bExecutionAttempted = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bCommandPlanNormalized = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 SourceNodeCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 SourceEdgeCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 PlannedCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 BlueprintDefinitionCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 GraphStructureCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ConnectionCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 FinalizeCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ExplicitCompileCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 PostBlueprintCompileCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName LastCompletedPassName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName FailedPassName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FName> CompletedPassNames;
+
+	int32 GetCompletedPassCount() const;
+	int32 GetTotalAccountedCommandCount() const;
+	void RebuildCommandStatistics(const TArray<FVergilCompilerCommand>& Commands);
+	void SetTargetDocumentStatistics(const FVergilGraphDocument& Document);
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilCompileResult
 {
 	GENERATED_BODY()
@@ -196,6 +291,12 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileResult
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilCompilerCommand> Commands;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilCompileStatistics Statistics;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilCompilePassRecord> PassRecords;
 };
 
 USTRUCT(BlueprintType)

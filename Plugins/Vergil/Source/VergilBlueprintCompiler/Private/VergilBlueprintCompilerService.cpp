@@ -9,6 +9,12 @@
 FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompileRequest& Request) const
 {
 	FVergilCompileResult Result;
+	Result.Statistics.TargetGraphName = Request.TargetGraphName;
+	Result.Statistics.RequestedSchemaVersion = Request.Document.SchemaVersion;
+	Result.Statistics.EffectiveSchemaVersion = Request.Document.SchemaVersion;
+	Result.Statistics.bAutoLayoutRequested = Request.bAutoLayout;
+	Result.Statistics.bGenerateCommentsRequested = Request.bGenerateComments;
+	Result.Statistics.SetTargetDocumentStatistics(Request.Document);
 
 	if (Request.TargetBlueprint == nullptr)
 	{
@@ -43,7 +49,28 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 
 	for (const TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>& Pass : Passes)
 	{
-		if (!Pass->Run(Request, Context, Result))
+		const FName PassName = Pass->GetPassName();
+		const bool bPassSucceeded = Pass->Run(Request, Context, Result);
+
+		FVergilCompilePassRecord PassRecord;
+		PassRecord.PassName = PassName;
+		PassRecord.bSucceeded = bPassSucceeded;
+		PassRecord.DiagnosticCount = Result.Diagnostics.Num();
+		PassRecord.ErrorCount = Vergil::SummarizeDiagnostics(Result.Diagnostics).ErrorCount;
+		PassRecord.PlannedCommandCount = Result.Commands.Num();
+		Result.PassRecords.Add(PassRecord);
+
+		if (bPassSucceeded)
+		{
+			Result.Statistics.CompletedPassNames.Add(PassName);
+			Result.Statistics.LastCompletedPassName = PassName;
+		}
+		else
+		{
+			Result.Statistics.FailedPassName = PassName;
+		}
+
+		if (!bPassSucceeded)
 		{
 			const bool bHasErrorDiagnostics = Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 			{
@@ -56,19 +83,22 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 					LogVergil,
 					Log,
 					TEXT("Vergil compiler pass '%s' stopped after reporting %d error diagnostics."),
-					*Pass->GetPassName().ToString(),
+					*PassName.ToString(),
 					Result.Diagnostics.Num());
 			}
 			else
 			{
-				UE_LOG(LogVergil, Warning, TEXT("Vergil compiler pass '%s' failed."), *Pass->GetPassName().ToString());
+				UE_LOG(LogVergil, Warning, TEXT("Vergil compiler pass '%s' failed."), *PassName.ToString());
 			}
 
 			break;
 		}
 	}
 
+	Result.Statistics.SetTargetDocumentStatistics(Context.GetDocument());
 	Vergil::NormalizeCommandPlan(Result.Commands);
+	Result.Statistics.bCommandPlanNormalized = true;
+	Result.Statistics.RebuildCommandStatistics(Result.Commands);
 
 	Result.bSucceeded = !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
