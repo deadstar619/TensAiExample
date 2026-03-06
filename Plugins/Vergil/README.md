@@ -55,7 +55,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, and `VGR-4008` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, and `VGR-4008` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
@@ -70,6 +70,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - The compiler now runs a dedicated node lowering pass after type resolution and before final command planning, so handler-driven `AddNode` and `SetNodeMetadata` commands are emitted once from the normalized working document and node-lowering failures stop with zero planned commands.
 - The compiler now runs a dedicated connection-legality pass after node lowering and before final command planning, rejecting impossible source/target pin directions, exec/data mismatches, lowered-pin drift, graph mismatches, and multiply-driven input pins before any plan is returned.
 - The compiler now runs a dedicated post-compile finalize pass after connection legality and before final command planning, so `FinalizeNode` work such as `K2.CreateDelegate.*` is emitted separately from node lowering while preserving deterministic plan ordering.
+- The compiler now runs dedicated optional comment and layout post-passes after finalize lowering and before final command planning. Authored comment nodes are emitted only when `bGenerateComments` is true, and the layout pass is now an isolated no-op boundary awaiting the future layout API.
 - Structural validation now checks dispatcher parameter type shapes, variable metadata keys, trimmed object/class paths, and graph-edge pin ownership across both graph surfaces.
 - Command execution now validates command-plan shape and intra-plan references before opening a transaction, preventing partial mutation from malformed plans.
 - Command plans now normalize into deterministic execution-phase order before they are returned or applied, so compile output and direct `ExecuteCommandPlan` replay share the same visible ordering.

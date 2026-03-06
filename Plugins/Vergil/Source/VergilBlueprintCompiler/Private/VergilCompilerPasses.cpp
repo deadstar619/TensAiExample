@@ -1794,7 +1794,15 @@ namespace
 		}
 	}
 
-	void AddNodeMetadataCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	bool IsCommentNode(const FVergilGraphNode& Node)
+	{
+		return Node.Kind == EVergilNodeKind::Comment;
+	}
+
+	void AddNodeMetadataCommands(
+		const FVergilGraphNode& Node,
+		const FName GraphName,
+		TFunctionRef<void(const FVergilCompilerCommand&)> EmitCommand)
 	{
 		TArray<FName> MetadataKeys;
 		Node.Metadata.GetKeys(MetadataKeys);
@@ -1812,12 +1820,42 @@ namespace
 
 			FVergilCompilerCommand MetadataCommand;
 			MetadataCommand.Type = EVergilCommandType::SetNodeMetadata;
-			MetadataCommand.GraphName = Context.GetGraphName();
+			MetadataCommand.GraphName = GraphName;
 			MetadataCommand.NodeId = Node.Id;
 			MetadataCommand.Name = MetadataKey;
 			MetadataCommand.StringValue = Node.Metadata.FindRef(MetadataKey);
-			Context.AddCommand(MetadataCommand);
+			EmitCommand(MetadataCommand);
 		}
+	}
+
+	void AddNodeMetadataCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	{
+		AddNodeMetadataCommands(Node, Context.GetGraphName(), [&Context](const FVergilCompilerCommand& Command)
+		{
+			Context.AddCommand(Command);
+		});
+	}
+
+	void BuildCommentNodeCommands(
+		const FVergilGraphNode& Node,
+		const FName GraphName,
+		TFunctionRef<void(const FVergilCompilerCommand&)> EmitCommand)
+	{
+		FVergilCompilerCommand AddNodeCommand;
+		AddNodeCommand.Type = EVergilCommandType::AddNode;
+		AddNodeCommand.GraphName = GraphName;
+		AddNodeCommand.NodeId = Node.Id;
+		AddNodeCommand.Name = TEXT("Vergil.Comment");
+		AddNodeCommand.SecondaryName = Node.Descriptor;
+		AddNodeCommand.Position = Node.Position;
+		AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("CommentText"));
+		if (AddNodeCommand.StringValue.IsEmpty())
+		{
+			AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("Title"));
+		}
+		CopyPlannedPins(Node, AddNodeCommand);
+		EmitCommand(AddNodeCommand);
+		AddNodeMetadataCommands(Node, GraphName, EmitCommand);
 	}
 
 	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompilerContext& Context)
@@ -1880,27 +1918,15 @@ namespace
 
 		virtual bool CanHandle(const FVergilGraphNode& Node) const override
 		{
-			return Node.Kind == EVergilNodeKind::Comment;
+			return IsCommentNode(Node);
 		}
 
 		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
 		{
-			FVergilCompilerCommand AddNodeCommand;
-			AddNodeCommand.Type = EVergilCommandType::AddNode;
-			AddNodeCommand.GraphName = Context.GetGraphName();
-			AddNodeCommand.NodeId = Node.Id;
-			AddNodeCommand.Name = GetDescriptor();
-			AddNodeCommand.SecondaryName = Node.Descriptor;
-			AddNodeCommand.Position = Node.Position;
-			AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("CommentText"));
-			if (AddNodeCommand.StringValue.IsEmpty())
+			BuildCommentNodeCommands(Node, Context.GetGraphName(), [&Context](const FVergilCompilerCommand& Command)
 			{
-				AddNodeCommand.StringValue = Node.Metadata.FindRef(TEXT("Title"));
-			}
-			CopyPlannedPins(Node, AddNodeCommand);
-			Context.AddCommand(AddNodeCommand);
-			AddNodeMetadataCommands(Node, Context);
-
+				Context.AddCommand(Command);
+			});
 			return true;
 		}
 	};
@@ -2991,6 +3017,42 @@ namespace
 		return bIsValid;
 	}
 
+	bool BuildPostCommentCommands(const FVergilCompileRequest& Request, FVergilCompilerContext& Context)
+	{
+		Context.ResetPostCommentCommands();
+		if (!Request.bGenerateComments)
+		{
+			return true;
+		}
+
+		for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
+		{
+			if (!IsCommentNode(Node))
+			{
+				continue;
+			}
+
+			BuildCommentNodeCommands(Node, Context.GetGraphName(), [&Context](const FVergilCompilerCommand& Command)
+			{
+				Context.AddPostCommentCommand(Command);
+			});
+		}
+
+		return true;
+	}
+
+	bool BuildPostLayoutCommands(const FVergilCompileRequest& Request, FVergilCompilerContext& Context)
+	{
+		Context.ResetPostLayoutCommands();
+		if (!Request.bAutoLayout)
+		{
+			return true;
+		}
+
+		// Layout remains a dedicated optional post-pass boundary for now.
+		return true;
+	}
+
 	bool ValidateConnectionLegality(FVergilCompilerContext& Context)
 	{
 		const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Context);
@@ -3380,10 +3442,17 @@ bool FVergilNodeLoweringPass::Run(
 	EnsureGenericFallbackHandler();
 	Context.ResetLoweredNodeCommands();
 	Context.ResetPostCompileFinalizeCommands();
+	Context.ResetPostCommentCommands();
+	Context.ResetPostLayoutCommands();
 
 	bool bIsValid = true;
 	for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
 	{
+		if (IsCommentNode(Node))
+		{
+			continue;
+		}
+
 		bIsValid &= LowerNode(Node, Context);
 	}
 
@@ -3404,6 +3473,40 @@ bool FVergilPostCompileFinalizePass::Run(
 	FVergilCompileResult& Result) const
 {
 	const bool bIsValid = BuildPostCompileFinalizeCommands(Context);
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilCommentPostPass::GetPassName() const
+{
+	return TEXT("CommentPostPass");
+}
+
+bool FVergilCommentPostPass::Run(
+	const FVergilCompileRequest& Request,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	const bool bIsValid = BuildPostCommentCommands(Request, Context);
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilLayoutPostPass::GetPassName() const
+{
+	return TEXT("LayoutPostPass");
+}
+
+bool FVergilLayoutPostPass::Run(
+	const FVergilCompileRequest& Request,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	const bool bIsValid = BuildPostLayoutCommands(Request, Context);
 	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
@@ -3569,6 +3672,16 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& /*Request*/, F
 	for (const FVergilCompilerCommand& LoweredNodeCommand : Context.GetLoweredNodeCommands())
 	{
 		Result.Commands.Add(LoweredNodeCommand);
+	}
+
+	for (const FVergilCompilerCommand& CommentCommand : Context.GetPostCommentCommands())
+	{
+		Result.Commands.Add(CommentCommand);
+	}
+
+	for (const FVergilCompilerCommand& LayoutCommand : Context.GetPostLayoutCommands())
+	{
+		Result.Commands.Add(LayoutCommand);
 	}
 
 	for (const FVergilGraphEdge& Edge : TargetEdges)

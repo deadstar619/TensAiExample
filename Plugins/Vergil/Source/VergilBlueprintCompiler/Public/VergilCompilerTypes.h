@@ -79,6 +79,16 @@ public:
 		PostCompileFinalizeCommands.Reset();
 	}
 
+	void ResetPostCommentCommands()
+	{
+		PostCommentCommands.Reset();
+	}
+
+	void ResetPostLayoutCommands()
+	{
+		PostLayoutCommands.Reset();
+	}
+
 	void AddCommand(const FVergilCompilerCommand& Command)
 	{
 		LoweredNodeCommands.Add(Command);
@@ -87,6 +97,16 @@ public:
 	void AddPostCompileFinalizeCommand(const FVergilCompilerCommand& Command)
 	{
 		PostCompileFinalizeCommands.Add(Command);
+	}
+
+	void AddPostCommentCommand(const FVergilCompilerCommand& Command)
+	{
+		PostCommentCommands.Add(Command);
+	}
+
+	void AddPostLayoutCommand(const FVergilCompilerCommand& Command)
+	{
+		PostLayoutCommands.Add(Command);
 	}
 
 	const TArray<FVergilCompilerCommand>& GetLoweredNodeCommands() const
@@ -99,6 +119,16 @@ public:
 		return PostCompileFinalizeCommands;
 	}
 
+	const TArray<FVergilCompilerCommand>& GetPostCommentCommands() const
+	{
+		return PostCommentCommands;
+	}
+
+	const TArray<FVergilCompilerCommand>& GetPostLayoutCommands() const
+	{
+		return PostLayoutCommands;
+	}
+
 private:
 	UBlueprint* Blueprint = nullptr;
 	UEdGraph* Graph = nullptr;
@@ -107,6 +137,8 @@ private:
 	TArray<FVergilDiagnostic>* Diagnostics = nullptr;
 	TArray<FVergilCompilerCommand> LoweredNodeCommands;
 	TArray<FVergilCompilerCommand> PostCompileFinalizeCommands;
+	TArray<FVergilCompilerCommand> PostCommentCommands;
+	TArray<FVergilCompilerCommand> PostLayoutCommands;
 	FName GraphName = TEXT("EventGraph");
 };
 

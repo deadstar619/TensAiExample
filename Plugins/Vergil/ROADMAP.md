@@ -172,7 +172,7 @@ Tickets:
 - [x] `VGR-3005` Add node lowering pass
 - [x] `VGR-3006` Add connection legality validation pass
 - [x] `VGR-3007` Add post-compile finalize pass
-- `VGR-3008` Split layout/comment work into explicit post-passes
+- [x] `VGR-3008` Split layout/comment work into explicit post-passes
 - `VGR-3009` Add compile statistics and richer result metadata
 - `VGR-3010` Guarantee dry-run and apply share the same planning path
 
@@ -223,6 +223,12 @@ Session note for `VGR-3007` (2026-03-06):
 - `FVergilPostCompileFinalizePass` now runs after connection legality and before final command planning, so deferred `FinalizeNode` work is emitted from its own compiler stage instead of being bundled into node lowering.
 - `FVergilCompilerContext` now buffers post-compile finalize commands separately from lowered node commands, and `FVergilCommandPlanningPass` assembles the final deterministic plan from document-level commands, lowered nodes, edges, and that finalize buffer.
 - `K2.CreateDelegate.*` finalization now lowers through the dedicated finalize pass, and `Vergil.Scaffold.PostCompileFinalizePass` covers deterministic `FinalizeNode` emission for valid create-delegate nodes.
+
+Session note for `VGR-3008` (2026-03-06):
+
+- `FVergilCommentPostPass` and `FVergilLayoutPostPass` now run after post-compile finalize lowering and before final command planning, which makes comment/layout work explicit optional post-passes instead of part of core node lowering.
+- Authored comment nodes now lower through the dedicated comment post-pass when `FVergilCompileRequest.bGenerateComments` is true, while the dedicated layout pass is an isolated no-op boundary awaiting the later deterministic layout API.
+- `Vergil.Scaffold.LayoutCommentPostPasses` now verifies comment-node emission only happens through the post-pass and that toggling `bAutoLayout` does not perturb the normalized command plan yet.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -406,13 +412,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3008`
+1. `VGR-3009`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
 5. `VGR-3010`
 
-This keeps pressure on the remaining post-pass and dry-run pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, and a dedicated post-compile finalize stage.
+This keeps pressure on the remaining result-metadata and dry-run pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, explicit finalize handling, and optional comment/layout post-pass boundaries.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

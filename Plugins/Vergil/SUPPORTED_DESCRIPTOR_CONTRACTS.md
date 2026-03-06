@@ -16,7 +16,8 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
-- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, and then command planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and then command planning.
+- `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` now gates the dedicated layout post-pass boundary. The layout pass currently emits no commands until the future layout API lands.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -82,7 +83,7 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Type resolution contracts
 
-- `FVergilTypeResolutionPass` now runs after symbol resolution and before node lowering, connection legality validation, post-compile finalize lowering, and final command planning.
+- `FVergilTypeResolutionPass` now runs after symbol resolution and before node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and final command planning.
 - The type pass normalizes authored type metadata across variable definitions, function signatures, macro signatures, dispatcher parameters, component class paths, interface class paths, and explicit typed-node metadata on the active graph surface.
 - Supported logical type categories remain `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` references now resolve to canonical object paths before planning, so planned commands stop depending on raw authored whitespace or alternate path spellings.
@@ -91,10 +92,11 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Node lowering contracts
 
-- `FVergilNodeLoweringPass` now runs after type resolution and before connection legality, post-compile finalize lowering, and final command planning.
+- `FVergilNodeLoweringPass` now runs after type resolution and before connection legality, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and final command planning.
 - The node-lowering pass resolves handlers against the normalized working document and emits node-scoped `AddNode` and `SetNodeMetadata` commands into the compiler context before the final plan is assembled.
 - Comment and generic metadata-lowering commands are emitted in deterministic key order.
-- Failed node lowering stops compilation before later connection legality validation, post-compile finalize lowering, or final command planning, so handler failures now return zero planned commands.
+- Comment nodes are now reserved for the explicit comment post-pass and do not lower through the core node-lowering stage.
+- Failed node lowering stops compilation before later connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, or final command planning, so handler failures now return zero planned commands.
 
 ## Connection legality contracts
 
@@ -103,14 +105,27 @@ This document describes the current scaffold contracts implemented in code today
 - Source pins must lower as output pins, target pins must lower as input pins, exec pins may only connect to exec pins, and data pins may only connect to data pins.
 - Input pins may only have one incoming authored edge during compile-time legality validation.
 - Lowered source and target pins must stay on the compile target graph, and both sides of one connection must lower into the same graph.
-- Failed connection legality validation stops compilation before post-compile finalize lowering or final command planning, so invalid authored edges now return zero planned commands.
+- Failed connection legality validation stops compilation before post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, or final command planning, so invalid authored edges now return zero planned commands.
 
 ## Post-compile finalize contracts
 
 - `FVergilPostCompileFinalizePass` now runs after connection legality validation and before final command planning.
 - The post-compile finalize pass emits deferred `FinalizeNode` commands into a dedicated compiler-context buffer instead of piggybacking on node lowering.
 - `K2.CreateDelegate.*` currently lowers its finalize payload through this pass, preserving the resolved function name and normalized authored metadata for the later executor finalize step.
-- Failed post-compile finalize lowering stops compilation before final command planning, so invalid finalize payloads now return zero planned commands.
+- Failed post-compile finalize lowering stops compilation before comment post-pass lowering, layout post-pass lowering, or final command planning, so invalid finalize payloads now return zero planned commands.
+
+## Comment post-pass contracts
+
+- `FVergilCommentPostPass` now runs after post-compile finalize lowering and before layout post-pass lowering plus final command planning.
+- Authored `EVergilNodeKind::Comment` nodes now lower through this dedicated optional post-pass instead of the core node-lowering stage.
+- `FVergilCompileRequest.bGenerateComments` controls whether comment-node commands are emitted at all. When it is `false`, authored comment nodes are omitted from the returned command plan.
+- The comment post-pass reuses the existing `Vergil.Comment` command surface and deterministic node-metadata ordering.
+
+## Layout post-pass contracts
+
+- `FVergilLayoutPostPass` now runs after the comment post-pass and before final command planning.
+- `FVergilCompileRequest.bAutoLayout` now gates this dedicated layout boundary, but the pass is intentionally a no-op until the future deterministic layout API lands.
+- Because the layout pass is isolated from core lowering and planning, future layout work can add `MoveNode` or related commands without changing earlier compiler stages.
 
 ## Blueprint metadata contracts
 
@@ -217,6 +232,7 @@ This document describes the current scaffold contracts implemented in code today
 - Malformed command plans fail during preflight with diagnostics and execute zero commands.
 - Deterministic command ordering currently normalizes at the execution-phase boundary: blueprint definition commands first, then graph structure, then `ConnectPins`, then `FinalizeNode`, then explicit `CompileBlueprint`, then post-compile `SetClassDefault`.
 - `FinalizeNode` commands are currently emitted by the dedicated post-compile finalize compiler pass, not by node lowering or final command planning.
+- Comment-node `AddNode` / `SetNodeMetadata` work is currently emitted by the dedicated comment post-pass when `bGenerateComments` is enabled.
 - `SetNodeMetadata`, `ConnectPins`, and `FinalizeNode` currently require their target node or pin ids to come from earlier `AddNode` commands in the same plan.
 - These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Metadata` into `SetBlueprintMetadata`, `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, component hierarchy definitions into `EnsureComponent` / `AttachComponent` / template-and-transform `SetComponentProperty` commands, implemented interfaces into `EnsureInterface`, and class defaults into post-compile `SetClassDefault` commands.
 
