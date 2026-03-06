@@ -18,6 +18,30 @@ Vergil is a clean-room plugin scaffold for deterministic Blueprint authoring.
 - Editor-only functionality stays out of runtime-facing modules.
 - Unsupported features must fail explicitly with diagnostics.
 
-## Next implementation steps
+## Headless scaffold automation
 
-  1. Replace deprecated timer usage with Clear and Invalidate Timer by Handle
+Run the current scaffold suite headlessly with one documented command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1
+```
+
+Useful variants:
+
+- Run one test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.TimerDelegateExecution'`
+- Summarize an existing log without re-running: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Get-VergilDiagnosticsSummary.ps1 -LogPath .\Saved\Logs\VergilAutomation_All.log`
+
+The runner writes a headless automation log and prints a compile/apply/test summary from that log.
+
+## Current supported contracts
+
+- The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
+- Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
+
+## Current baseline gap
+
+- `Vergil.Scaffold.*` currently passes headlessly, but `Vergil.Scaffold.TimerDelegateExecution` still emits the deprecation warning called out by roadmap ticket `VGR-0001`.
+
+## Planning
+
+- See `ROADMAP.md` for the tracked implementation roadmap and milestone breakdown.

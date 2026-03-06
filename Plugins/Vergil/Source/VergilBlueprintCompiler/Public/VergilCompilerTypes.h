@@ -124,3 +124,61 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileResult
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilCompilerCommand> Commands;
 };
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilDiagnosticSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 InfoCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 WarningCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ErrorCount = 0;
+
+	int32 GetTotalCount() const;
+	bool HasErrors() const;
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString Label;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bSucceeded = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bApplied = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 PlannedCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ExecutedCommandCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilDiagnosticSummary Diagnostics;
+
+	FString ToDisplayString() const;
+};
+
+namespace Vergil
+{
+	VERGILBLUEPRINTCOMPILER_API FVergilDiagnosticSummary SummarizeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics);
+	VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary SummarizeCompileResult(const FVergilCompileResult& Result);
+	VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary SummarizeApplyResult(const FVergilCompileResult& Result);
+	VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary SummarizeTestResult(
+		const FString& Label,
+		bool bSucceeded,
+		const TArray<FVergilDiagnostic>& Diagnostics,
+		int32 PlannedCommandCount = 0,
+		int32 ExecutedCommandCount = 0);
+}

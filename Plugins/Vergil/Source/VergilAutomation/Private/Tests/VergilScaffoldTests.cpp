@@ -165,6 +165,69 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.CommandPlanning",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilResultSummaryUtilitiesTest,
+	"Vergil.Scaffold.ResultSummaries",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
+{
+	TArray<FVergilDiagnostic> NonErrorDiagnostics;
+	NonErrorDiagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Info, TEXT("InfoCode"), TEXT("Informational diagnostic")));
+	NonErrorDiagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Warning, TEXT("WarnCode"), TEXT("Warning diagnostic")));
+
+	const FVergilDiagnosticSummary DiagnosticSummary = Vergil::SummarizeDiagnostics(NonErrorDiagnostics);
+	TestEqual(TEXT("Diagnostic summary counts info diagnostics."), DiagnosticSummary.InfoCount, 1);
+	TestEqual(TEXT("Diagnostic summary counts warning diagnostics."), DiagnosticSummary.WarningCount, 1);
+	TestEqual(TEXT("Diagnostic summary counts error diagnostics."), DiagnosticSummary.ErrorCount, 0);
+	TestEqual(TEXT("Diagnostic summary exposes the total count."), DiagnosticSummary.GetTotalCount(), 2);
+	TestTrue(TEXT("Diagnostic summary display text includes counts."), DiagnosticSummary.ToDisplayString().Contains(TEXT("info=1 warnings=1 errors=0 total=2")));
+
+	FVergilCompileResult CompileResult;
+	CompileResult.bSucceeded = true;
+	CompileResult.Diagnostics = NonErrorDiagnostics;
+	CompileResult.Commands.AddDefaulted(3);
+
+	const FVergilExecutionSummary CompileSummary = Vergil::SummarizeCompileResult(CompileResult);
+	TestEqual(TEXT("Compile summary uses the compile label."), CompileSummary.Label, FString(TEXT("Compile")));
+	TestTrue(TEXT("Compile summary succeeds without errors."), CompileSummary.bSucceeded);
+	TestFalse(TEXT("Compile summary does not mark the plan as applied."), CompileSummary.bApplied);
+	TestEqual(TEXT("Compile summary reports planned command count."), CompileSummary.PlannedCommandCount, 3);
+	TestEqual(TEXT("Compile summary reports diagnostic totals."), CompileSummary.Diagnostics.GetTotalCount(), 2);
+
+	TArray<FVergilDiagnostic> ApplyDiagnostics = NonErrorDiagnostics;
+	ApplyDiagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Error, TEXT("ApplyError"), TEXT("Apply failed")));
+
+	FVergilCompileResult ApplyResult;
+	ApplyResult.bSucceeded = false;
+	ApplyResult.bApplied = true;
+	ApplyResult.ExecutedCommandCount = 2;
+	ApplyResult.Diagnostics = ApplyDiagnostics;
+	ApplyResult.Commands.AddDefaulted(4);
+
+	const FVergilExecutionSummary ApplySummary = Vergil::SummarizeApplyResult(ApplyResult);
+	TestEqual(TEXT("Apply summary uses the apply label."), ApplySummary.Label, FString(TEXT("Apply")));
+	TestTrue(TEXT("Apply summary preserves the applied flag."), ApplySummary.bApplied);
+	TestFalse(TEXT("Apply summary fails when apply diagnostics contain errors."), ApplySummary.bSucceeded);
+	TestEqual(TEXT("Apply summary reports executed command count."), ApplySummary.ExecutedCommandCount, 2);
+	TestEqual(TEXT("Apply summary reports error counts."), ApplySummary.Diagnostics.ErrorCount, 1);
+	TestTrue(TEXT("Apply summary display text includes the label."), ApplySummary.ToDisplayString().Contains(TEXT("Apply succeeded=false applied=true planned=4 executed=2")));
+
+	const FVergilExecutionSummary TestSummary = Vergil::SummarizeTestResult(
+		TEXT("Vergil.Scaffold.ResultSummaries"),
+		true,
+		NonErrorDiagnostics,
+		5,
+		1);
+	TestEqual(TEXT("Test summary preserves the provided label."), TestSummary.Label, FString(TEXT("Vergil.Scaffold.ResultSummaries")));
+	TestTrue(TEXT("Test summary succeeds when diagnostics contain no errors."), TestSummary.bSucceeded);
+	TestTrue(TEXT("Test summary treats executed work as applied."), TestSummary.bApplied);
+	TestEqual(TEXT("Test summary reports planned command count."), TestSummary.PlannedCommandCount, 5);
+	TestEqual(TEXT("Test summary reports executed command count."), TestSummary.ExecutedCommandCount, 1);
+
+	return true;
+}
+
 bool FVergilCommandPlanningTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphNode EventNode;

@@ -48,12 +48,14 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocument(
 
 	const FVergilBlueprintCompilerService CompilerService;
 	FVergilCompileResult Result = CompilerService.Compile(Request);
+	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString());
 
 	if (bApplyCommands && Result.bSucceeded)
 	{
 		const FVergilCommandExecutor Executor;
 		Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
 		RefreshCompileResultState(Result);
+		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 	}
 
 	return Result;
@@ -67,6 +69,7 @@ FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blue
 	const FVergilCommandExecutor Executor;
 	Result.bApplied = Executor.Execute(Blueprint, Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
 	RefreshCompileResultState(Result);
+	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 	return Result;
 }
 
