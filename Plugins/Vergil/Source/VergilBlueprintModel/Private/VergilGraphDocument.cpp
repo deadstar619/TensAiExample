@@ -201,6 +201,79 @@ namespace
 
 		return bIsValid;
 	}
+
+	bool ValidateMacroParameterTypeReference(
+		const FVergilMacroParameterDefinition& Parameter,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		if (Parameter.bIsExec)
+		{
+			if (!Parameter.Type.PinCategory.IsNone()
+				|| !Parameter.Type.PinSubCategory.IsNone()
+				|| !Parameter.Type.ObjectPath.IsEmpty()
+				|| Parameter.Type.ContainerType != EVergilVariableContainerType::None
+				|| !Parameter.Type.ValuePinCategory.IsNone()
+				|| !Parameter.Type.ValuePinSubCategory.IsNone()
+				|| !Parameter.Type.ValueObjectPath.IsEmpty())
+			{
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroExecPinTypeUnexpected"),
+					FString::Printf(TEXT("%s cannot declare type metadata for exec pins."), *ContextLabel));
+				return false;
+			}
+
+			return true;
+		}
+
+		bool bIsValid = ValidateTypeReference(
+			Parameter.Type.PinCategory,
+			Parameter.Type.ObjectPath,
+			ContextLabel,
+			TEXT("MacroParameterTypeCategoryMissing"),
+			TEXT("MacroParameterTypeCategoryUnsupported"),
+			TEXT("MacroParameterTypeObjectPathMissing"),
+			OutDiagnostics);
+
+		if (Parameter.Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			if (Parameter.Type.ValuePinCategory.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroParameterMapValueCategoryMissing"),
+					FString::Printf(TEXT("%s map definitions must declare a value type category."), *ContextLabel));
+			}
+			else
+			{
+				bIsValid &= ValidateTypeReference(
+					Parameter.Type.ValuePinCategory,
+					Parameter.Type.ValueObjectPath,
+					FString::Printf(TEXT("%s value type"), *ContextLabel),
+					TEXT("MacroParameterTypeCategoryMissing"),
+					TEXT("MacroParameterTypeCategoryUnsupported"),
+					TEXT("MacroParameterTypeObjectPathMissing"),
+					OutDiagnostics);
+			}
+		}
+		else if (!Parameter.Type.ValuePinCategory.IsNone()
+			|| !Parameter.Type.ValuePinSubCategory.IsNone()
+			|| !Parameter.Type.ValueObjectPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroParameterValueTypeUnexpected"),
+				FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel));
+		}
+
+		return bIsValid;
+	}
 }
 
 bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDiagnostics) const
@@ -217,6 +290,15 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 	TSet<FGuid> PinIds;
 	TSet<FName> VariableNames;
 	TSet<FName> DispatcherNames;
+	TSet<FName> AllComponentNames;
+
+	for (const FVergilComponentDefinition& Component : Components)
+	{
+		if (!Component.Name.IsNone())
+		{
+			AllComponentNames.Add(Component.Name);
+		}
+	}
 
 	for (const FVergilDispatcherDefinition& Dispatcher : Dispatchers)
 	{
@@ -428,12 +510,140 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		}
 	}
 
-	TSet<FName> AllComponentNames;
-	for (const FVergilComponentDefinition& Component : Components)
+	TSet<FName> MacroNames;
+	for (const FVergilMacroDefinition& Macro : Macros)
 	{
-		if (!Component.Name.IsNone())
+		const FString MacroLabel = Macro.Name.IsNone()
+			? FString(TEXT("Macro"))
+			: FString::Printf(TEXT("Macro '%s'"), *Macro.Name.ToString());
+
+		if (Macro.Name.IsNone())
 		{
-			AllComponentNames.Add(Component.Name);
+			bIsValid = false;
+			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("MacroNameMissing"), TEXT("Every macro must declare a name."));
+			continue;
+		}
+
+		if (MacroNames.Contains(Macro.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroNameDuplicate"),
+				FString::Printf(TEXT("Duplicate macro name '%s'."), *Macro.Name.ToString()));
+			continue;
+		}
+
+		if (VariableNames.Contains(Macro.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroNameConflictsWithVariable"),
+				FString::Printf(TEXT("Macro '%s' conflicts with a variable of the same name."), *Macro.Name.ToString()));
+			continue;
+		}
+
+		if (FunctionNames.Contains(Macro.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroNameConflictsWithFunction"),
+				FString::Printf(TEXT("Macro '%s' conflicts with a function of the same name."), *Macro.Name.ToString()));
+			continue;
+		}
+
+		if (DispatcherNames.Contains(Macro.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroNameConflictsWithDispatcher"),
+				FString::Printf(TEXT("Macro '%s' conflicts with a dispatcher of the same name."), *Macro.Name.ToString()));
+			continue;
+		}
+
+		if (AllComponentNames.Contains(Macro.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroNameConflictsWithComponent"),
+				FString::Printf(TEXT("Macro '%s' conflicts with a component of the same name."), *Macro.Name.ToString()));
+			continue;
+		}
+
+		MacroNames.Add(Macro.Name);
+
+		TSet<FName> SignatureNames;
+		for (const FVergilMacroParameterDefinition& Input : Macro.Inputs)
+		{
+			const FString InputLabel = Input.Name.IsNone()
+				? FString::Printf(TEXT("%s input"), *MacroLabel)
+				: FString::Printf(TEXT("%s input '%s'"), *MacroLabel, *Input.Name.ToString());
+
+			if (Input.Name.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroInputNameMissing"),
+					FString::Printf(TEXT("%s contains an input without a name."), *MacroLabel));
+				continue;
+			}
+
+			if (SignatureNames.Contains(Input.Name))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroParameterNameDuplicate"),
+					FString::Printf(TEXT("%s contains duplicate signature member '%s'."), *MacroLabel, *Input.Name.ToString()));
+				continue;
+			}
+
+			SignatureNames.Add(Input.Name);
+			bIsValid &= ValidateMacroParameterTypeReference(Input, InputLabel, OutDiagnostics);
+		}
+
+		for (const FVergilMacroParameterDefinition& Output : Macro.Outputs)
+		{
+			const FString OutputLabel = Output.Name.IsNone()
+				? FString::Printf(TEXT("%s output"), *MacroLabel)
+				: FString::Printf(TEXT("%s output '%s'"), *MacroLabel, *Output.Name.ToString());
+
+			if (Output.Name.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroOutputNameMissing"),
+					FString::Printf(TEXT("%s contains an output without a name."), *MacroLabel));
+				continue;
+			}
+
+			if (SignatureNames.Contains(Output.Name))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroParameterNameDuplicate"),
+					FString::Printf(TEXT("%s contains duplicate signature member '%s'."), *MacroLabel, *Output.Name.ToString()));
+				continue;
+			}
+
+			SignatureNames.Add(Output.Name);
+			bIsValid &= ValidateMacroParameterTypeReference(Output, OutputLabel, OutDiagnostics);
 		}
 	}
 
@@ -495,6 +705,16 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 				EVergilDiagnosticSeverity::Error,
 				TEXT("ComponentNameConflictsWithDispatcher"),
 				FString::Printf(TEXT("Component '%s' conflicts with a dispatcher of the same name."), *Component.Name.ToString()));
+		}
+
+		if (MacroNames.Contains(Component.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentNameConflictsWithMacro"),
+				FString::Printf(TEXT("Component '%s' conflicts with a macro of the same name."), *Component.Name.ToString()));
 		}
 
 		if (Component.ComponentClassPath.IsEmpty())

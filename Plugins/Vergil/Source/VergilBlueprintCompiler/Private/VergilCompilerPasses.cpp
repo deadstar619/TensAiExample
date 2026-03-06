@@ -96,6 +96,120 @@ namespace
 		Attributes.Add(TEXT("bExposeToCinematics"), Flags.bExposeToCinematics ? TEXT("true") : TEXT("false"));
 	}
 
+	FName MakeSignatureAttributeKey(const TCHAR* Prefix, const int32 Index, const TCHAR* Suffix)
+	{
+		return *FString::Printf(TEXT("%s_%d_%s"), Prefix, Index, Suffix);
+	}
+
+	void AddFunctionParameterAttributes(
+		TMap<FName, FString>& Attributes,
+		const TCHAR* Prefix,
+		const TArray<FVergilFunctionParameterDefinition>& Parameters)
+	{
+		Attributes.Add(*FString::Printf(TEXT("%sCount"), Prefix), FString::FromInt(Parameters.Num()));
+		for (int32 ParameterIndex = 0; ParameterIndex < Parameters.Num(); ++ParameterIndex)
+		{
+			const FVergilFunctionParameterDefinition& Parameter = Parameters[ParameterIndex];
+			Attributes.Add(MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("Name")), Parameter.Name.ToString());
+
+			TMap<FName, FString> TypeAttributes;
+			AddVariableTypeAttributes(TypeAttributes, Parameter.Type);
+			for (const TPair<FName, FString>& TypeAttribute : TypeAttributes)
+			{
+				Attributes.Add(
+					MakeSignatureAttributeKey(Prefix, ParameterIndex, *TypeAttribute.Key.ToString()),
+					TypeAttribute.Value);
+			}
+		}
+	}
+
+	void AddFunctionDefinitionAttributes(TMap<FName, FString>& Attributes, const FVergilFunctionDefinition& Function)
+	{
+		Attributes.Add(TEXT("bPure"), Function.bPure ? TEXT("true") : TEXT("false"));
+
+		FString AccessSpecifier = TEXT("Public");
+		switch (Function.AccessSpecifier)
+		{
+		case EVergilFunctionAccessSpecifier::Protected:
+			AccessSpecifier = TEXT("Protected");
+			break;
+
+		case EVergilFunctionAccessSpecifier::Private:
+			AccessSpecifier = TEXT("Private");
+			break;
+
+		case EVergilFunctionAccessSpecifier::Public:
+		default:
+			break;
+		}
+
+		Attributes.Add(TEXT("AccessSpecifier"), AccessSpecifier);
+		AddFunctionParameterAttributes(Attributes, TEXT("Input"), Function.Inputs);
+		AddFunctionParameterAttributes(Attributes, TEXT("Output"), Function.Outputs);
+	}
+
+	void AddMacroParameterAttributes(
+		TMap<FName, FString>& Attributes,
+		const TCHAR* Prefix,
+		const TArray<FVergilMacroParameterDefinition>& Parameters)
+	{
+		Attributes.Add(*FString::Printf(TEXT("%sCount"), Prefix), FString::FromInt(Parameters.Num()));
+		for (int32 ParameterIndex = 0; ParameterIndex < Parameters.Num(); ++ParameterIndex)
+		{
+			const FVergilMacroParameterDefinition& Parameter = Parameters[ParameterIndex];
+			Attributes.Add(MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("Name")), Parameter.Name.ToString());
+			Attributes.Add(MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("bExec")), Parameter.bIsExec ? TEXT("true") : TEXT("false"));
+
+			if (Parameter.bIsExec)
+			{
+				continue;
+			}
+
+			TMap<FName, FString> TypeAttributes;
+			AddVariableTypeAttributes(TypeAttributes, Parameter.Type);
+			for (const TPair<FName, FString>& TypeAttribute : TypeAttributes)
+			{
+				Attributes.Add(
+					MakeSignatureAttributeKey(Prefix, ParameterIndex, *TypeAttribute.Key.ToString()),
+					TypeAttribute.Value);
+			}
+		}
+	}
+
+	void AddMacroDefinitionAttributes(TMap<FName, FString>& Attributes, const FVergilMacroDefinition& Macro)
+	{
+		AddMacroParameterAttributes(Attributes, TEXT("Input"), Macro.Inputs);
+		AddMacroParameterAttributes(Attributes, TEXT("Output"), Macro.Outputs);
+	}
+
+	void AddComponentTransformCommands(TArray<FVergilCompilerCommand>& Commands, const FVergilComponentDefinition& Component)
+	{
+		auto AddTransformCommand = [&Commands, &Component](const FName PropertyName, const FString& Value)
+		{
+			FVergilCompilerCommand PropertyCommand;
+			PropertyCommand.Type = EVergilCommandType::SetComponentProperty;
+			PropertyCommand.SecondaryName = Component.Name;
+			PropertyCommand.Name = PropertyName;
+			PropertyCommand.StringValue = Value;
+			Commands.Add(PropertyCommand);
+		};
+
+		if (Component.RelativeTransform.bHasRelativeLocation)
+		{
+			AddTransformCommand(TEXT("RelativeLocation"), Component.RelativeTransform.RelativeLocation.ToString());
+		}
+
+		if (Component.RelativeTransform.bHasRelativeRotation)
+		{
+			AddTransformCommand(TEXT("RelativeRotation"), Component.RelativeTransform.RelativeRotation.ToString());
+		}
+
+		if (Component.RelativeTransform.bHasRelativeScale)
+		{
+			AddTransformCommand(TEXT("RelativeScale3D"), Component.RelativeTransform.RelativeScale3D.ToString());
+		}
+	}
+
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -1213,6 +1327,26 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(DefaultCommand);
 	}
 
+	for (const FVergilFunctionDefinition& Function : Request.Document.Functions)
+	{
+		FVergilCompilerCommand EnsureFunctionGraphCommand;
+		EnsureFunctionGraphCommand.Type = EVergilCommandType::EnsureFunctionGraph;
+		EnsureFunctionGraphCommand.GraphName = Function.Name;
+		EnsureFunctionGraphCommand.SecondaryName = Function.Name;
+		AddFunctionDefinitionAttributes(EnsureFunctionGraphCommand.Attributes, Function);
+		Result.Commands.Add(EnsureFunctionGraphCommand);
+	}
+
+	for (const FVergilMacroDefinition& Macro : Request.Document.Macros)
+	{
+		FVergilCompilerCommand EnsureMacroGraphCommand;
+		EnsureMacroGraphCommand.Type = EVergilCommandType::EnsureMacroGraph;
+		EnsureMacroGraphCommand.GraphName = Macro.Name;
+		EnsureMacroGraphCommand.SecondaryName = Macro.Name;
+		AddMacroDefinitionAttributes(EnsureMacroGraphCommand.Attributes, Macro);
+		Result.Commands.Add(EnsureMacroGraphCommand);
+	}
+
 	for (const FVergilDispatcherDefinition& Dispatcher : Request.Document.Dispatchers)
 	{
 		FVergilCompilerCommand EnsureDispatcherCommand;
@@ -1241,6 +1375,30 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 			}
 			Result.Commands.Add(ParameterCommand);
 		}
+	}
+
+	for (const FVergilComponentDefinition& Component : Request.Document.Components)
+	{
+		FVergilCompilerCommand EnsureComponentCommand;
+		EnsureComponentCommand.Type = EVergilCommandType::EnsureComponent;
+		EnsureComponentCommand.SecondaryName = Component.Name;
+		EnsureComponentCommand.StringValue = Component.ComponentClassPath;
+		Result.Commands.Add(EnsureComponentCommand);
+	}
+
+	for (const FVergilComponentDefinition& Component : Request.Document.Components)
+	{
+		if (!Component.ParentComponentName.IsNone())
+		{
+			FVergilCompilerCommand AttachComponentCommand;
+			AttachComponentCommand.Type = EVergilCommandType::AttachComponent;
+			AttachComponentCommand.SecondaryName = Component.Name;
+			AttachComponentCommand.Name = Component.ParentComponentName;
+			AttachComponentCommand.StringValue = Component.AttachSocketName.ToString();
+			Result.Commands.Add(AttachComponentCommand);
+		}
+
+		AddComponentTransformCommands(Result.Commands, Component);
 	}
 
 	FVergilCompilerCommand EnsureGraphCommand;

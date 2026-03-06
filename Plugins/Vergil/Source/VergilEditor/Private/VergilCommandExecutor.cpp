@@ -19,10 +19,12 @@
 #include "K2Node_ExecutionSequence.h"
 #include "K2Node_FormatText.h"
 #include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_Knot.h"
 #include "K2Node_MakeArray.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_Tunnel.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeMap.h"
 #include "K2Node_MakeSet.h"
@@ -52,6 +54,12 @@ namespace
 		TMap<FGuid, UEdGraphNode*> NodesById;
 		TMap<FGuid, UEdGraphPin*> PinsById;
 		TSet<FGuid> RemovedNodeIds;
+	};
+
+	struct FVergilSignaturePinPlan
+	{
+		FName Name = NAME_None;
+		FEdGraphPinType Type;
 	};
 
 	FName ResolveCommandGraphName(const FVergilCompilerCommand& Command)
@@ -133,6 +141,45 @@ namespace
 		}
 
 		return FBlueprintEditorUtils::GetDelegateSignatureGraphByName(Blueprint, DispatcherName);
+	}
+
+	UK2Node_FunctionEntry* FindFunctionEntryNode(UEdGraph* Graph)
+	{
+		return Graph != nullptr ? Cast<UK2Node_FunctionEntry>(FBlueprintEditorUtils::GetEntryNode(Graph)) : nullptr;
+	}
+
+	UK2Node_EditablePinBase* FindEditableGraphEntryNode(UEdGraph* Graph)
+	{
+		TWeakObjectPtr<UK2Node_EditablePinBase> EntryNode;
+		TWeakObjectPtr<UK2Node_EditablePinBase> ResultNode;
+		FBlueprintEditorUtils::GetEntryAndResultNodes(Graph, EntryNode, ResultNode);
+		return EntryNode.Get();
+	}
+
+	UK2Node_FunctionResult* FindFunctionResultNode(UEdGraph* Graph)
+	{
+		if (Graph == nullptr)
+		{
+			return nullptr;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UK2Node_FunctionResult* ResultNode = Cast<UK2Node_FunctionResult>(Node))
+			{
+				return ResultNode;
+			}
+		}
+
+		return nullptr;
+	}
+
+	UK2Node_EditablePinBase* FindEditableGraphResultNode(UEdGraph* Graph)
+	{
+		TWeakObjectPtr<UK2Node_EditablePinBase> EntryNode;
+		TWeakObjectPtr<UK2Node_EditablePinBase> ResultNode;
+		FBlueprintEditorUtils::GetEntryAndResultNodes(Graph, EntryNode, ResultNode);
+		return ResultNode.Get();
 	}
 
 	bool HasBlueprintMemberVariable(UBlueprint* Blueprint, const FName VariableName)
@@ -445,6 +492,11 @@ namespace
 		}
 
 		return FString();
+	}
+
+	FName MakeSignatureAttributeKey(const TCHAR* Prefix, const int32 Index, const TCHAR* Suffix)
+	{
+		return *FString::Printf(TEXT("%s_%d_%s"), Prefix, Index, Suffix);
 	}
 
 	bool HasPlannedExecPins(const FVergilCompilerCommand& Command)
@@ -862,8 +914,8 @@ namespace
 
 	bool BuildPinTypeFromAttributes(
 		const FVergilCompilerCommand& Command,
-		const TCHAR* CategoryKey,
-		const TCHAR* ObjectPathKey,
+		const FName CategoryKey,
+		const FName ObjectPathKey,
 		FEdGraphPinType& OutPinType,
 		FString& OutError)
 	{
@@ -873,7 +925,7 @@ namespace
 
 		if (Category.IsEmpty())
 		{
-			OutError = FString::Printf(TEXT("Missing required attribute '%s'."), CategoryKey);
+			OutError = FString::Printf(TEXT("Missing required attribute '%s'."), *CategoryKey.ToString());
 			return false;
 		}
 
@@ -977,6 +1029,16 @@ namespace
 		return false;
 	}
 
+	bool BuildPinTypeFromAttributes(
+		const FVergilCompilerCommand& Command,
+		const TCHAR* CategoryKey,
+		const TCHAR* ObjectPathKey,
+		FEdGraphPinType& OutPinType,
+		FString& OutError)
+	{
+		return BuildPinTypeFromAttributes(Command, FName(CategoryKey), FName(ObjectPathKey), OutPinType, OutError);
+	}
+
 	bool TryParseBoolAttribute(const FVergilCompilerCommand& Command, const FName Key, bool& OutValue)
 	{
 		const FString Value = GetCommandAttribute(Command, Key).ToLower();
@@ -1043,6 +1105,489 @@ namespace
 
 		OutError = FString::Printf(TEXT("Unsupported container type '%s'."), *ContainerType);
 		return false;
+	}
+
+	bool BuildVariablePinTypeFromSignatureAttributes(
+		const FVergilCompilerCommand& Command,
+		const TCHAR* Prefix,
+		const int32 ParameterIndex,
+		FEdGraphPinType& OutPinType,
+		FString& OutError)
+	{
+		if (!BuildPinTypeFromAttributes(
+				Command,
+				MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("PinCategory")),
+				MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ObjectPath")),
+				OutPinType,
+				OutError))
+		{
+			return false;
+		}
+
+		const FString ContainerType = GetCommandAttribute(
+			Command,
+			MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ContainerType"))).ToLower();
+		if (ContainerType.IsEmpty() || ContainerType == TEXT("none"))
+		{
+			return true;
+		}
+
+		if (ContainerType == TEXT("array"))
+		{
+			OutPinType.ContainerType = EPinContainerType::Array;
+			return true;
+		}
+
+		if (ContainerType == TEXT("set"))
+		{
+			OutPinType.ContainerType = EPinContainerType::Set;
+			return true;
+		}
+
+		if (ContainerType == TEXT("map"))
+		{
+			FEdGraphPinType ValuePinType;
+			if (!BuildPinTypeFromAttributes(
+					Command,
+					MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValuePinCategory")),
+					MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValueObjectPath")),
+					ValuePinType,
+					OutError))
+			{
+				return false;
+			}
+
+			OutPinType.ContainerType = EPinContainerType::Map;
+			OutPinType.PinValueType = FEdGraphTerminalType::FromPinType(ValuePinType);
+			return true;
+		}
+
+		OutError = FString::Printf(TEXT("Unsupported container type '%s'."), *ContainerType);
+		return false;
+	}
+
+	bool HasFunctionSignatureAttributes(const FVergilCompilerCommand& Command)
+	{
+		return Command.Attributes.Contains(TEXT("bPure"))
+			|| Command.Attributes.Contains(TEXT("AccessSpecifier"))
+			|| Command.Attributes.Contains(TEXT("InputCount"))
+			|| Command.Attributes.Contains(TEXT("OutputCount"));
+	}
+
+	bool HasMacroSignatureAttributes(const FVergilCompilerCommand& Command)
+	{
+		return Command.Attributes.Contains(TEXT("InputCount"))
+			|| Command.Attributes.Contains(TEXT("OutputCount"));
+	}
+
+	bool TryGetFunctionParameterPlans(
+		const FVergilCompilerCommand& Command,
+		const TCHAR* Prefix,
+		TArray<FVergilSignaturePinPlan>& OutParameters,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		OutParameters.Reset();
+
+		int32 ParameterCount = 0;
+		const FString CountValue = GetCommandAttribute(Command, *FString::Printf(TEXT("%sCount"), Prefix));
+		if (!CountValue.IsEmpty() && !TryParseInt(CountValue, ParameterCount))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionSignatureCountInvalid"),
+				FString::Printf(TEXT("Function graph '%s' has an invalid %s count '%s'."), *ResolveCommandGraphName(Command).ToString(), Prefix, *CountValue),
+				Command.NodeId));
+			return false;
+		}
+
+		if (ParameterCount < 0)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionSignatureCountNegative"),
+				FString::Printf(TEXT("Function graph '%s' cannot declare a negative %s count."), *ResolveCommandGraphName(Command).ToString(), Prefix),
+				Command.NodeId));
+			return false;
+		}
+
+		for (int32 ParameterIndex = 0; ParameterIndex < ParameterCount; ++ParameterIndex)
+		{
+			FVergilSignaturePinPlan Parameter;
+			Parameter.Name = *GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("Name")));
+			if (Parameter.Name.IsNone())
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionSignatureParameterNameMissing"),
+					FString::Printf(TEXT("Function graph '%s' %s parameter %d is missing a name."), *ResolveCommandGraphName(Command).ToString(), Prefix, ParameterIndex),
+					Command.NodeId));
+				return false;
+			}
+
+			FString TypeError;
+			if (!BuildVariablePinTypeFromSignatureAttributes(Command, Prefix, ParameterIndex, Parameter.Type, TypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionSignatureParameterTypeInvalid"),
+					FString::Printf(TEXT("Function graph '%s' parameter '%s' is invalid: %s"), *ResolveCommandGraphName(Command).ToString(), *Parameter.Name.ToString(), *TypeError),
+					Command.NodeId));
+				return false;
+			}
+
+			OutParameters.Add(Parameter);
+		}
+
+		return true;
+	}
+
+	bool TryGetMacroPinPlans(
+		const FVergilCompilerCommand& Command,
+		const TCHAR* Prefix,
+		TArray<FVergilSignaturePinPlan>& OutParameters,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		OutParameters.Reset();
+
+		int32 ParameterCount = 0;
+		const FString CountValue = GetCommandAttribute(Command, *FString::Printf(TEXT("%sCount"), Prefix));
+		if (!CountValue.IsEmpty() && !TryParseInt(CountValue, ParameterCount))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroSignatureCountInvalid"),
+				FString::Printf(TEXT("Macro graph '%s' has an invalid %s count '%s'."), *ResolveCommandGraphName(Command).ToString(), Prefix, *CountValue),
+				Command.NodeId));
+			return false;
+		}
+
+		if (ParameterCount < 0)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroSignatureCountNegative"),
+				FString::Printf(TEXT("Macro graph '%s' cannot declare a negative %s count."), *ResolveCommandGraphName(Command).ToString(), Prefix),
+				Command.NodeId));
+			return false;
+		}
+
+		for (int32 ParameterIndex = 0; ParameterIndex < ParameterCount; ++ParameterIndex)
+		{
+			FVergilSignaturePinPlan Parameter;
+			Parameter.Name = *GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("Name")));
+			if (Parameter.Name.IsNone())
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroSignatureParameterNameMissing"),
+					FString::Printf(TEXT("Macro graph '%s' %s parameter %d is missing a name."), *ResolveCommandGraphName(Command).ToString(), Prefix, ParameterIndex),
+					Command.NodeId));
+				return false;
+			}
+
+			bool bIsExec = false;
+			if (TryParseBoolAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("bExec")), bIsExec) && bIsExec)
+			{
+				Parameter.Type.PinCategory = UEdGraphSchema_K2::PC_Exec;
+				OutParameters.Add(Parameter);
+				continue;
+			}
+
+			FString TypeError;
+			if (!BuildVariablePinTypeFromSignatureAttributes(Command, Prefix, ParameterIndex, Parameter.Type, TypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MacroSignatureParameterTypeInvalid"),
+					FString::Printf(TEXT("Macro graph '%s' parameter '%s' is invalid: %s"), *ResolveCommandGraphName(Command).ToString(), *Parameter.Name.ToString(), *TypeError),
+					Command.NodeId));
+				return false;
+			}
+
+			OutParameters.Add(Parameter);
+		}
+
+		return true;
+	}
+
+	bool EditablePinsMatch(
+		UK2Node_EditablePinBase* Node,
+		const TArray<FVergilSignaturePinPlan>& DesiredPins,
+		const EEdGraphPinDirection DesiredDirection)
+	{
+		if (Node == nullptr || Node->UserDefinedPins.Num() != DesiredPins.Num())
+		{
+			return false;
+		}
+
+		for (int32 PinIndex = 0; PinIndex < DesiredPins.Num(); ++PinIndex)
+		{
+			const TSharedPtr<FUserPinInfo>& UserPin = Node->UserDefinedPins[PinIndex];
+			if (!UserPin.IsValid()
+				|| UserPin->DesiredPinDirection != DesiredDirection
+				|| UserPin->PinName != DesiredPins[PinIndex].Name
+				|| !(UserPin->PinType == DesiredPins[PinIndex].Type))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool RebuildEditablePins(
+		UK2Node_EditablePinBase* Node,
+		const TArray<FVergilSignaturePinPlan>& DesiredPins,
+		const EEdGraphPinDirection DesiredDirection,
+		const FName FailureCode,
+		const TCHAR* GraphKind,
+		const TCHAR* PinKind,
+		const FVergilCompilerCommand& Command,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Node == nullptr)
+		{
+			return false;
+		}
+
+		if (EditablePinsMatch(Node, DesiredPins, DesiredDirection))
+		{
+			return true;
+		}
+
+		Node->Modify();
+		for (int32 PinIndex = Node->UserDefinedPins.Num() - 1; PinIndex >= 0; --PinIndex)
+		{
+			const TSharedPtr<FUserPinInfo>& UserPin = Node->UserDefinedPins[PinIndex];
+			if (UserPin.IsValid())
+			{
+				Node->RemoveUserDefinedPin(UserPin);
+			}
+		}
+
+		for (const FVergilSignaturePinPlan& DesiredPin : DesiredPins)
+		{
+			if (Node->CreateUserDefinedPin(DesiredPin.Name, DesiredPin.Type, DesiredDirection, false) == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					FailureCode,
+					FString::Printf(TEXT("Unable to create %s %s pin '%s' on graph '%s'."), GraphKind, PinKind, *DesiredPin.Name.ToString(), *ResolveCommandGraphName(Command).ToString()),
+					Command.NodeId));
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool ExecuteEnsureFunctionGraph(
+		UBlueprint* Blueprint,
+		const FVergilCompilerCommand& Command,
+		FVergilExecutionState& State,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		UEdGraph* const Graph = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics);
+		if (Graph == nullptr)
+		{
+			return false;
+		}
+
+		if (!HasFunctionSignatureAttributes(Command))
+		{
+			return true;
+		}
+
+		UK2Node_FunctionEntry* const EntryNode = FindFunctionEntryNode(Graph);
+		if (EntryNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionGraphEntryMissing"),
+				FString::Printf(TEXT("Function graph '%s' does not contain an entry node."), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		TArray<FVergilSignaturePinPlan> InputParameters;
+		TArray<FVergilSignaturePinPlan> OutputParameters;
+		if (!TryGetFunctionParameterPlans(Command, TEXT("Input"), InputParameters, Diagnostics)
+			|| !TryGetFunctionParameterPlans(Command, TEXT("Output"), OutputParameters, Diagnostics))
+		{
+			return false;
+		}
+
+		bool bPure = false;
+		if (!TryParseBoolAttribute(Command, TEXT("bPure"), bPure))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionPurityMissing"),
+				FString::Printf(TEXT("Function graph '%s' is missing the bPure attribute."), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		const FString AccessSpecifier = GetCommandAttribute(Command, TEXT("AccessSpecifier")).ToLower();
+		int32 AccessFlags = FUNC_Public;
+		if (AccessSpecifier.IsEmpty() || AccessSpecifier == TEXT("public"))
+		{
+			AccessFlags = FUNC_Public;
+		}
+		else if (AccessSpecifier == TEXT("protected"))
+		{
+			AccessFlags = FUNC_Protected;
+		}
+		else if (AccessSpecifier == TEXT("private"))
+		{
+			AccessFlags = FUNC_Private;
+		}
+		else
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionAccessSpecifierInvalid"),
+				FString::Printf(TEXT("Function graph '%s' uses unsupported access specifier '%s'."), *Graph->GetName(), *AccessSpecifier),
+				Command.NodeId));
+			return false;
+		}
+
+		Graph->Modify();
+		Blueprint->Modify();
+		EntryNode->Modify();
+
+		const int32 ExistingFlags = EntryNode->GetExtraFlags();
+		const int32 DesiredFlags = (ExistingFlags & ~(FUNC_BlueprintPure | FUNC_Public | FUNC_Protected | FUNC_Private))
+			| AccessFlags
+			| (bPure ? FUNC_BlueprintPure : 0);
+		if (DesiredFlags != ExistingFlags)
+		{
+			EntryNode->SetExtraFlags(DesiredFlags);
+		}
+
+		if (!RebuildEditablePins(
+				EntryNode,
+				InputParameters,
+				EGPD_Output,
+				TEXT("FunctionSignaturePinCreateFailed"),
+				TEXT("function"),
+				TEXT("input"),
+				Command,
+				Diagnostics))
+		{
+			return false;
+		}
+
+		UK2Node_FunctionResult* ResultNode = FindFunctionResultNode(Graph);
+		if (ResultNode == nullptr && OutputParameters.Num() > 0)
+		{
+			ResultNode = FBlueprintEditorUtils::FindOrCreateFunctionResultNode(EntryNode);
+		}
+
+		if (OutputParameters.Num() > 0 && ResultNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionResultNodeMissing"),
+				FString::Printf(TEXT("Function graph '%s' could not create a result node for outputs."), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (ResultNode != nullptr)
+		{
+			if (!RebuildEditablePins(
+					ResultNode,
+					OutputParameters,
+					EGPD_Input,
+					TEXT("FunctionSignaturePinCreateFailed"),
+					TEXT("function"),
+					TEXT("output"),
+					Command,
+					Diagnostics))
+			{
+				return false;
+			}
+		}
+
+		EntryNode->ReconstructNode();
+		if (ResultNode != nullptr)
+		{
+			ResultNode->ReconstructNode();
+		}
+
+		return true;
+	}
+
+	bool ExecuteEnsureMacroGraph(
+		UBlueprint* Blueprint,
+		const FVergilCompilerCommand& Command,
+		FVergilExecutionState& State,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		UEdGraph* const Graph = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics);
+		if (Graph == nullptr)
+		{
+			return false;
+		}
+
+		if (!HasMacroSignatureAttributes(Command))
+		{
+			return true;
+		}
+
+		UK2Node_EditablePinBase* const EntryNode = FindEditableGraphEntryNode(Graph);
+		UK2Node_EditablePinBase* const ResultNode = FindEditableGraphResultNode(Graph);
+		if (EntryNode == nullptr || ResultNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MacroGraphTerminatorMissing"),
+				FString::Printf(TEXT("Macro graph '%s' does not contain editable entry and exit tunnel nodes."), *Graph->GetName()),
+				Command.NodeId));
+			return false;
+		}
+
+		TArray<FVergilSignaturePinPlan> InputParameters;
+		TArray<FVergilSignaturePinPlan> OutputParameters;
+		if (!TryGetMacroPinPlans(Command, TEXT("Input"), InputParameters, Diagnostics)
+			|| !TryGetMacroPinPlans(Command, TEXT("Output"), OutputParameters, Diagnostics))
+		{
+			return false;
+		}
+
+		Graph->Modify();
+		Blueprint->Modify();
+
+		if (!RebuildEditablePins(
+				EntryNode,
+				InputParameters,
+				EGPD_Output,
+				TEXT("MacroSignaturePinCreateFailed"),
+				TEXT("macro"),
+				TEXT("input"),
+				Command,
+				Diagnostics))
+		{
+			return false;
+		}
+
+		if (!RebuildEditablePins(
+				ResultNode,
+				OutputParameters,
+				EGPD_Input,
+				TEXT("MacroSignaturePinCreateFailed"),
+				TEXT("macro"),
+				TEXT("output"),
+				Command,
+				Diagnostics))
+		{
+			return false;
+		}
+
+		EntryNode->ReconstructNode();
+		ResultNode->ReconstructNode();
+		return true;
 	}
 
 	bool ExecuteEnsureDispatcher(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
@@ -3151,7 +3696,15 @@ bool FVergilCommandExecutor::Execute(
 			break;
 
 		case EVergilCommandType::EnsureFunctionGraph:
+			bCommandSucceeded = ExecuteEnsureFunctionGraph(Blueprint, Command, State, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
 		case EVergilCommandType::EnsureMacroGraph:
+			bCommandSucceeded = ExecuteEnsureMacroGraph(Blueprint, Command, State, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
 		case EVergilCommandType::EnsureGraph:
 			bCommandSucceeded = ResolveOrCreateGraph(Blueprint, Command, State, Diagnostics) != nullptr;
 			bOutChanged = bCommandSucceeded;

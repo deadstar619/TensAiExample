@@ -73,7 +73,7 @@ Tickets:
 - `VGR-1001` Add Blueprint-level metadata
 - [x] `VGR-1002` Add variable definitions with type, flags, metadata, and defaults
 - [x] `VGR-1003` Add function definitions with purity, access, inputs, and outputs
-- `VGR-1004` Add macro graph definitions
+- [x] `VGR-1004` Add macro graph definitions
 - [x] `VGR-1005` Add component definitions with parent/attach/transform/template properties
 - `VGR-1006` Add implemented interface definitions
 - `VGR-1007` Add class default definitions
@@ -157,6 +157,23 @@ Tickets:
 - `VGR-4007` Implement class default writing
 - `VGR-4008` Implement construction script authoring
 - `VGR-4009` Add save/reload/compile roundtrip tests
+
+Session note for `VGR-4002` (2026-03-06):
+
+- Current branch already contains a first pass: document-authored `Functions` lower into `EnsureFunctionGraph`, the executor synchronizes function purity/access/signature pins, and new `Vergil.Scaffold.FunctionDefinitionPlanning` plus `Vergil.Scaffold.FunctionAuthoringExecution` coverage exists.
+- Raw `UnrealBuildTool.exe` verification is blocked in the current sandbox unless the session can write to `C:\Users\marco\AppData\Local\UnrealEngine`, `C:\Users\marco\AppData\Local\UnrealBuildTool`, and `C:\Users\marco\AppData\Roaming\Unreal Engine\UnrealBuildTool`.
+
+Session note for `VGR-4003` (2026-03-06):
+
+- Current branch now adds document-authored `Macros` to the canonical model and structural validation surface, lowers them into `EnsureMacroGraph`, and synchronizes entry/exit tunnel pins for exec/data inputs and outputs.
+- New `Vergil.Scaffold.MacroDefinitionModel`, `Vergil.Scaffold.MacroDefinitionPlanning`, and `Vergil.Scaffold.MacroAuthoringExecution` coverage exists, and `mcp__tensai__build_project` succeeded in `Development` after the change.
+- The documented headless `Invoke-VergilScaffoldAutomation.ps1` runner could not be re-verified from the current shell because `UnrealEditor-Cmd.exe` returned without producing its requested log file, so the ticket remains un-ticked pending a clean full automation rerun.
+
+Session note for `VGR-4004` (2026-03-06):
+
+- Current branch now lowers document-authored `Components` into explicit `EnsureComponent`, `AttachComponent`, and relative-transform `SetComponentProperty` commands. This covers component creation, parent attachment, attach sockets, and relative location/rotation/scale updates through `CompileDocument`.
+- New `Vergil.Scaffold.ComponentDefinitionPlanning` plus `Vergil.Scaffold.ComponentAuthoringExecution` coverage was added alongside the existing explicit-command component test. Component template-property lowering remains intentionally deferred to `VGR-4005`.
+- `mcp__tensai__build_project` succeeded in `Development` after the change. Direct shell-based headless automation remained unreliable in this session because `UnrealEditor-Cmd.exe` did not materialize the requested log file.
 
 Acceptance criteria:
 

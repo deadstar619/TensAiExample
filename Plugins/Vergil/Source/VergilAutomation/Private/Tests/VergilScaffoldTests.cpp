@@ -20,6 +20,7 @@
 #include "K2Node_ExecutionSequence.h"
 #include "K2Node_FormatText.h"
 #include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_Knot.h"
 #include "K2Node_MakeArray.h"
@@ -27,6 +28,7 @@
 #include "K2Node_MacroInstance.h"
 #include "K2Node_MakeSet.h"
 #include "K2Node_MakeStruct.h"
+#include "K2Node_Tunnel.h"
 #include "K2Node_Select.h"
 #include "K2Node_Self.h"
 #include "K2Node_BreakStruct.h"
@@ -175,6 +177,45 @@ namespace
 
 		return nullptr;
 	}
+
+	UK2Node_FunctionEntry* FindFunctionEntryNode(UEdGraph* Graph)
+	{
+		return Graph != nullptr ? Cast<UK2Node_FunctionEntry>(FBlueprintEditorUtils::GetEntryNode(Graph)) : nullptr;
+	}
+
+	UK2Node_EditablePinBase* FindEditableGraphEntryNode(UEdGraph* Graph)
+	{
+		TWeakObjectPtr<UK2Node_EditablePinBase> EntryNode;
+		TWeakObjectPtr<UK2Node_EditablePinBase> ResultNode;
+		FBlueprintEditorUtils::GetEntryAndResultNodes(Graph, EntryNode, ResultNode);
+		return EntryNode.Get();
+	}
+
+	UK2Node_FunctionResult* FindFunctionResultNode(UEdGraph* Graph)
+	{
+		if (Graph == nullptr)
+		{
+			return nullptr;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UK2Node_FunctionResult* ResultNode = Cast<UK2Node_FunctionResult>(Node))
+			{
+				return ResultNode;
+			}
+		}
+
+		return nullptr;
+	}
+
+	UK2Node_EditablePinBase* FindEditableGraphResultNode(UEdGraph* Graph)
+	{
+		TWeakObjectPtr<UK2Node_EditablePinBase> EntryNode;
+		TWeakObjectPtr<UK2Node_EditablePinBase> ResultNode;
+		FBlueprintEditorUtils::GetEntryAndResultNodes(Graph, EntryNode, ResultNode);
+		return ResultNode.Get();
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -308,6 +349,75 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("FunctionNameDuplicate");
 	}));
 
+	FVergilGraphDocument InvalidMacroDocument;
+	InvalidMacroDocument.SchemaVersion = 1;
+	InvalidMacroDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidMacros");
+
+	FVergilFunctionDefinition ExistingMacroFunction;
+	ExistingMacroFunction.Name = TEXT("SharedGraph");
+	InvalidMacroDocument.Functions.Add(ExistingMacroFunction);
+
+	FVergilComponentDefinition ExistingMacroComponent;
+	ExistingMacroComponent.Name = TEXT("SharedMacro");
+	ExistingMacroComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	InvalidMacroDocument.Components.Add(ExistingMacroComponent);
+
+	FVergilMacroDefinition ConflictingMacro;
+	ConflictingMacro.Name = TEXT("SharedGraph");
+
+	FVergilMacroDefinition ComponentConflictingMacro;
+	ComponentConflictingMacro.Name = TEXT("SharedMacro");
+
+	FVergilMacroDefinition BrokenMacro;
+	BrokenMacro.Name = TEXT("ComputeMacro");
+
+	FVergilMacroParameterDefinition MacroMissingInputName;
+	MacroMissingInputName.bIsExec = true;
+	BrokenMacro.Inputs.Add(MacroMissingInputName);
+
+	FVergilMacroParameterDefinition InvalidExecOutput;
+	InvalidExecOutput.Name = TEXT("Then");
+	InvalidExecOutput.bIsExec = true;
+	InvalidExecOutput.Type.PinCategory = TEXT("bool");
+	BrokenMacro.Outputs.Add(InvalidExecOutput);
+
+	FVergilMacroParameterDefinition MacroDuplicateOutputName;
+	MacroDuplicateOutputName.Name = TEXT("Then");
+	MacroDuplicateOutputName.Type.PinCategory = TEXT("int");
+	BrokenMacro.Outputs.Add(MacroDuplicateOutputName);
+
+	FVergilMacroDefinition DuplicateMacro;
+	DuplicateMacro.Name = TEXT("ComputeMacro");
+
+	InvalidMacroDocument.Macros = { ConflictingMacro, ComponentConflictingMacro, BrokenMacro, DuplicateMacro };
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid macro definitions should fail structural validation."), InvalidMacroDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Macro validation reports function conflicts."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroNameConflictsWithFunction");
+	}));
+	TestTrue(TEXT("Macro validation reports component conflicts."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroNameConflictsWithComponent");
+	}));
+	TestTrue(TEXT("Macro validation reports missing input names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroInputNameMissing");
+	}));
+	TestTrue(TEXT("Macro validation reports invalid exec type metadata."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroExecPinTypeUnexpected");
+	}));
+	TestTrue(TEXT("Macro validation reports duplicate signature members."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroParameterNameDuplicate");
+	}));
+	TestTrue(TEXT("Macro validation reports duplicate macro names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("MacroNameDuplicate");
+	}));
+
 	FVergilGraphDocument InvalidComponentDocument;
 	InvalidComponentDocument.SchemaVersion = 1;
 	InvalidComponentDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidComponents");
@@ -425,6 +535,56 @@ bool FVergilFunctionDefinitionModelTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilMacroDefinitionModelTest,
+	"Vergil.Scaffold.MacroDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilMacroDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_MacroModel");
+
+	FVergilMacroDefinition Macro;
+	Macro.Name = TEXT("RouteTarget");
+
+	FVergilMacroParameterDefinition ExecuteInput;
+	ExecuteInput.Name = TEXT("Execute");
+	ExecuteInput.bIsExec = true;
+	Macro.Inputs.Add(ExecuteInput);
+
+	FVergilMacroParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	Macro.Inputs.Add(TargetInput);
+
+	FVergilMacroParameterDefinition ThenOutput;
+	ThenOutput.Name = TEXT("Then");
+	ThenOutput.bIsExec = true;
+	Macro.Outputs.Add(ThenOutput);
+
+	FVergilMacroParameterDefinition IndicesOutput;
+	IndicesOutput.Name = TEXT("Indices");
+	IndicesOutput.Type.PinCategory = TEXT("int");
+	IndicesOutput.Type.ContainerType = EVergilVariableContainerType::Array;
+	Macro.Outputs.Add(IndicesOutput);
+
+	Document.Macros.Add(Macro);
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid macro definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid macro definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored macros."), Document.Macros.Num(), 1);
+	TestEqual(TEXT("Macro should retain input count."), Document.Macros[0].Inputs.Num(), 2);
+	TestEqual(TEXT("Macro should retain output count."), Document.Macros[0].Outputs.Num(), 2);
+	TestTrue(TEXT("Exec pins should retain exec metadata."), Document.Macros[0].Inputs[0].bIsExec && Document.Macros[0].Outputs[0].bIsExec);
+	TestEqual(TEXT("Array outputs should retain container type."), Document.Macros[0].Outputs[1].Type.ContainerType, EVergilVariableContainerType::Array);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilComponentDefinitionModelTest,
 	"Vergil.Scaffold.ComponentDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -493,6 +653,21 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilFunctionDefinitionPlanningTest,
+	"Vergil.Scaffold.FunctionDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilMacroDefinitionPlanningTest,
+	"Vergil.Scaffold.MacroDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilComponentDefinitionPlanningTest,
+	"Vergil.Scaffold.ComponentDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilResultSummaryUtilitiesTest,
 	"Vergil.Scaffold.ResultSummaries",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -500,6 +675,21 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilVariableAuthoringExecutionTest,
 	"Vergil.Scaffold.VariableAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilFunctionAuthoringExecutionTest,
+	"Vergil.Scaffold.FunctionAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilMacroAuthoringExecutionTest,
+	"Vergil.Scaffold.MacroAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilComponentAuthoringExecutionTest,
+	"Vergil.Scaffold.ComponentAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -859,6 +1049,599 @@ bool FVergilVariableAuthoringExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("TargetActor setter should chain into the TestFlag setter."), TargetSetterThenPin != nullptr && TargetSetterThenPin->LinkedTo.Contains(FlagSetterExecPin));
 	TestTrue(TEXT("TestFlag getter should feed the Not call input."), FlagGetterValuePin != nullptr && FlagGetterValuePin->LinkedTo.Contains(NotInputPin));
 	TestTrue(TEXT("Not call should feed the TestFlag setter value input."), NotReturnPin != nullptr && NotReturnPin->LinkedTo.Contains(FlagSetterValuePin));
+
+	return true;
+}
+
+bool FVergilFunctionDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilFunctionDefinition Function;
+	Function.Name = TEXT("ComputeStatus");
+	Function.bPure = true;
+	Function.AccessSpecifier = EVergilFunctionAccessSpecifier::Protected;
+
+	FVergilFunctionParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	Function.Inputs.Add(TargetInput);
+
+	FVergilFunctionParameterDefinition ThresholdInput;
+	ThresholdInput.Name = TEXT("Threshold");
+	ThresholdInput.Type.PinCategory = TEXT("float");
+	Function.Inputs.Add(ThresholdInput);
+
+	FVergilFunctionParameterDefinition ResultOutput;
+	ResultOutput.Name = TEXT("Result");
+	ResultOutput.Type.PinCategory = TEXT("bool");
+	Function.Outputs.Add(ResultOutput);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_FunctionPlanning");
+	Document.Functions.Add(Function);
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Function definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Function definition planning should emit a function-graph command plus target graph ensure."), Result.Commands.Num(), 2);
+	if (!Result.bSucceeded || Result.Commands.Num() != 2)
+	{
+		return false;
+	}
+
+	const FVergilCompilerCommand& EnsureFunctionGraph = Result.Commands[0];
+	TestEqual(TEXT("Planner should lower function definitions into EnsureFunctionGraph."), EnsureFunctionGraph.Type, EVergilCommandType::EnsureFunctionGraph);
+	TestEqual(TEXT("Function graph name should match the authored function name."), EnsureFunctionGraph.GraphName, Function.Name);
+	TestEqual(TEXT("Function graph secondary name should match the authored function name."), EnsureFunctionGraph.SecondaryName, Function.Name);
+	TestEqual(TEXT("Function purity should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("bPure")), FString(TEXT("true")));
+	TestEqual(TEXT("Function access should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("AccessSpecifier")), FString(TEXT("Protected")));
+	TestEqual(TEXT("Function input count should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("InputCount")), FString(TEXT("2")));
+	TestEqual(TEXT("Function output count should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("OutputCount")), FString(TEXT("1")));
+	TestEqual(TEXT("First input name should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("Input_0_Name")), FString(TEXT("TargetActor")));
+	TestEqual(TEXT("Second input type should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("Input_1_PinCategory")), FString(TEXT("float")));
+	TestEqual(TEXT("Output name should be encoded on the command."), EnsureFunctionGraph.Attributes.FindRef(TEXT("Output_0_Name")), FString(TEXT("Result")));
+
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[1].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
+bool FVergilMacroDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilMacroDefinition Macro;
+	Macro.Name = TEXT("RouteTarget");
+
+	FVergilMacroParameterDefinition ExecuteInput;
+	ExecuteInput.Name = TEXT("Execute");
+	ExecuteInput.bIsExec = true;
+	Macro.Inputs.Add(ExecuteInput);
+
+	FVergilMacroParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	Macro.Inputs.Add(TargetInput);
+
+	FVergilMacroParameterDefinition ThenOutput;
+	ThenOutput.Name = TEXT("Then");
+	ThenOutput.bIsExec = true;
+	Macro.Outputs.Add(ThenOutput);
+
+	FVergilMacroParameterDefinition ThresholdOutput;
+	ThresholdOutput.Name = TEXT("Threshold");
+	ThresholdOutput.Type.PinCategory = TEXT("float");
+	Macro.Outputs.Add(ThresholdOutput);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_MacroPlanning");
+	Document.Macros.Add(Macro);
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Macro definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Macro definition planning should emit a macro-graph command plus target graph ensure."), Result.Commands.Num(), 2);
+	if (!Result.bSucceeded || Result.Commands.Num() != 2)
+	{
+		return false;
+	}
+
+	const FVergilCompilerCommand& EnsureMacroGraph = Result.Commands[0];
+	TestEqual(TEXT("Planner should lower macro definitions into EnsureMacroGraph."), EnsureMacroGraph.Type, EVergilCommandType::EnsureMacroGraph);
+	TestEqual(TEXT("Macro graph name should match the authored macro name."), EnsureMacroGraph.GraphName, Macro.Name);
+	TestEqual(TEXT("Macro graph secondary name should match the authored macro name."), EnsureMacroGraph.SecondaryName, Macro.Name);
+	TestEqual(TEXT("Macro input count should be encoded on the command."), EnsureMacroGraph.Attributes.FindRef(TEXT("InputCount")), FString(TEXT("2")));
+	TestEqual(TEXT("Macro output count should be encoded on the command."), EnsureMacroGraph.Attributes.FindRef(TEXT("OutputCount")), FString(TEXT("2")));
+	TestEqual(TEXT("Exec input should be encoded on the command."), EnsureMacroGraph.Attributes.FindRef(TEXT("Input_0_bExec")), FString(TEXT("true")));
+	TestEqual(TEXT("Object input should retain its type metadata."), EnsureMacroGraph.Attributes.FindRef(TEXT("Input_1_PinCategory")), FString(TEXT("object")));
+	TestEqual(TEXT("Exec output should be encoded on the command."), EnsureMacroGraph.Attributes.FindRef(TEXT("Output_0_bExec")), FString(TEXT("true")));
+	TestEqual(TEXT("Data output should retain its type metadata."), EnsureMacroGraph.Attributes.FindRef(TEXT("Output_1_PinCategory")), FString(TEXT("float")));
+
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[1].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
+bool FVergilFunctionAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilFunctionDefinition InitialFunction;
+	InitialFunction.Name = TEXT("ComputeStatus");
+	InitialFunction.bPure = true;
+	InitialFunction.AccessSpecifier = EVergilFunctionAccessSpecifier::Protected;
+
+	FVergilFunctionParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	InitialFunction.Inputs.Add(TargetInput);
+
+	FVergilFunctionParameterDefinition ThresholdInput;
+	ThresholdInput.Name = TEXT("Threshold");
+	ThresholdInput.Type.PinCategory = TEXT("float");
+	InitialFunction.Inputs.Add(ThresholdInput);
+
+	FVergilFunctionParameterDefinition ResultOutput;
+	ResultOutput.Name = TEXT("Result");
+	ResultOutput.Type.PinCategory = TEXT("bool");
+	InitialFunction.Outputs.Add(ResultOutput);
+
+	FVergilGraphDocument InitialDocument;
+	InitialDocument.BlueprintPath = TEXT("/Temp/BP_VergilFunctionAuthoring");
+	InitialDocument.Functions.Add(InitialFunction);
+
+	const FVergilCompileResult InitialResult = EditorSubsystem->CompileDocument(Blueprint, InitialDocument, false, false, true);
+	TestTrue(TEXT("Initial function authoring should succeed."), InitialResult.bSucceeded);
+	TestTrue(TEXT("Initial function authoring should apply commands."), InitialResult.bApplied);
+	if (!InitialResult.bSucceeded || !InitialResult.bApplied)
+	{
+		return false;
+	}
+
+	UEdGraph* FunctionGraph = FindBlueprintGraphByName(Blueprint, InitialFunction.Name);
+	UK2Node_FunctionEntry* EntryNode = FindFunctionEntryNode(FunctionGraph);
+	UK2Node_FunctionResult* ResultNode = FindFunctionResultNode(FunctionGraph);
+
+	TestNotNull(TEXT("Function graph should exist after initial authoring."), FunctionGraph);
+	TestNotNull(TEXT("Function entry node should exist after initial authoring."), EntryNode);
+	TestNotNull(TEXT("Function result node should exist after initial authoring."), ResultNode);
+	if (FunctionGraph == nullptr || EntryNode == nullptr || ResultNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const TargetActorPin = EntryNode->FindPin(TEXT("TargetActor"));
+	UEdGraphPin* const ThresholdPin = EntryNode->FindPin(TEXT("Threshold"));
+	UEdGraphPin* const ResultPin = ResultNode->FindPin(TEXT("Result"));
+
+	TestNotNull(TEXT("Function entry should expose the TargetActor input pin."), TargetActorPin);
+	TestNotNull(TEXT("Function entry should expose the Threshold input pin."), ThresholdPin);
+	TestNotNull(TEXT("Function result node should expose the Result pin."), ResultPin);
+	TestTrue(TEXT("TargetActor should be an object pin."), TargetActorPin != nullptr
+		&& TargetActorPin->Direction == EGPD_Output
+		&& TargetActorPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+		&& TargetActorPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("Threshold should be a float pin."), ThresholdPin != nullptr
+		&& ThresholdPin->Direction == EGPD_Output
+		&& ThresholdPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Real
+		&& ThresholdPin->PinType.PinSubCategory == UEdGraphSchema_K2::PC_Float);
+	TestTrue(TEXT("Result should be a bool pin."), ResultPin != nullptr
+		&& ResultPin->Direction == EGPD_Input
+		&& ResultPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("Function entry should retain the protected access flag."), EntryNode->HasAllExtraFlags(FUNC_Protected));
+	TestTrue(TEXT("Function entry should retain the pure flag."), EntryNode->HasAllExtraFlags(FUNC_BlueprintPure));
+
+	FVergilFunctionDefinition UpdatedFunction;
+	UpdatedFunction.Name = InitialFunction.Name;
+	UpdatedFunction.bPure = false;
+	UpdatedFunction.AccessSpecifier = EVergilFunctionAccessSpecifier::Private;
+
+	FVergilFunctionParameterDefinition IterationsInput;
+	IterationsInput.Name = TEXT("Iterations");
+	IterationsInput.Type.PinCategory = TEXT("int");
+	UpdatedFunction.Inputs.Add(IterationsInput);
+
+	FVergilGraphDocument UpdatedDocument;
+	UpdatedDocument.BlueprintPath = InitialDocument.BlueprintPath;
+	UpdatedDocument.Functions.Add(UpdatedFunction);
+
+	const FVergilCompileResult UpdatedResult = EditorSubsystem->CompileDocument(Blueprint, UpdatedDocument, false, false, true);
+	TestTrue(TEXT("Function signature update should succeed."), UpdatedResult.bSucceeded);
+	TestTrue(TEXT("Function signature update should apply commands."), UpdatedResult.bApplied);
+	if (!UpdatedResult.bSucceeded || !UpdatedResult.bApplied)
+	{
+		return false;
+	}
+
+	FunctionGraph = FindBlueprintGraphByName(Blueprint, UpdatedFunction.Name);
+	EntryNode = FindFunctionEntryNode(FunctionGraph);
+	ResultNode = FindFunctionResultNode(FunctionGraph);
+
+	TestNotNull(TEXT("Function graph should still exist after update."), FunctionGraph);
+	TestNotNull(TEXT("Function entry node should still exist after update."), EntryNode);
+	if (FunctionGraph == nullptr || EntryNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const IterationsPin = EntryNode->FindPin(TEXT("Iterations"));
+	TestNotNull(TEXT("Updated function entry should expose the Iterations pin."), IterationsPin);
+	TestTrue(TEXT("Old TargetActor pin should be removed during update."), EntryNode->FindPin(TEXT("TargetActor")) == nullptr);
+	TestTrue(TEXT("Old Threshold pin should be removed during update."), EntryNode->FindPin(TEXT("Threshold")) == nullptr);
+	TestTrue(TEXT("Iterations should be an int pin."), IterationsPin != nullptr
+		&& IterationsPin->Direction == EGPD_Output
+		&& IterationsPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Int);
+	TestTrue(TEXT("Function entry should retain the private access flag after update."), EntryNode->HasAllExtraFlags(FUNC_Private));
+	TestTrue(TEXT("Protected access should be cleared during update."), !EntryNode->HasAnyExtraFlags(FUNC_Protected));
+	TestTrue(TEXT("Pure flag should be cleared during update."), !EntryNode->HasAnyExtraFlags(FUNC_BlueprintPure));
+	if (ResultNode != nullptr)
+	{
+		TestTrue(TEXT("Result pin should be removed when outputs are cleared."), ResultNode->FindPin(TEXT("Result")) == nullptr);
+	}
+
+	return true;
+}
+
+bool FVergilMacroAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilMacroDefinition InitialMacro;
+	InitialMacro.Name = TEXT("RouteTarget");
+
+	FVergilMacroParameterDefinition ExecuteInput;
+	ExecuteInput.Name = TEXT("Execute");
+	ExecuteInput.bIsExec = true;
+	InitialMacro.Inputs.Add(ExecuteInput);
+
+	FVergilMacroParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	InitialMacro.Inputs.Add(TargetInput);
+
+	FVergilMacroParameterDefinition ThenOutput;
+	ThenOutput.Name = TEXT("Then");
+	ThenOutput.bIsExec = true;
+	InitialMacro.Outputs.Add(ThenOutput);
+
+	FVergilMacroParameterDefinition CountOutput;
+	CountOutput.Name = TEXT("Count");
+	CountOutput.Type.PinCategory = TEXT("int");
+	InitialMacro.Outputs.Add(CountOutput);
+
+	FVergilGraphDocument InitialDocument;
+	InitialDocument.BlueprintPath = TEXT("/Temp/BP_VergilMacroAuthoring");
+	InitialDocument.Macros.Add(InitialMacro);
+
+	const FVergilCompileResult InitialResult = EditorSubsystem->CompileDocument(Blueprint, InitialDocument, false, false, true);
+	TestTrue(TEXT("Initial macro authoring should succeed."), InitialResult.bSucceeded);
+	TestTrue(TEXT("Initial macro authoring should apply commands."), InitialResult.bApplied);
+	if (!InitialResult.bSucceeded || !InitialResult.bApplied)
+	{
+		return false;
+	}
+
+	UEdGraph* MacroGraph = FindBlueprintGraphByName(Blueprint, InitialMacro.Name);
+	UK2Node_EditablePinBase* EntryNode = FindEditableGraphEntryNode(MacroGraph);
+	UK2Node_EditablePinBase* ResultNode = FindEditableGraphResultNode(MacroGraph);
+
+	TestNotNull(TEXT("Macro graph should exist after initial authoring."), MacroGraph);
+	TestNotNull(TEXT("Macro entry tunnel should exist after initial authoring."), EntryNode);
+	TestNotNull(TEXT("Macro exit tunnel should exist after initial authoring."), ResultNode);
+	if (MacroGraph == nullptr || EntryNode == nullptr || ResultNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const ExecutePin = EntryNode->FindPin(TEXT("Execute"));
+	UEdGraphPin* const TargetActorPin = EntryNode->FindPin(TEXT("TargetActor"));
+	UEdGraphPin* const ThenPin = ResultNode->FindPin(TEXT("Then"));
+	UEdGraphPin* const CountPin = ResultNode->FindPin(TEXT("Count"));
+
+	TestNotNull(TEXT("Macro entry should expose the Execute pin."), ExecutePin);
+	TestNotNull(TEXT("Macro entry should expose the TargetActor pin."), TargetActorPin);
+	TestNotNull(TEXT("Macro exit should expose the Then pin."), ThenPin);
+	TestNotNull(TEXT("Macro exit should expose the Count pin."), CountPin);
+	TestTrue(TEXT("Execute should be an output exec pin."), ExecutePin != nullptr
+		&& ExecutePin->Direction == EGPD_Output
+		&& ExecutePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec);
+	TestTrue(TEXT("TargetActor should be an object pin."), TargetActorPin != nullptr
+		&& TargetActorPin->Direction == EGPD_Output
+		&& TargetActorPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+		&& TargetActorPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("Then should be an input exec pin on the exit tunnel."), ThenPin != nullptr
+		&& ThenPin->Direction == EGPD_Input
+		&& ThenPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec);
+	TestTrue(TEXT("Count should be an int pin on the exit tunnel."), CountPin != nullptr
+		&& CountPin->Direction == EGPD_Input
+		&& CountPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Int);
+
+	FVergilMacroDefinition UpdatedMacro;
+	UpdatedMacro.Name = InitialMacro.Name;
+
+	FVergilMacroParameterDefinition EnabledInput;
+	EnabledInput.Name = TEXT("bEnabled");
+	EnabledInput.Type.PinCategory = TEXT("bool");
+	UpdatedMacro.Inputs.Add(EnabledInput);
+
+	FVergilMacroParameterDefinition MessagesOutput;
+	MessagesOutput.Name = TEXT("Messages");
+	MessagesOutput.Type.PinCategory = TEXT("string");
+	MessagesOutput.Type.ContainerType = EVergilVariableContainerType::Array;
+	UpdatedMacro.Outputs.Add(MessagesOutput);
+
+	FVergilGraphDocument UpdatedDocument;
+	UpdatedDocument.BlueprintPath = InitialDocument.BlueprintPath;
+	UpdatedDocument.Macros.Add(UpdatedMacro);
+
+	const FVergilCompileResult UpdatedResult = EditorSubsystem->CompileDocument(Blueprint, UpdatedDocument, false, false, true);
+	TestTrue(TEXT("Macro signature update should succeed."), UpdatedResult.bSucceeded);
+	TestTrue(TEXT("Macro signature update should apply commands."), UpdatedResult.bApplied);
+	if (!UpdatedResult.bSucceeded || !UpdatedResult.bApplied)
+	{
+		return false;
+	}
+
+	MacroGraph = FindBlueprintGraphByName(Blueprint, UpdatedMacro.Name);
+	EntryNode = FindEditableGraphEntryNode(MacroGraph);
+	ResultNode = FindEditableGraphResultNode(MacroGraph);
+
+	TestNotNull(TEXT("Macro graph should still exist after update."), MacroGraph);
+	TestNotNull(TEXT("Macro entry tunnel should still exist after update."), EntryNode);
+	TestNotNull(TEXT("Macro exit tunnel should still exist after update."), ResultNode);
+	if (MacroGraph == nullptr || EntryNode == nullptr || ResultNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EnabledPin = EntryNode->FindPin(TEXT("bEnabled"));
+	UEdGraphPin* const MessagesPin = ResultNode->FindPin(TEXT("Messages"));
+
+	TestNotNull(TEXT("Updated macro entry should expose the bEnabled pin."), EnabledPin);
+	TestNotNull(TEXT("Updated macro exit should expose the Messages pin."), MessagesPin);
+	TestTrue(TEXT("Old Execute pin should be removed during update."), EntryNode->FindPin(TEXT("Execute")) == nullptr);
+	TestTrue(TEXT("Old TargetActor pin should be removed during update."), EntryNode->FindPin(TEXT("TargetActor")) == nullptr);
+	TestTrue(TEXT("Old Then pin should be removed during update."), ResultNode->FindPin(TEXT("Then")) == nullptr);
+	TestTrue(TEXT("Old Count pin should be removed during update."), ResultNode->FindPin(TEXT("Count")) == nullptr);
+	TestTrue(TEXT("bEnabled should be a bool output pin."), EnabledPin != nullptr
+		&& EnabledPin->Direction == EGPD_Output
+		&& EnabledPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("Messages should be a string array input pin."), MessagesPin != nullptr
+		&& MessagesPin->Direction == EGPD_Input
+		&& MessagesPin->PinType.PinCategory == UEdGraphSchema_K2::PC_String
+		&& MessagesPin->PinType.ContainerType == EPinContainerType::Array);
+
+	return true;
+}
+
+bool FVergilComponentDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilComponentDefinition RootComponent;
+	RootComponent.Name = TEXT("Root");
+	RootComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	RootComponent.RelativeTransform.bHasRelativeLocation = true;
+	RootComponent.RelativeTransform.RelativeLocation = FVector(25.0f, 50.0f, 75.0f);
+
+	FVergilComponentDefinition PivotComponent;
+	PivotComponent.Name = TEXT("Pivot");
+	PivotComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	PivotComponent.ParentComponentName = RootComponent.Name;
+	PivotComponent.RelativeTransform.bHasRelativeRotation = true;
+	PivotComponent.RelativeTransform.RelativeRotation = FRotator(0.0f, 45.0f, 0.0f);
+
+	FVergilComponentDefinition VisualComponent;
+	VisualComponent.Name = TEXT("VisualMesh");
+	VisualComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	VisualComponent.ParentComponentName = PivotComponent.Name;
+	VisualComponent.AttachSocketName = TEXT("GripSocket");
+	VisualComponent.RelativeTransform.bHasRelativeScale = true;
+	VisualComponent.RelativeTransform.RelativeScale3D = FVector(1.0f, 1.5f, 1.0f);
+	VisualComponent.TemplateProperties.Add(TEXT("CollisionProfileName"), TEXT("NoCollision"));
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ComponentPlanning");
+	Document.Components = { RootComponent, PivotComponent, VisualComponent };
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Component definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Component definition planning should emit component commands plus the target graph ensure."), Result.Commands.Num(), 9);
+	if (!Result.bSucceeded || Result.Commands.Num() != 9)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("First component ensure should target the root component."), Result.Commands[0].Type, EVergilCommandType::EnsureComponent);
+	TestEqual(TEXT("Root component ensure should target the authored root name."), Result.Commands[0].SecondaryName, RootComponent.Name);
+	TestEqual(TEXT("Second component ensure should target the pivot component."), Result.Commands[1].SecondaryName, PivotComponent.Name);
+	TestEqual(TEXT("Third component ensure should target the visual component."), Result.Commands[2].SecondaryName, VisualComponent.Name);
+	TestEqual(TEXT("Root relative location should lower into a component property command."), Result.Commands[3].Type, EVergilCommandType::SetComponentProperty);
+	TestEqual(TEXT("Root relative location should target RelativeLocation."), Result.Commands[3].Name, FName(TEXT("RelativeLocation")));
+	TestEqual(TEXT("Pivot should lower into an attach command."), Result.Commands[4].Type, EVergilCommandType::AttachComponent);
+	TestEqual(TEXT("Pivot attach should target the authored parent."), Result.Commands[4].Name, RootComponent.Name);
+	TestEqual(TEXT("Pivot relative rotation should lower into a component property command."), Result.Commands[5].Name, FName(TEXT("RelativeRotation")));
+	TestEqual(TEXT("Visual should lower into an attach command."), Result.Commands[6].Type, EVergilCommandType::AttachComponent);
+	TestEqual(TEXT("Visual attach should retain the authored socket."), Result.Commands[6].StringValue, FString(TEXT("GripSocket")));
+	TestEqual(TEXT("Visual relative scale should lower into a component property command."), Result.Commands[7].Name, FName(TEXT("RelativeScale3D")));
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[8].Type, EVergilCommandType::EnsureGraph);
+	TestFalse(TEXT("Template properties should remain out of scope for VGR-4004 lowering."), Result.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::SetComponentProperty
+			&& Command.Name == TEXT("CollisionProfileName");
+	}));
+
+	return true;
+}
+
+bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilComponentDefinition RootComponent;
+	RootComponent.Name = TEXT("Root");
+	RootComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	RootComponent.RelativeTransform.bHasRelativeLocation = true;
+	RootComponent.RelativeTransform.RelativeLocation = FVector(10.0f, 20.0f, 30.0f);
+
+	FVergilComponentDefinition PivotComponent;
+	PivotComponent.Name = TEXT("Pivot");
+	PivotComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	PivotComponent.ParentComponentName = RootComponent.Name;
+	PivotComponent.RelativeTransform.bHasRelativeRotation = true;
+	PivotComponent.RelativeTransform.RelativeRotation = FRotator(0.0f, 45.0f, 0.0f);
+
+	FVergilComponentDefinition VisualComponent;
+	VisualComponent.Name = TEXT("VisualMesh");
+	VisualComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	VisualComponent.ParentComponentName = RootComponent.Name;
+	VisualComponent.AttachSocketName = TEXT("HolsterSocket");
+
+	FVergilGraphDocument InitialDocument;
+	InitialDocument.BlueprintPath = TEXT("/Temp/BP_VergilComponentAuthoring");
+	InitialDocument.Components = { RootComponent, PivotComponent, VisualComponent };
+
+	const FVergilCompileResult InitialResult = EditorSubsystem->CompileDocument(Blueprint, InitialDocument, false, false, true);
+	TestTrue(TEXT("Initial component authoring should succeed."), InitialResult.bSucceeded);
+	TestTrue(TEXT("Initial component authoring should apply commands."), InitialResult.bApplied);
+	if (!InitialResult.bSucceeded || !InitialResult.bApplied)
+	{
+		return false;
+	}
+
+	USCS_Node* RootNode = FindBlueprintComponentNode(Blueprint, RootComponent.Name);
+	USCS_Node* PivotNode = FindBlueprintComponentNode(Blueprint, PivotComponent.Name);
+	USCS_Node* VisualNode = FindBlueprintComponentNode(Blueprint, VisualComponent.Name);
+	TestNotNull(TEXT("Root component should exist after initial authoring."), RootNode);
+	TestNotNull(TEXT("Pivot component should exist after initial authoring."), PivotNode);
+	TestNotNull(TEXT("Visual component should exist after initial authoring."), VisualNode);
+	if (RootNode == nullptr || PivotNode == nullptr || VisualNode == nullptr || Blueprint->SimpleConstructionScript == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Pivot should initially attach under the root component."),
+		Blueprint->SimpleConstructionScript->FindParentNode(PivotNode) == RootNode);
+	TestTrue(TEXT("Visual should initially attach under the root component."),
+		Blueprint->SimpleConstructionScript->FindParentNode(VisualNode) == RootNode);
+	TestEqual(TEXT("Visual should initially retain its attach socket."), VisualNode->AttachToName, FName(TEXT("HolsterSocket")));
+
+	USceneComponent* RootTemplate = Cast<USceneComponent>(RootNode->ComponentTemplate);
+	USceneComponent* PivotTemplate = Cast<USceneComponent>(PivotNode->ComponentTemplate);
+	TestNotNull(TEXT("Root component template should be a scene component."), RootTemplate);
+	TestNotNull(TEXT("Pivot component template should be a scene component."), PivotTemplate);
+	TestTrue(TEXT("Root component should retain its authored relative location."), RootTemplate != nullptr
+		&& RootTemplate->GetRelativeLocation().Equals(FVector(10.0f, 20.0f, 30.0f), KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Pivot component should retain its authored relative rotation."), PivotTemplate != nullptr
+		&& PivotTemplate->GetRelativeRotation().Equals(FRotator(0.0f, 45.0f, 0.0f), KINDA_SMALL_NUMBER));
+
+	FVergilComponentDefinition UpdatedRootComponent = RootComponent;
+	UpdatedRootComponent.RelativeTransform.RelativeLocation = FVector(40.0f, 0.0f, 10.0f);
+
+	FVergilComponentDefinition UpdatedPivotComponent = PivotComponent;
+	UpdatedPivotComponent.RelativeTransform.RelativeRotation = FRotator(0.0f, 90.0f, 0.0f);
+
+	FVergilComponentDefinition UpdatedVisualComponent = VisualComponent;
+	UpdatedVisualComponent.ParentComponentName = PivotComponent.Name;
+	UpdatedVisualComponent.AttachSocketName = TEXT("GripSocket");
+	UpdatedVisualComponent.RelativeTransform.bHasRelativeLocation = true;
+	UpdatedVisualComponent.RelativeTransform.RelativeLocation = FVector(15.0f, 5.0f, 0.0f);
+	UpdatedVisualComponent.RelativeTransform.bHasRelativeScale = true;
+	UpdatedVisualComponent.RelativeTransform.RelativeScale3D = FVector(1.0f, 1.5f, 1.0f);
+
+	FVergilGraphDocument UpdatedDocument;
+	UpdatedDocument.BlueprintPath = InitialDocument.BlueprintPath;
+	UpdatedDocument.Components = { UpdatedRootComponent, UpdatedPivotComponent, UpdatedVisualComponent };
+
+	const FVergilCompileResult UpdatedResult = EditorSubsystem->CompileDocument(Blueprint, UpdatedDocument, false, false, true);
+	TestTrue(TEXT("Component hierarchy update should succeed."), UpdatedResult.bSucceeded);
+	TestTrue(TEXT("Component hierarchy update should apply commands."), UpdatedResult.bApplied);
+	if (!UpdatedResult.bSucceeded || !UpdatedResult.bApplied)
+	{
+		return false;
+	}
+
+	RootNode = FindBlueprintComponentNode(Blueprint, UpdatedRootComponent.Name);
+	PivotNode = FindBlueprintComponentNode(Blueprint, UpdatedPivotComponent.Name);
+	VisualNode = FindBlueprintComponentNode(Blueprint, UpdatedVisualComponent.Name);
+	TestNotNull(TEXT("Root component should still exist after update."), RootNode);
+	TestNotNull(TEXT("Pivot component should still exist after update."), PivotNode);
+	TestNotNull(TEXT("Visual component should still exist after update."), VisualNode);
+	if (RootNode == nullptr || PivotNode == nullptr || VisualNode == nullptr || Blueprint->SimpleConstructionScript == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Visual should reattach under the pivot component during update."),
+		Blueprint->SimpleConstructionScript->FindParentNode(VisualNode) == PivotNode);
+	TestEqual(TEXT("Visual should retain its updated attach socket."), VisualNode->AttachToName, FName(TEXT("GripSocket")));
+
+	RootTemplate = Cast<USceneComponent>(RootNode->ComponentTemplate);
+	PivotTemplate = Cast<USceneComponent>(PivotNode->ComponentTemplate);
+	UStaticMeshComponent* VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
+	TestNotNull(TEXT("Visual component template should be a static mesh component."), VisualTemplate);
+	TestTrue(TEXT("Root component should retain its updated relative location."), RootTemplate != nullptr
+		&& RootTemplate->GetRelativeLocation().Equals(FVector(40.0f, 0.0f, 10.0f), KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Pivot component should retain its updated relative rotation."), PivotTemplate != nullptr
+		&& PivotTemplate->GetRelativeRotation().Equals(FRotator(0.0f, 90.0f, 0.0f), KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Visual component should retain its authored relative location."), VisualTemplate != nullptr
+		&& VisualTemplate->GetRelativeLocation().Equals(FVector(15.0f, 5.0f, 0.0f), KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Visual component should retain its authored relative scale."), VisualTemplate != nullptr
+		&& VisualTemplate->GetRelativeScale3D().Equals(FVector(1.0f, 1.5f, 1.0f), KINDA_SMALL_NUMBER));
 
 	return true;
 }

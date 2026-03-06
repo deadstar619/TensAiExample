@@ -4,13 +4,14 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Components`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
-- `Functions` are currently part of the canonical model and structural validation surface only. Compile/apply does not author function graphs or signatures yet.
-- `Components` are currently part of the canonical model and structural validation surface only. Compile/apply does not author Blueprint component hierarchies or template properties yet.
-- Asset-level authoring beyond variables and dispatchers is not implemented yet through document compile/apply. There is no current lowering from document-authored functions, macros, components, interfaces, class defaults, or construction script definitions into command plans.
+- `Functions` now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function-body authoring is still separate future work.
+- `Macros` now lower into Blueprint macro graph/signature authoring for exec/data inputs and outputs. Macro-body authoring is still separate future work.
+- `Components` now lower into Blueprint component hierarchy authoring for component creation, parent attachment, attach sockets, and relative transforms. Template-property authoring is still separate future work.
+- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, and component hierarchy data is not implemented yet through document compile/apply. There is no current lowering from document-authored component template properties, interfaces, class defaults, or construction script definitions into command plans.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 
 ## Structural validation rules
@@ -22,8 +23,11 @@ This document describes the current scaffold contracts implemented in code today
 - `ExposeOnSpawn` requires `bInstanceEditable`.
 - Every dispatcher must have a unique name.
 - Every dispatcher parameter must have a unique name inside that dispatcher and a non-empty `PinCategory`.
+- Every macro must have a unique non-empty name and cannot conflict with authored variable, function, dispatcher, or component names.
+- Macro signature member names must be unique within a macro across both inputs and outputs.
+- Exec macro pins must not also declare data-type metadata.
 - Every component must have a unique non-empty name and a non-empty `ComponentClassPath`.
-- Component names cannot conflict with authored variables, functions, or dispatchers.
+- Component names cannot conflict with authored variables, functions, macros, or dispatchers.
 - Component parent self-references and authored parent cycles fail structural validation.
 - Component parents that are not authored in the same document emit warnings because they may target inherited components on the Blueprint.
 - Authored relative transform overrides must use finite numeric values.
@@ -55,24 +59,37 @@ This document describes the current scaffold contracts implemented in code today
 - Function names must be unique and cannot conflict with authored variable or dispatcher names.
 - Signature member names must be unique within a function across both inputs and outputs.
 - Function parameter types currently support the same logical categories and container rules as document-authored variables.
-- Function definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint function graphs.
+- Function definitions now lower into `EnsureFunctionGraph` commands that create or update Blueprint function graphs and synchronize function purity, access flags, and typed inputs/outputs.
+- Function definitions do not yet author function bodies. Document `Nodes` and `Edges` still target `FVergilCompileRequest.TargetGraphName`, not individual authored functions.
+
+## Macro definition contracts
+
+- Macros are authored from `Macros` on the document.
+- Each macro definition currently uses `Name`, `Inputs`, and `Outputs`.
+- Each input/output parameter uses `Name`, `bIsExec`, and, for data pins, the same `Type` shape as document-authored variables.
+- Exec pins set `bIsExec=true` and must not also declare type metadata.
+- Data macro pins currently support the same logical categories and container rules as document-authored variables.
+- Macro definitions now lower into `EnsureMacroGraph` commands that create or update Blueprint macro graphs and synchronize entry/exit tunnel pins for exec/data inputs and outputs.
+- Macro definitions do not yet author macro bodies. Document `Nodes` and `Edges` still target `FVergilCompileRequest.TargetGraphName`, not individual authored macros.
 
 ## Component definition contracts
 
 - Components are authored from `Components` on the document.
 - Each component definition currently uses `Name`, `ComponentClassPath`, `ParentComponentName`, `AttachSocketName`, `RelativeTransform`, and `TemplateProperties`.
-- `ComponentClassPath` is expected to name a component class for future authoring work. Structural validation currently requires only that it be non-empty.
+- `ComponentClassPath` is expected to name a component class and now lowers into `EnsureComponent` for Blueprint component creation/update. Structural validation still requires only that it be non-empty.
 - `ParentComponentName` may reference another authored component by name or an inherited component expected on the target Blueprint.
-- `AttachSocketName` optionally names the parent socket or bone for future attachment authoring.
+- `AttachSocketName` optionally names the parent socket or bone and now lowers into `AttachComponent` when a parent component is authored.
 - `RelativeTransform` stores optional relative location, rotation, and scale overrides through `bHasRelativeLocation`, `bHasRelativeRotation`, and `bHasRelativeScale`.
 - `TemplateProperties` stores raw component-template property overrides as property-name to serialized-value string pairs for future application work.
-- Component definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint component hierarchies or template properties.
+- Component definitions now lower into `EnsureComponent`, `AttachComponent`, and relative-transform `SetComponentProperty` commands. Template properties do not lower yet.
 
 ## Explicit command plan contracts
 
 - `EnsureVariable`, `SetVariableMetadata`, and `SetVariableDefault` are supported through direct command-plan execution and remain the current end-to-end path for document-authored variable definitions.
 - `EnsureFunctionGraph` creates or resolves a Blueprint function graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.
+- `EnsureFunctionGraph` also synchronizes function purity, access flags, and signature pins when its attributes include `bPure`, `AccessSpecifier`, `InputCount`, or `OutputCount` plus the indexed `Input_<n>_*` / `Output_<n>_*` type metadata emitted by the compiler.
 - `EnsureMacroGraph` creates or resolves a Blueprint macro graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.
+- `EnsureMacroGraph` also synchronizes macro entry/exit tunnel pins when its attributes include `InputCount` or `OutputCount` plus the indexed `Input_<n>_*` / `Output_<n>_*` pin metadata emitted by the compiler. Exec pins are represented by `Input_<n>_bExec=true` or `Output_<n>_bExec=true`.
 - `EnsureComponent` requires `SecondaryName` for the component name and `StringValue` for the component class path.
 - `AttachComponent` requires `SecondaryName` for the child component name, `Name` for the parent component name, and optionally `StringValue` for the attach socket or bone name.
 - `SetComponentProperty` requires `SecondaryName` for the component name, `Name` for the property name, and `StringValue` for the serialized property value. Property lookup is case-insensitive and tolerates Unreal bool-prefix naming such as `HiddenInGame` vs `bHiddenInGame`. Standard `FVector` and `FRotator` text forms are accepted.
@@ -81,7 +98,7 @@ This document describes the current scaffold contracts implemented in code today
 - `RenameMember` requires `Name` for the existing member name, `SecondaryName` for the new name, and `Attributes["MemberType"]` set to one of `Variable`, `Dispatcher`, `FunctionGraph`, `MacroGraph`, or `Component`.
 - `MoveNode` and `RemoveNode` require `GraphName` plus `NodeId` to identify the existing node to mutate.
 - `CompileBlueprint` performs an explicit editor compile of the target Blueprint.
-- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler still does not lower `Functions`, `Components`, implemented interfaces, or class-default definitions into those commands automatically.
+- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, and component hierarchy definitions into `EnsureComponent` / `AttachComponent` / transform `SetComponentProperty` commands; component template properties, implemented interfaces, and class-default definitions still do not lower automatically.
 
 ## Dispatcher contracts
 
@@ -138,4 +155,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function, component, interface, and class-default definitions are modeled and partially supported through direct command execution, but they are not yet lowered from the document compiler into compile/apply execution.
+- One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, and component-hierarchy definitions. Function bodies, macro bodies, component template properties, interface definitions, and class-default definitions are modeled and partially supported through direct command execution, but they are not yet all lowered from the document compiler into compile/apply execution.

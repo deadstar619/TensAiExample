@@ -266,6 +266,36 @@ struct VERGILBLUEPRINTMODEL_API FVergilFunctionDefinition
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilMacroParameterDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bIsExec = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilVariableTypeReference Type;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilMacroDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilMacroParameterDefinition> Inputs;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilMacroParameterDefinition> Outputs;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTMODEL_API FVergilComponentTransformDefinition
 {
 	GENERATED_BODY()
@@ -332,6 +362,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilDispatcherDefinition> Dispatchers;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilMacroDefinition> Macros;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilComponentDefinition> Components;
