@@ -31,6 +31,26 @@ TArray<FVergilAgentAuditEntry> UVergilAgentSubsystem::GetRecentAuditEntries() co
 	return AuditTrail;
 }
 
+FVergilSupportedContractManifest UVergilAgentSubsystem::InspectSupportedContracts() const
+{
+	return Vergil::GetSupportedContractManifest();
+}
+
+TArray<FVergilSupportedDescriptorContract> UVergilAgentSubsystem::InspectSupportedDescriptorContracts() const
+{
+	return Vergil::GetSupportedContractManifest().SupportedDescriptors;
+}
+
+FString UVergilAgentSubsystem::InspectSupportedContractsAsJson(const bool bPrettyPrint) const
+{
+	return Vergil::SerializeSupportedContractManifest(bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeSupportedContracts() const
+{
+	return Vergil::DescribeSupportedContractManifest();
+}
+
 void UVergilAgentSubsystem::ClearAuditTrail()
 {
 	AuditTrail.Reset();

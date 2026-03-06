@@ -48,6 +48,7 @@
 #include "PackageTools.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
+#include "VergilAgentSubsystem.h"
 #include "VergilCommandTypes.h"
 #include "VergilBlueprintCompilerService.h"
 #include "VergilCompilerTypes.h"
@@ -135,6 +136,32 @@ namespace
 			UBlueprint::StaticClass(),
 			UBlueprintGeneratedClass::StaticClass(),
 			TEXT("VergilAutomation"));
+	}
+
+	bool ContainsNameValue(const TArray<FName>& Values, const FName ExpectedValue)
+	{
+		return Values.ContainsByPredicate([ExpectedValue](const FName Value)
+		{
+			return Value == ExpectedValue;
+		});
+	}
+
+	bool ContainsStringValue(const TArray<FString>& Values, const FString& ExpectedValue)
+	{
+		return Values.ContainsByPredicate([&ExpectedValue](const FString& Value)
+		{
+			return Value == ExpectedValue;
+		});
+	}
+
+	const FVergilSupportedDescriptorContract* FindSupportedDescriptorContract(
+		const TArray<FVergilSupportedDescriptorContract>& Contracts,
+		const FString& DescriptorContract)
+	{
+		return Contracts.FindByPredicate([&DescriptorContract](const FVergilSupportedDescriptorContract& Contract)
+		{
+			return Contract.DescriptorContract == DescriptorContract;
+		});
 	}
 
 	struct FScopedPersistentTestBlueprint final
@@ -2568,6 +2595,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.SaveReloadCompileRoundtrip",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSupportedContractInspectionTest,
+	"Vergil.Scaffold.SupportedContractInspection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -2622,6 +2654,74 @@ bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Test summary treats executed work as applied."), TestSummary.bApplied);
 	TestEqual(TEXT("Test summary reports planned command count."), TestSummary.PlannedCommandCount, 5);
 	TestEqual(TEXT("Test summary reports executed command count."), TestSummary.ExecutedCommandCount, 1);
+
+	return true;
+}
+
+bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for contract inspection."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilSupportedContractManifest Manifest = AgentSubsystem->InspectSupportedContracts();
+	TestEqual(TEXT("Supported-contract inspection should report the current schema version."), Manifest.SchemaVersion, Vergil::SchemaVersion);
+	TestEqual(TEXT("Supported-contract inspection should report manifest version 1."), Manifest.ManifestVersion, 1);
+	TestEqual(TEXT("Supported-contract inspection should report the current command-plan format name."), Manifest.CommandPlanFormat, Vergil::GetCommandPlanFormatName());
+	TestEqual(TEXT("Supported-contract inspection should report the current command-plan format version."), Manifest.CommandPlanFormatVersion, Vergil::GetCommandPlanFormatVersion());
+	TestTrue(TEXT("Supported-contract inspection should include Metadata in the document field manifest."), ContainsNameValue(Manifest.SupportedDocumentFields, TEXT("Metadata")));
+	TestTrue(TEXT("Supported-contract inspection should include ConstructionScriptNodes in the document field manifest."), ContainsNameValue(Manifest.SupportedDocumentFields, TEXT("ConstructionScriptNodes")));
+	TestTrue(TEXT("Supported-contract inspection should include EventGraph as a supported target graph."), ContainsNameValue(Manifest.SupportedTargetGraphs, TEXT("EventGraph")));
+	TestTrue(TEXT("Supported-contract inspection should include UserConstructionScript as a supported target graph."), ContainsNameValue(Manifest.SupportedTargetGraphs, TEXT("UserConstructionScript")));
+	TestTrue(TEXT("Supported-contract inspection should include BlueprintDisplayName as a supported Blueprint metadata key."), ContainsNameValue(Manifest.SupportedBlueprintMetadataKeys, TEXT("BlueprintDisplayName")));
+	TestTrue(TEXT("Supported-contract inspection should include HideCategories as a supported Blueprint metadata key."), ContainsNameValue(Manifest.SupportedBlueprintMetadataKeys, TEXT("HideCategories")));
+	TestTrue(TEXT("Supported-contract inspection should include struct as a supported type category."), ContainsStringValue(Manifest.SupportedTypeCategories, TEXT("struct")));
+	TestTrue(TEXT("Supported-contract inspection should include Map as a supported container type."), ContainsStringValue(Manifest.SupportedContainerTypes, TEXT("Map")));
+	TestTrue(TEXT("Supported-contract inspection should include SetBlueprintMetadata as a supported command type."), ContainsNameValue(Manifest.SupportedCommandTypes, TEXT("SetBlueprintMetadata")));
+	TestTrue(TEXT("Supported-contract inspection should include FinalizeNode as a supported command type."), ContainsNameValue(Manifest.SupportedCommandTypes, TEXT("FinalizeNode")));
+	TestTrue(TEXT("Supported-contract inspection should expose a non-empty descriptor catalog."), Manifest.SupportedDescriptors.Num() > 0);
+
+	const FVergilSupportedDescriptorContract* const SelectContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.Select"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.Select."), SelectContract);
+	if (SelectContract != nullptr)
+	{
+		TestEqual(TEXT("K2.Select should report exact-match descriptor inspection."), SelectContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.Select should require IndexPinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("IndexPinCategory")));
+		TestTrue(TEXT("K2.Select should require ValuePinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("ValuePinCategory")));
+	}
+
+	const FVergilSupportedDescriptorContract* const CallContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.Call.<FunctionName>"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.Call.<FunctionName>."), CallContract);
+	if (CallContract != nullptr)
+	{
+		TestEqual(TEXT("K2.Call.<FunctionName> should report a prefix descriptor match."), CallContract->MatchKind, EVergilDescriptorMatchKind::Prefix);
+		TestEqual(TEXT("K2.Call.<FunctionName> should report Call as its expected node kind."), CallContract->ExpectedNodeKind, FString(TEXT("Call")));
+		TestTrue(TEXT("K2.Call.<FunctionName> should mention OwnerClassPath normalization in its notes."), CallContract->Notes.Contains(TEXT("OwnerClassPath")));
+	}
+
+	const FVergilSupportedDescriptorContract* const CommentContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("any non-empty descriptor"));
+	TestNotNull(TEXT("Supported-contract inspection should include the comment-node contract."), CommentContract);
+	if (CommentContract != nullptr)
+	{
+		TestEqual(TEXT("Comment-node contract should report NodeKind matching."), CommentContract->MatchKind, EVergilDescriptorMatchKind::NodeKind);
+		TestEqual(TEXT("Comment-node contract should report Comment as its expected node kind."), CommentContract->ExpectedNodeKind, FString(TEXT("Comment")));
+	}
+
+	const TArray<FVergilSupportedDescriptorContract> DescriptorContracts = AgentSubsystem->InspectSupportedDescriptorContracts();
+	TestEqual(TEXT("Descriptor-only inspection should mirror the manifest descriptor count."), DescriptorContracts.Num(), Manifest.SupportedDescriptors.Num());
+
+	const FString ContractDescription = AgentSubsystem->DescribeSupportedContracts();
+	TestTrue(TEXT("Supported-contract description should include the manifest format label."), ContractDescription.Contains(TEXT("Vergil.ContractManifest")));
+	TestTrue(TEXT("Supported-contract description should include K2.CreateDelegate.<FunctionName>."), ContractDescription.Contains(TEXT("K2.CreateDelegate.<FunctionName>")));
+
+	const FString ContractJson = AgentSubsystem->InspectSupportedContractsAsJson(false);
+	TestTrue(TEXT("Supported-contract JSON should include the manifest format field."), ContractJson.Contains(TEXT("\"format\":\"Vergil.ContractManifest\"")));
+	TestTrue(TEXT("Supported-contract JSON should include the command-plan format field."), ContractJson.Contains(TEXT("\"commandPlanFormat\":\"Vergil.CommandPlan\"")));
+	TestTrue(TEXT("Supported-contract JSON should include UserConstructionScript."), ContractJson.Contains(TEXT("UserConstructionScript")));
+	TestTrue(TEXT("Supported-contract JSON should include K2.MakeMap."), ContractJson.Contains(TEXT("K2.MakeMap")));
 
 	return true;
 }

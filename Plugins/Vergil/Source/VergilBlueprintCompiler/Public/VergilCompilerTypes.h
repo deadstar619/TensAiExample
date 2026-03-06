@@ -358,6 +358,8 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary
 
 namespace Vergil
 {
+	VERGILBLUEPRINTCOMPILER_API FString GetCommandPlanFormatName();
+	VERGILBLUEPRINTCOMPILER_API int32 GetCommandPlanFormatVersion();
 	VERGILBLUEPRINTCOMPILER_API void NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands);
 	VERGILBLUEPRINTCOMPILER_API FString DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands);
 	VERGILBLUEPRINTCOMPILER_API FString SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, bool bPrettyPrint = true);

@@ -24,6 +24,15 @@ This document describes the current scaffold contracts implemented in code today
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
 - Command plans now expose stable debug strings plus versioned JSON serialization/deserialization helpers for inspection and replay.
+- `Vergil::GetSupportedContractManifest()` now exposes the current supported-contract surface as code-backed data, and `UVergilAgentSubsystem` exposes that manifest through read-only inspection helpers for structured data, descriptor-only inspection, deterministic JSON, and a human-readable summary.
+
+## Inspection manifest contracts
+
+- The current inspection manifest format is `format="Vergil.ContractManifest"` with `version=1`.
+- `FVergilSupportedContractManifest` currently reports the scaffold schema version, command-plan serialization format/version, supported document fields, supported compile target graphs, supported Blueprint metadata keys, supported logical type categories, supported container types, supported explicit command types, and the supported node-descriptor contract table.
+- `FVergilSupportedDescriptorContract` currently reports the descriptor contract string, how it matches authored nodes (`Exact`, `Prefix`, or `NodeKind`), the expected authored node kind label, required metadata keys, supported target graphs, and notes about the current scaffold behavior or limits.
+- `UVergilAgentSubsystem::InspectSupportedContracts()` returns the full structured manifest, `InspectSupportedDescriptorContracts()` returns just the descriptor table, `InspectSupportedContractsAsJson()` returns the deterministic JSON export, and `DescribeSupportedContracts()` returns a human-readable summary string.
+- The manifest is read-only inspection data. It does not loosen validation or execution behavior; unsupported descriptors outside the documented table still fail explicitly.
 
 ## Compile result contracts
 

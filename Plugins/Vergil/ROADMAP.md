@@ -383,7 +383,7 @@ Tickets:
 - `VGR-8002` Persist audit data instead of keeping it transient only
 - `VGR-8003` Add plan/apply separation
 - `VGR-8004` Add permission gates around write/apply actions
-- `VGR-8005` Add inspection tools for supported descriptors/contracts
+- [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
 - `VGR-8006` Add partial-apply recovery flows
 - `VGR-8007` Add provenance/session correlation IDs
 - `VGR-8008` Keep agent orchestration separate from deterministic compile/execute logic
@@ -392,6 +392,12 @@ Acceptance criteria:
 
 - AI remains optional and non-authoritative
 - all apply operations are auditable and replayable
+
+Session note for `VGR-8005` (2026-03-06):
+
+- The compiler module now exposes a code-backed `FVergilSupportedContractManifest` plus `Vergil::GetSupportedContractManifest()`, `DescribeSupportedContractManifest()`, and `SerializeSupportedContractManifest(...)`, so the current supported contract surface is inspectable without scraping markdown.
+- `UVergilAgentSubsystem` now exposes read-only `InspectSupportedContracts()`, `InspectSupportedDescriptorContracts()`, `InspectSupportedContractsAsJson()`, and `DescribeSupportedContracts()` helpers for the current document fields, target graphs, metadata keys, type categories, command types, and node-descriptor table.
+- `Vergil.Scaffold.SupportedContractInspection` now covers the structured manifest, descriptor-table inspection, and deterministic JSON/summary output.
 
 ## Milestone 9: Studio-Grade Release Hardening
 Goal:
@@ -430,13 +436,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-8005`
-2. `VGR-9007`
-3. `VGR-5007`
-4. `VGR-7001`
-5. `VGR-5001`
+1. `VGR-9007`
+2. `VGR-5007`
+3. `VGR-7001`
+4. `VGR-5001`
+5. `VGR-8001`
 
-This keeps pressure on release/documentation work, higher-level tooling, and remaining K2 breadth now that whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on release/documentation work, higher-level inspection/tooling, and remaining K2 breadth now that the agent layer can inspect the code-backed support manifest and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

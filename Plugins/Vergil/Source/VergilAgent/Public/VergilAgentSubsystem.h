@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
+#include "VergilContractInfo.h"
 #include "VergilAgentTypes.h"
 #include "VergilAgentSubsystem.generated.h"
 
@@ -19,6 +20,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	TArray<FVergilAgentAuditEntry> GetRecentAuditEntries() const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FVergilSupportedContractManifest InspectSupportedContracts() const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	TArray<FVergilSupportedDescriptorContract> InspectSupportedDescriptorContracts() const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectSupportedContractsAsJson(bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeSupportedContracts() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
 	void ClearAuditTrail();

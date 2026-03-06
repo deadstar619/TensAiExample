@@ -776,6 +776,16 @@ FString FVergilCompilerCommand::ToDisplayString() const
 	return FString::Join(Tokens, TEXT(" "));
 }
 
+FString Vergil::GetCommandPlanFormatName()
+{
+	return CommandPlanFormatName;
+}
+
+int32 Vergil::GetCommandPlanFormatVersion()
+{
+	return CommandPlanFormatVersion;
+}
+
 void Vergil::NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands)
 {
 	Algo::StableSort(Commands, [](const FVergilCompilerCommand& A, const FVergilCompilerCommand& B)
