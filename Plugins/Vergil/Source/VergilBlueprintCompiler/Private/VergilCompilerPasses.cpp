@@ -8,6 +8,8 @@
 
 namespace
 {
+	const FName ConstructionScriptGraphName(TEXT("UserConstructionScript"));
+
 	void CopyPlannedPins(const FVergilGraphNode& Node, FVergilCompilerCommand& Command)
 	{
 		Command.PlannedPins.Reset();
@@ -257,6 +259,20 @@ namespace
 			ClassDefaultCommand.StringValue = ClassDefaults.FindRef(PropertyName);
 			Commands.Add(ClassDefaultCommand);
 		}
+	}
+
+	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompileRequest& Request)
+	{
+		return Request.TargetGraphName == ConstructionScriptGraphName
+			? Request.Document.ConstructionScriptNodes
+			: Request.Document.Nodes;
+	}
+
+	const TArray<FVergilGraphEdge>& GetTargetGraphEdges(const FVergilCompileRequest& Request)
+	{
+		return Request.TargetGraphName == ConstructionScriptGraphName
+			? Request.Document.ConstructionScriptEdges
+			: Request.Document.Edges;
 	}
 
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
@@ -1467,7 +1483,10 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 	EnsureGraphCommand.Name = Request.TargetGraphName;
 	Result.Commands.Add(EnsureGraphCommand);
 
-	for (const FVergilGraphNode& Node : Request.Document.Nodes)
+	const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Request);
+	const TArray<FVergilGraphEdge>& TargetEdges = GetTargetGraphEdges(Request);
+
+	for (const FVergilGraphNode& Node : TargetNodes)
 	{
 		const TSharedPtr<IVergilNodeHandler, ESPMode::ThreadSafe> Handler = FVergilNodeRegistry::Get().FindHandler(Node);
 		if (!Handler.IsValid())
@@ -1490,7 +1509,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		}
 	}
 
-	for (const FVergilGraphEdge& Edge : Request.Document.Edges)
+	for (const FVergilGraphEdge& Edge : TargetEdges)
 	{
 		FVergilCompilerCommand ConnectCommand;
 		ConnectCommand.Type = EVergilCommandType::ConnectPins;
@@ -1502,7 +1521,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(ConnectCommand);
 	}
 
-	for (const FVergilGraphNode& Node : Request.Document.Nodes)
+	for (const FVergilGraphNode& Node : TargetNodes)
 	{
 		if (!Node.Descriptor.ToString().StartsWith(TEXT("K2.CreateDelegate.")))
 		{

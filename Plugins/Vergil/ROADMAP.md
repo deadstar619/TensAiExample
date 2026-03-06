@@ -77,9 +77,14 @@ Tickets:
 - [x] `VGR-1005` Add component definitions with parent/attach/transform/template properties
 - [x] `VGR-1006` Add implemented interface definitions
 - [x] `VGR-1007` Add class default definitions
-- `VGR-1008` Add construction script graph definition
+- [x] `VGR-1008` Add construction script graph definition
 - `VGR-1009` Add schema migration helpers
 - `VGR-1010` Extend structural validation for all new model types
+
+Session note for `VGR-1008` (2026-03-06):
+
+- `FVergilGraphDocument` now carries dedicated `ConstructionScriptNodes` and `ConstructionScriptEdges` surfaces with structural validation coverage and explicit planning support when `TargetGraphName` is `UserConstructionScript`.
+- New `Vergil.Scaffold.ConstructionScriptDefinitionModel` and `Vergil.Scaffold.ConstructionScriptDefinitionPlanning` automation coverage exists for the new canonical model surface.
 
 Acceptance criteria:
 
@@ -317,13 +322,12 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1008`
-2. `VGR-4008`
-3. `VGR-1009`
-4. `VGR-2002`
-5. `VGR-1001`
-6. `VGR-3001`
-7. `VGR-4009`
+1. `VGR-4008`
+2. `VGR-1009`
+3. `VGR-2002`
+4. `VGR-1001`
+5. `VGR-3001`
+6. `VGR-4009`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

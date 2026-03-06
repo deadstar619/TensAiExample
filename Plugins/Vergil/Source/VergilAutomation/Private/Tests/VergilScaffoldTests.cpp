@@ -514,6 +514,31 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("ClassDefaultPropertyNameMissing");
 	}));
 
+	FVergilGraphDocument InvalidConstructionScriptDocument;
+	InvalidConstructionScriptDocument.SchemaVersion = 1;
+	InvalidConstructionScriptDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidConstructionScript");
+
+	FVergilGraphNode SharedPrimaryNode;
+	SharedPrimaryNode.Id = FGuid::NewGuid();
+	SharedPrimaryNode.Kind = EVergilNodeKind::Comment;
+	SharedPrimaryNode.Descriptor = TEXT("UI.Comment");
+	InvalidConstructionScriptDocument.Nodes.Add(SharedPrimaryNode);
+
+	FVergilGraphNode SharedConstructionNode;
+	SharedConstructionNode.Id = SharedPrimaryNode.Id;
+	SharedConstructionNode.Kind = EVergilNodeKind::Comment;
+	SharedConstructionNode.Descriptor = TEXT("UI.Comment");
+	InvalidConstructionScriptDocument.ConstructionScriptNodes.Add(SharedConstructionNode);
+
+	Diagnostics.Reset();
+	TestFalse(
+		TEXT("Construction script definitions should share graph id validation with the primary graph."),
+		InvalidConstructionScriptDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Construction script validation reports duplicate node ids across graph surfaces."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("NodeIdDuplicate");
+	}));
+
 	return true;
 }
 
@@ -635,6 +660,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ClassDefaultDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilConstructionScriptDefinitionModelTest,
+	"Vergil.Scaffold.ConstructionScriptDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
@@ -712,6 +742,60 @@ bool FVergilClassDefaultDefinitionModelTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilConstructionScriptDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphNode ConstructionEventNode;
+	ConstructionEventNode.Id = FGuid::NewGuid();
+	ConstructionEventNode.Kind = EVergilNodeKind::Event;
+	ConstructionEventNode.Descriptor = TEXT("K2.Event.UserConstructionScript");
+	ConstructionEventNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin ConstructionThenPin;
+	ConstructionThenPin.Id = FGuid::NewGuid();
+	ConstructionThenPin.Name = TEXT("Then");
+	ConstructionThenPin.Direction = EVergilPinDirection::Output;
+	ConstructionThenPin.bIsExec = true;
+	ConstructionEventNode.Pins.Add(ConstructionThenPin);
+
+	FVergilGraphNode PrintNode;
+	PrintNode.Id = FGuid::NewGuid();
+	PrintNode.Kind = EVergilNodeKind::Call;
+	PrintNode.Descriptor = TEXT("K2.Call.PrintString");
+	PrintNode.Position = FVector2D(350.0f, 0.0f);
+
+	FVergilGraphPin PrintExecPin;
+	PrintExecPin.Id = FGuid::NewGuid();
+	PrintExecPin.Name = TEXT("Execute");
+	PrintExecPin.Direction = EVergilPinDirection::Input;
+	PrintExecPin.bIsExec = true;
+	PrintNode.Pins.Add(PrintExecPin);
+
+	FVergilGraphEdge ConstructionEdge;
+	ConstructionEdge.Id = FGuid::NewGuid();
+	ConstructionEdge.SourceNodeId = ConstructionEventNode.Id;
+	ConstructionEdge.SourcePinId = ConstructionThenPin.Id;
+	ConstructionEdge.TargetNodeId = PrintNode.Id;
+	ConstructionEdge.TargetPinId = PrintExecPin.Id;
+
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ConstructionScriptModel");
+	Document.ConstructionScriptNodes = { ConstructionEventNode, PrintNode };
+	Document.ConstructionScriptEdges.Add(ConstructionEdge);
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid construction script definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid construction script definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Construction script should retain authored nodes."), Document.ConstructionScriptNodes.Num(), 2);
+	TestEqual(TEXT("Construction script should retain authored edges."), Document.ConstructionScriptEdges.Num(), 1);
+	TestEqual(
+		TEXT("Construction script should retain the authored entry descriptor."),
+		Document.ConstructionScriptNodes[0].Descriptor,
+		FName(TEXT("K2.Event.UserConstructionScript")));
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilCompilerRequiresBlueprintTest,
 	"Vergil.Scaffold.CompilerRequiresBlueprint",
@@ -758,6 +842,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilClassDefaultDefinitionPlanningTest,
 	"Vergil.Scaffold.ClassDefaultDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilConstructionScriptDefinitionPlanningTest,
+	"Vergil.Scaffold.ConstructionScriptDefinitionPlanning",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -1680,6 +1769,73 @@ bool FVergilClassDefaultDefinitionPlanningTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Second class default command should target Replicates."), Result.Commands[1].Name, FName(TEXT("Replicates")));
 	TestEqual(TEXT("Second class default command should preserve the authored value."), Result.Commands[1].StringValue, FString(TEXT("True")));
 	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[2].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
+bool FVergilConstructionScriptDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphNode ConstructionEventNode;
+	ConstructionEventNode.Id = FGuid::NewGuid();
+	ConstructionEventNode.Kind = EVergilNodeKind::Event;
+	ConstructionEventNode.Descriptor = TEXT("K2.Event.UserConstructionScript");
+	ConstructionEventNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin ConstructionThenPin;
+	ConstructionThenPin.Id = FGuid::NewGuid();
+	ConstructionThenPin.Name = TEXT("Then");
+	ConstructionThenPin.Direction = EVergilPinDirection::Output;
+	ConstructionThenPin.bIsExec = true;
+	ConstructionEventNode.Pins.Add(ConstructionThenPin);
+
+	FVergilGraphNode PrintNode;
+	PrintNode.Id = FGuid::NewGuid();
+	PrintNode.Kind = EVergilNodeKind::Call;
+	PrintNode.Descriptor = TEXT("K2.Call.PrintString");
+	PrintNode.Position = FVector2D(350.0f, 0.0f);
+
+	FVergilGraphPin PrintExecPin;
+	PrintExecPin.Id = FGuid::NewGuid();
+	PrintExecPin.Name = TEXT("Execute");
+	PrintExecPin.Direction = EVergilPinDirection::Input;
+	PrintExecPin.bIsExec = true;
+	PrintNode.Pins.Add(PrintExecPin);
+
+	FVergilGraphEdge ConstructionEdge;
+	ConstructionEdge.Id = FGuid::NewGuid();
+	ConstructionEdge.SourceNodeId = ConstructionEventNode.Id;
+	ConstructionEdge.SourcePinId = ConstructionThenPin.Id;
+	ConstructionEdge.TargetNodeId = PrintNode.Id;
+	ConstructionEdge.TargetPinId = PrintExecPin.Id;
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ConstructionScriptPlanning");
+	Document.ConstructionScriptNodes = { ConstructionEventNode, PrintNode };
+	Document.ConstructionScriptEdges.Add(ConstructionEdge);
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("UserConstructionScript");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Construction script definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Construction script definition planning should emit ensure, node, and connect commands."), Result.Commands.Num(), 4);
+	if (!Result.bSucceeded || Result.Commands.Num() != 4)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("First command should ensure the construction script graph."), Result.Commands[0].Type, EVergilCommandType::EnsureGraph);
+	TestEqual(TEXT("Ensure graph should target UserConstructionScript."), Result.Commands[0].GraphName, FName(TEXT("UserConstructionScript")));
+	TestEqual(TEXT("Ensure graph should preserve the compile target name."), Result.Commands[0].Name, FName(TEXT("UserConstructionScript")));
+	TestEqual(TEXT("Construction event should lower through the event handler."), Result.Commands[1].Name, FName(TEXT("Vergil.K2.Event")));
+	TestEqual(TEXT("Construction event should preserve the construction-script graph name."), Result.Commands[1].GraphName, FName(TEXT("UserConstructionScript")));
+	TestEqual(TEXT("Construction event should preserve the authored suffix."), Result.Commands[1].SecondaryName, FName(TEXT("UserConstructionScript")));
+	TestEqual(TEXT("Print node should target the construction-script graph."), Result.Commands[2].GraphName, FName(TEXT("UserConstructionScript")));
+	TestEqual(TEXT("Connection planning should target the construction-script graph."), Result.Commands[3].GraphName, FName(TEXT("UserConstructionScript")));
 
 	return true;
 }

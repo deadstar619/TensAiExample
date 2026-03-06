@@ -274,6 +274,109 @@ namespace
 
 		return bIsValid;
 	}
+
+	bool ValidateGraphDefinition(
+		const TArray<FVergilGraphNode>& GraphNodes,
+		const TArray<FVergilGraphEdge>& GraphEdges,
+		const FString& GraphLabel,
+		TSet<FGuid>& GlobalNodeIds,
+		TSet<FGuid>& GlobalPinIds,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		bool bIsValid = true;
+		TSet<FGuid> LocalNodeIds;
+		TSet<FGuid> LocalPinIds;
+
+		for (const FVergilGraphNode& Node : GraphNodes)
+		{
+			if (!Node.Id.IsValid())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("NodeIdMissing"),
+					FString::Printf(TEXT("%s nodes must have a valid GUID."), *GraphLabel),
+					Node.Id);
+			}
+			else if (GlobalNodeIds.Contains(Node.Id))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("NodeIdDuplicate"),
+					FString::Printf(TEXT("%s reuses node id %s."), *GraphLabel, *Node.Id.ToString()),
+					Node.Id);
+			}
+			else
+			{
+				GlobalNodeIds.Add(Node.Id);
+				LocalNodeIds.Add(Node.Id);
+			}
+
+			if (Node.Descriptor.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("NodeDescriptorMissing"),
+					FString::Printf(TEXT("%s nodes must declare a descriptor."), *GraphLabel),
+					Node.Id);
+			}
+
+			for (const FVergilGraphPin& Pin : Node.Pins)
+			{
+				if (!Pin.Id.IsValid())
+				{
+					bIsValid = false;
+					AddDiagnostic(
+						OutDiagnostics,
+						EVergilDiagnosticSeverity::Error,
+						TEXT("PinIdMissing"),
+						FString::Printf(TEXT("%s pins must have a valid GUID."), *GraphLabel),
+						Node.Id);
+				}
+				else if (GlobalPinIds.Contains(Pin.Id))
+				{
+					bIsValid = false;
+					AddDiagnostic(
+						OutDiagnostics,
+						EVergilDiagnosticSeverity::Error,
+						TEXT("PinIdDuplicate"),
+						FString::Printf(TEXT("%s reuses pin id %s."), *GraphLabel, *Pin.Id.ToString()),
+						Node.Id);
+				}
+				else
+				{
+					GlobalPinIds.Add(Pin.Id);
+					LocalPinIds.Add(Pin.Id);
+				}
+			}
+		}
+
+		for (const FVergilGraphEdge& Edge : GraphEdges)
+		{
+			const bool bHasValidSourceNode = LocalNodeIds.Contains(Edge.SourceNodeId);
+			const bool bHasValidTargetNode = LocalNodeIds.Contains(Edge.TargetNodeId);
+			const bool bHasValidSourcePin = LocalPinIds.Contains(Edge.SourcePinId);
+			const bool bHasValidTargetPin = LocalPinIds.Contains(Edge.TargetPinId);
+
+			if (!bHasValidSourceNode || !bHasValidTargetNode || !bHasValidSourcePin || !bHasValidTargetPin)
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("EdgeReferenceInvalid"),
+					FString::Printf(TEXT("%s edges must reference nodes and pins authored in the same graph definition."), *GraphLabel),
+					Edge.Id);
+			}
+		}
+
+		return bIsValid;
+	}
 }
 
 bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDiagnostics) const
@@ -878,61 +981,14 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		}
 	}
 
-	for (const FVergilGraphNode& Node : Nodes)
-	{
-		if (!Node.Id.IsValid())
-		{
-			bIsValid = false;
-			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("NodeIdMissing"), TEXT("Every node must have a valid GUID."), Node.Id);
-		}
-		else if (NodeIds.Contains(Node.Id))
-		{
-			bIsValid = false;
-			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("NodeIdDuplicate"), FString::Printf(TEXT("Duplicate node id %s."), *Node.Id.ToString()), Node.Id);
-		}
-		else
-		{
-			NodeIds.Add(Node.Id);
-		}
-
-		if (Node.Descriptor.IsNone())
-		{
-			bIsValid = false;
-			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("NodeDescriptorMissing"), TEXT("Every node must declare a descriptor."), Node.Id);
-		}
-
-		for (const FVergilGraphPin& Pin : Node.Pins)
-		{
-			if (!Pin.Id.IsValid())
-			{
-				bIsValid = false;
-				AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("PinIdMissing"), TEXT("Every pin must have a valid GUID."), Node.Id);
-			}
-			else if (PinIds.Contains(Pin.Id))
-			{
-				bIsValid = false;
-				AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("PinIdDuplicate"), FString::Printf(TEXT("Duplicate pin id %s."), *Pin.Id.ToString()), Node.Id);
-			}
-			else
-			{
-				PinIds.Add(Pin.Id);
-			}
-		}
-	}
-
-	for (const FVergilGraphEdge& Edge : Edges)
-	{
-		const bool bHasValidSourceNode = NodeIds.Contains(Edge.SourceNodeId);
-		const bool bHasValidTargetNode = NodeIds.Contains(Edge.TargetNodeId);
-		const bool bHasValidSourcePin = PinIds.Contains(Edge.SourcePinId);
-		const bool bHasValidTargetPin = PinIds.Contains(Edge.TargetPinId);
-
-		if (!bHasValidSourceNode || !bHasValidTargetNode || !bHasValidSourcePin || !bHasValidTargetPin)
-		{
-			bIsValid = false;
-			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("EdgeReferenceInvalid"), TEXT("Edges must reference existing node and pin identifiers."), Edge.Id);
-		}
-	}
+	bIsValid &= ValidateGraphDefinition(Nodes, Edges, TEXT("Target graph"), NodeIds, PinIds, OutDiagnostics);
+	bIsValid &= ValidateGraphDefinition(
+		ConstructionScriptNodes,
+		ConstructionScriptEdges,
+		TEXT("Construction script"),
+		NodeIds,
+		PinIds,
+		OutDiagnostics);
 
 	if (SchemaVersion > Vergil::SchemaVersion)
 	{

@@ -4,16 +4,16 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Interfaces`, `ClassDefaults`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Interfaces`, `ClassDefaults`, `ConstructionScriptNodes`, `ConstructionScriptEdges`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
-- `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
+- `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`. The primary graph surface still uses top-level `Nodes` and `Edges`, while `ConstructionScriptNodes` and `ConstructionScriptEdges` are the dedicated document surface for `UserConstructionScript`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
 - `Functions` now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function-body authoring is still separate future work.
 - `Macros` now lower into Blueprint macro graph/signature authoring for exec/data inputs and outputs. Macro-body authoring is still separate future work.
 - `Components` now lower into Blueprint component hierarchy authoring for component creation, parent attachment, attach sockets, template properties, and relative transforms.
 - `Interfaces` now lower into Blueprint interface application for authored interface class paths.
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
-- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, component hierarchy data, component template properties, class defaults, and implemented interfaces is not implemented yet through document compile/apply. There is no current lowering from document-authored construction script definitions into command plans.
+- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, component hierarchy data, component template properties, class defaults, implemented interfaces, and construction-script planning is not implemented yet through document compile/apply. Construction script definitions now lower into command plans only when `TargetGraphName` is `UserConstructionScript`; end-to-end construction-script authoring remains future work.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 
 ## Structural validation rules
@@ -40,6 +40,8 @@ This document describes the current scaffold contracts implemented in code today
 - Every node must have a valid unique GUID and a non-empty descriptor.
 - Every pin must have a valid unique GUID.
 - Every edge must reference existing node IDs and pin IDs.
+- Node and pin GUIDs must remain unique across both the primary graph surface and the construction-script graph surface.
+- `ConstructionScriptEdges` may only reference nodes and pins authored in `ConstructionScriptNodes`.
 
 ## Variable definition contracts
 
@@ -106,6 +108,13 @@ This document describes the current scaffold contracts implemented in code today
 - Class-default property lookup is case-insensitive and tolerates Unreal bool-prefix naming such as `Replicates` vs `bReplicates`.
 - Class defaults may target inherited native properties or authored Blueprint members on the compiled generated class.
 - If `ClassDefaults` and `Variables[].DefaultValue` both target the same authored Blueprint member, the post-compile class-default write wins.
+
+## Construction script contracts
+
+- Construction script authoring is described from `ConstructionScriptNodes` and `ConstructionScriptEdges` on the document.
+- `ConstructionScriptNodes` and `ConstructionScriptEdges` use the same node and edge shapes as the primary graph surface.
+- When `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`, the planner lowers `ConstructionScriptNodes` and `ConstructionScriptEdges` through the existing generic graph-planning path.
+- End-to-end construction-script apply/authoring remains future work under `VGR-4008`.
 
 ## Explicit command plan contracts
 
