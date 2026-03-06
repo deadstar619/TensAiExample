@@ -76,14 +76,14 @@ Tickets:
 - [x] `VGR-1004` Add macro graph definitions
 - [x] `VGR-1005` Add component definitions with parent/attach/transform/template properties
 - [x] `VGR-1006` Add implemented interface definitions
-- `VGR-1007` Add class default definitions
+- [x] `VGR-1007` Add class default definitions
 - `VGR-1008` Add construction script graph definition
 - `VGR-1009` Add schema migration helpers
 - `VGR-1010` Extend structural validation for all new model types
 
 Acceptance criteria:
 
-- one document can define parent class, variables, functions, dispatchers, components, construction script, and graphs
+- one document can define parent class, variables, class defaults, functions, dispatchers, components, construction script, and graphs
 - invalid asset definitions fail during structural validation with precise diagnostics
 
 ## Milestone 2: Expand The Command Surface
@@ -154,7 +154,7 @@ Tickets:
 - [x] `VGR-4004` Implement component hierarchy authoring
 - [x] `VGR-4005` Implement component template property setting
 - [x] `VGR-4006` Implement interface application
-- `VGR-4007` Implement class default writing
+- [x] `VGR-4007` Implement class default writing
 - `VGR-4008` Implement construction script authoring
 - `VGR-4009` Add save/reload/compile roundtrip tests
 
@@ -188,9 +188,15 @@ Session note for `VGR-4006` (2026-03-06):
 - New `Vergil.Scaffold.InterfaceDefinitionModel`, `Vergil.Scaffold.InterfaceDefinitionPlanning`, and `Vergil.Scaffold.InterfaceAuthoringExecution` coverage exists alongside the pre-existing explicit command-surface interface test.
 - `mcp__tensai__build_project` succeeded in `Development`, `Vergil.Scaffold.Interface*` passed headlessly, and a clean full `Vergil.Scaffold` rerun was re-verified from the documented headless runner in this workspace.
 
+Session note for `VGR-4007` (2026-03-06):
+
+- Current branch now adds document-authored `ClassDefaults` to the canonical model and structural validation surface, lowers them into deterministic post-compile `SetClassDefault` commands, and applies them through `CompileDocument(..., bApplyCommands=true)` using the existing explicit executor path.
+- New `Vergil.Scaffold.ClassDefaultDefinitionModel`, `Vergil.Scaffold.ClassDefaultDefinitionPlanning`, and `Vergil.Scaffold.ClassDefaultAuthoringExecution` coverage exists alongside the pre-existing explicit command-surface class-default test.
+- `mcp__tensai__build_project` succeeded in `Development`, `Vergil.Scaffold.ClassDefault*` passed headlessly, and a clean full `Vergil.Scaffold` rerun was re-verified from the documented headless runner in this workspace.
+
 Acceptance criteria:
 
-- Vergil can generate a usable Actor Blueprint with variables, components, functions, dispatchers, construction script, and event graph from one document
+- Vergil can generate a usable Actor Blueprint with variables, class defaults, components, functions, dispatchers, construction script, and event graph from one document
 
 ## Milestone 5: Core K2 Coverage
 Goal:
@@ -311,13 +317,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1007`
-2. `VGR-4007`
-3. `VGR-1008`
-4. `VGR-4008`
-5. `VGR-1009`
-6. `VGR-2002`
-7. `VGR-1001`
+1. `VGR-1008`
+2. `VGR-4008`
+3. `VGR-1009`
+4. `VGR-2002`
+5. `VGR-1001`
+6. `VGR-3001`
+7. `VGR-4009`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

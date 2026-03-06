@@ -382,6 +382,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 	TArray<FVergilInterfaceDefinition> Interfaces;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TMap<FName, FString> ClassDefaults;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilGraphNode> Nodes;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")

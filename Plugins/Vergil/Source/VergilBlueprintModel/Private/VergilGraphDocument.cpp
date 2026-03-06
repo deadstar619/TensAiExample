@@ -865,6 +865,19 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		InterfaceClassPaths.Add(TrimmedInterfaceClassPath);
 	}
 
+	for (const TPair<FName, FString>& ClassDefault : ClassDefaults)
+	{
+		if (ClassDefault.Key.IsNone())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ClassDefaultPropertyNameMissing"),
+				TEXT("Class defaults must declare a non-empty property name."));
+		}
+	}
+
 	for (const FVergilGraphNode& Node : Nodes)
 	{
 		if (!Node.Id.IsValid())

@@ -235,6 +235,30 @@ namespace
 		}
 	}
 
+	void AddClassDefaultCommands(TArray<FVergilCompilerCommand>& Commands, const TMap<FName, FString>& ClassDefaults)
+	{
+		TArray<FName> PropertyNames;
+		ClassDefaults.GetKeys(PropertyNames);
+		PropertyNames.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		for (const FName PropertyName : PropertyNames)
+		{
+			if (PropertyName.IsNone())
+			{
+				continue;
+			}
+
+			FVergilCompilerCommand ClassDefaultCommand;
+			ClassDefaultCommand.Type = EVergilCommandType::SetClassDefault;
+			ClassDefaultCommand.Name = PropertyName;
+			ClassDefaultCommand.StringValue = ClassDefaults.FindRef(PropertyName);
+			Commands.Add(ClassDefaultCommand);
+		}
+	}
+
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -1434,6 +1458,8 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		EnsureInterfaceCommand.StringValue = Interface.InterfaceClassPath.TrimStartAndEnd();
 		Result.Commands.Add(EnsureInterfaceCommand);
 	}
+
+	AddClassDefaultCommands(Result.Commands, Request.Document.ClassDefaults);
 
 	FVergilCompilerCommand EnsureGraphCommand;
 	EnsureGraphCommand.Type = EVergilCommandType::EnsureGraph;

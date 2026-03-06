@@ -502,6 +502,18 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("InterfaceClassPathDuplicate");
 	}));
 
+	FVergilGraphDocument InvalidClassDefaultDocument;
+	InvalidClassDefaultDocument.SchemaVersion = 1;
+	InvalidClassDefaultDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidClassDefaults");
+	InvalidClassDefaultDocument.ClassDefaults.Add(NAME_None, TEXT("True"));
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid class default definitions should fail structural validation."), InvalidClassDefaultDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Class default validation reports missing property names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ClassDefaultPropertyNameMissing");
+	}));
+
 	return true;
 }
 
@@ -618,6 +630,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.InterfaceDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilClassDefaultDefinitionModelTest,
+	"Vergil.Scaffold.ClassDefaultDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
@@ -677,6 +694,24 @@ bool FVergilInterfaceDefinitionModelTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilClassDefaultDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ClassDefaultModel");
+	Document.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+	Document.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("2.5"));
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid class default definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid class default definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored class defaults."), Document.ClassDefaults.Num(), 2);
+	TestEqual(TEXT("Replicates should retain its authored value."), Document.ClassDefaults.FindRef(TEXT("Replicates")), FString(TEXT("True")));
+	TestEqual(TEXT("InitialLifeSpan should retain its authored value."), Document.ClassDefaults.FindRef(TEXT("InitialLifeSpan")), FString(TEXT("2.5")));
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilCompilerRequiresBlueprintTest,
 	"Vergil.Scaffold.CompilerRequiresBlueprint",
@@ -721,6 +756,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilClassDefaultDefinitionPlanningTest,
+	"Vergil.Scaffold.ClassDefaultDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilResultSummaryUtilitiesTest,
 	"Vergil.Scaffold.ResultSummaries",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -748,6 +788,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilInterfaceAuthoringExecutionTest,
 	"Vergil.Scaffold.InterfaceAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilClassDefaultAuthoringExecutionTest,
+	"Vergil.Scaffold.ClassDefaultAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -1607,6 +1652,38 @@ bool FVergilInterfaceDefinitionPlanningTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilClassDefaultDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ClassDefaultPlanning");
+	Document.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+	Document.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("2.5"));
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Class default definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Class default definition planning should emit class-default commands plus the target graph ensure."), Result.Commands.Num(), 3);
+	if (!Result.bSucceeded || Result.Commands.Num() != 3)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Planner should lower class defaults into SetClassDefault."), Result.Commands[0].Type, EVergilCommandType::SetClassDefault);
+	TestEqual(TEXT("Class default lowering should sort keys deterministically."), Result.Commands[0].Name, FName(TEXT("InitialLifeSpan")));
+	TestEqual(TEXT("InitialLifeSpan should preserve the authored value."), Result.Commands[0].StringValue, FString(TEXT("2.5")));
+	TestEqual(TEXT("Second class default command should target Replicates."), Result.Commands[1].Name, FName(TEXT("Replicates")));
+	TestEqual(TEXT("Second class default command should preserve the authored value."), Result.Commands[1].StringValue, FString(TEXT("True")));
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[2].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
 bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -1806,6 +1883,71 @@ bool FVergilInterfaceAuthoringExecutionTest::RunTest(const FString& Parameters)
 	TArray<UClass*> ImplementedInterfaces;
 	FBlueprintEditorUtils::FindImplementedInterfaces(Blueprint, true, ImplementedInterfaces);
 	TestTrue(TEXT("Document-authored interfaces should be implemented on the blueprint."), ImplementedInterfaces.Contains(UVergilAutomationTestInterface::StaticClass()));
+
+	return true;
+}
+
+bool FVergilClassDefaultAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphDocument InitialDocument;
+	InitialDocument.BlueprintPath = TEXT("/Temp/BP_VergilClassDefaultAuthoring");
+	InitialDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+	InitialDocument.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("2.5"));
+
+	const FVergilCompileResult InitialResult = EditorSubsystem->CompileDocument(Blueprint, InitialDocument, false, false, true);
+	TestTrue(TEXT("Initial class default authoring should succeed."), InitialResult.bSucceeded);
+	TestTrue(TEXT("Initial class default authoring should apply commands."), InitialResult.bApplied);
+	if (!InitialResult.bSucceeded || !InitialResult.bApplied)
+	{
+		return false;
+	}
+
+	AActor* BlueprintCDO = Blueprint->GeneratedClass != nullptr ? Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
+	TestNotNull(TEXT("Generated class default object should exist after initial class default authoring."), BlueprintCDO);
+	if (BlueprintCDO == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Replicates should apply through class default authoring."), BlueprintCDO->GetIsReplicated());
+	TestTrue(TEXT("InitialLifeSpan should apply through class default authoring."), FMath::IsNearlyEqual(BlueprintCDO->InitialLifeSpan, 2.5f));
+
+	FVergilGraphDocument UpdatedDocument;
+	UpdatedDocument.BlueprintPath = InitialDocument.BlueprintPath;
+	UpdatedDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("False"));
+	UpdatedDocument.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("7.25"));
+
+	const FVergilCompileResult UpdatedResult = EditorSubsystem->CompileDocument(Blueprint, UpdatedDocument, false, false, true);
+	TestTrue(TEXT("Class default update should succeed."), UpdatedResult.bSucceeded);
+	TestTrue(TEXT("Class default update should apply commands."), UpdatedResult.bApplied);
+	if (!UpdatedResult.bSucceeded || !UpdatedResult.bApplied)
+	{
+		return false;
+	}
+
+	BlueprintCDO = Blueprint->GeneratedClass != nullptr ? Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
+	TestNotNull(TEXT("Generated class default object should still exist after update."), BlueprintCDO);
+	if (BlueprintCDO == nullptr)
+	{
+		return false;
+	}
+
+	TestFalse(TEXT("Replicates should update through class default authoring."), BlueprintCDO->GetIsReplicated());
+	TestTrue(TEXT("InitialLifeSpan should update through class default authoring."), FMath::IsNearlyEqual(BlueprintCDO->InitialLifeSpan, 7.25f));
 
 	return true;
 }
