@@ -17,6 +17,7 @@ This document describes the current scaffold contracts implemented in code today
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current supported whole-asset authoring surface is now covered by a persisted save/reload/native-compile roundtrip automation test on a real `/Game/Tests/...` Blueprint package, spanning Blueprint metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
+- The current plugin semantic version is `0.1.0`, and the current supported document migration steps are `1->2` and `2->3`. See [VERSIONING.md](VERSIONING.md) for the release/versioning policy that governs schema, command-plan, and manifest version changes.
 - The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and then command planning.
 - `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` now gates the dedicated layout post-pass boundary. The layout pass currently emits no commands until the future layout API lands.
 - `FVergilCompileResult` now includes `Statistics` plus ordered `PassRecords`. Compiler-produced results report target graph, requested/effective schema version, requested auto-layout/comment flags, normalized per-phase command counts, plan fingerprints, planning/apply invocation counts, and the last completed or failed compiler pass without requiring log scraping.
@@ -29,10 +30,19 @@ This document describes the current scaffold contracts implemented in code today
 ## Inspection manifest contracts
 
 - The current inspection manifest format is `format="Vergil.ContractManifest"` with `version=1`.
-- `FVergilSupportedContractManifest` currently reports the scaffold schema version, command-plan serialization format/version, supported document fields, supported compile target graphs, supported Blueprint metadata keys, supported logical type categories, supported container types, supported explicit command types, and the supported node-descriptor contract table.
+- `FVergilSupportedContractManifest` currently reports the plugin descriptor version, plugin semantic version, scaffold schema version, supported schema migration paths, command-plan serialization format/version, supported document fields, supported compile target graphs, supported Blueprint metadata keys, supported logical type categories, supported container types, supported explicit command types, and the supported node-descriptor contract table.
 - `FVergilSupportedDescriptorContract` currently reports the descriptor contract string, how it matches authored nodes (`Exact`, `Prefix`, or `NodeKind`), the expected authored node kind label, required metadata keys, supported target graphs, and notes about the current scaffold behavior or limits.
 - `UVergilAgentSubsystem::InspectSupportedContracts()` returns the full structured manifest, `InspectSupportedDescriptorContracts()` returns just the descriptor table, `InspectSupportedContractsAsJson()` returns the deterministic JSON export, and `DescribeSupportedContracts()` returns a human-readable summary string.
 - The manifest is read-only inspection data. It does not loosen validation or execution behavior; unsupported descriptors outside the documented table still fail explicitly.
+
+## Versioning policy contracts
+
+- Vergil uses semantic versioning for the plugin release surface and separate integer versioning for document schema, serialized command plans, and the supported-contract inspection manifest.
+- The current plugin semantic version is sourced from `Vergil::GetSemanticVersionString()`. `Vergil.uplugin` `VersionName` is expected to stay aligned with that helper.
+- The current plugin descriptor version is sourced from `Vergil::PluginDescriptorVersion`. `Vergil.uplugin` `Version` is expected to stay aligned with that constant.
+- `Vergil::GetSupportedSchemaMigrationPaths()` exposes the exact supported forward schema-migration steps from the model layer, and the supported-contract manifest mirrors that list for agent/tool inspection.
+- Additive `Vergil.ContractManifest` fields do not require a manifest-version bump. Incompatible JSON shape changes do.
+- See [VERSIONING.md](VERSIONING.md) for the full semantic-versioning, migration, and release-update checklist.
 
 ## Compile result contracts
 

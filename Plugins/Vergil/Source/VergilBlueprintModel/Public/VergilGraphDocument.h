@@ -407,6 +407,7 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 namespace Vergil
 {
+	VERGILBLUEPRINTMODEL_API TArray<FString> GetSupportedSchemaMigrationPaths();
 	VERGILBLUEPRINTMODEL_API bool CanMigrateSchemaVersion(int32 SourceSchemaVersion, int32 TargetSchemaVersion = SchemaVersion);
 	VERGILBLUEPRINTMODEL_API bool MigrateDocumentSchema(
 		const FVergilGraphDocument& SourceDocument,

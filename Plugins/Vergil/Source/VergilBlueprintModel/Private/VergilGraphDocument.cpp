@@ -1138,6 +1138,21 @@ bool Vergil::CanMigrateSchemaVersion(const int32 SourceSchemaVersion, const int3
 	return true;
 }
 
+TArray<FString> Vergil::GetSupportedSchemaMigrationPaths()
+{
+	TArray<FString> Paths;
+
+	for (int32 Version = 1; Version < Vergil::SchemaVersion; ++Version)
+	{
+		if (HasSchemaMigrationStep(Version))
+		{
+			Paths.Add(FString::Printf(TEXT("%d->%d"), Version, Version + 1));
+		}
+	}
+
+	return Paths;
+}
+
 bool Vergil::MigrateDocumentSchema(
 	const FVergilGraphDocument& SourceDocument,
 	FVergilGraphDocument& OutDocument,

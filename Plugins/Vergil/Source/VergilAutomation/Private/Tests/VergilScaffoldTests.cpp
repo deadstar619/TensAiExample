@@ -42,6 +42,7 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
@@ -56,6 +57,7 @@
 #include "VergilGraphDocument.h"
 #include "VergilNodeRegistry.h"
 #include "VergilAutomationTestInterface.h"
+#include "VergilVersion.h"
 
 namespace
 {
@@ -2596,6 +2598,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilVersioningAndMigrationContractsTest,
+	"Vergil.Scaffold.VersioningAndMigrationContracts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilSupportedContractInspectionTest,
 	"Vergil.Scaffold.SupportedContractInspection",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -2658,6 +2665,52 @@ bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilVersioningAndMigrationContractsTest::RunTest(const FString& Parameters)
+{
+	const FString SemanticVersion = Vergil::GetSemanticVersionString();
+	TestEqual(TEXT("Semantic-version helpers should report the current plugin semantic version."), SemanticVersion, FString(TEXT("0.1.0")));
+	TestEqual(TEXT("Plugin descriptor version should remain 1."), Vergil::PluginDescriptorVersion, 1);
+
+	const TArray<FString> SupportedMigrationPaths = Vergil::GetSupportedSchemaMigrationPaths();
+	TestEqual(TEXT("The current scaffold should advertise two explicit schema migration steps."), SupportedMigrationPaths.Num(), 2);
+	TestTrue(TEXT("Supported schema migration paths should include 1->2."), ContainsStringValue(SupportedMigrationPaths, TEXT("1->2")));
+	TestTrue(TEXT("Supported schema migration paths should include 2->3."), ContainsStringValue(SupportedMigrationPaths, TEXT("2->3")));
+
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for versioning inspection."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilSupportedContractManifest Manifest = AgentSubsystem->InspectSupportedContracts();
+	TestEqual(TEXT("Supported-contract inspection should report the current plugin semantic version."), Manifest.PluginSemanticVersion, SemanticVersion);
+	TestEqual(TEXT("Supported-contract inspection should report the current plugin descriptor version."), Manifest.PluginDescriptorVersion, Vergil::PluginDescriptorVersion);
+	TestEqual(TEXT("Supported-contract inspection should mirror the supported migration-path count."), Manifest.SupportedSchemaMigrationPaths.Num(), SupportedMigrationPaths.Num());
+	TestTrue(TEXT("Supported-contract inspection should include 1->2."), ContainsStringValue(Manifest.SupportedSchemaMigrationPaths, TEXT("1->2")));
+	TestTrue(TEXT("Supported-contract inspection should include 2->3."), ContainsStringValue(Manifest.SupportedSchemaMigrationPaths, TEXT("2->3")));
+
+	const FString ContractDescription = AgentSubsystem->DescribeSupportedContracts();
+	TestTrue(TEXT("Supported-contract description should include the plugin semantic version."), ContractDescription.Contains(TEXT("pluginSemanticVersion: 0.1.0")));
+	TestTrue(TEXT("Supported-contract description should include the schema migration path summary."), ContractDescription.Contains(TEXT("schemaMigrationPaths: 1->2, 2->3")));
+
+	const FString ContractJson = AgentSubsystem->InspectSupportedContractsAsJson(false);
+	TestTrue(TEXT("Supported-contract JSON should include the plugin descriptor version."), ContractJson.Contains(TEXT("\"pluginDescriptorVersion\":1")));
+	TestTrue(TEXT("Supported-contract JSON should include the plugin semantic version."), ContractJson.Contains(TEXT("\"pluginSemanticVersion\":\"0.1.0\"")));
+	TestTrue(TEXT("Supported-contract JSON should include the supported migration paths."), ContractJson.Contains(TEXT("\"supportedSchemaMigrationPaths\":[\"1->2\",\"2->3\"]")));
+
+	const FString PluginDescriptorPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/Vergil/Vergil.uplugin"));
+	FString PluginDescriptorText;
+	TestTrue(TEXT("The Vergil plugin descriptor should load for version-alignment coverage."), FFileHelper::LoadFileToString(PluginDescriptorText, *PluginDescriptorPath));
+	if (!PluginDescriptorText.IsEmpty())
+	{
+		TestTrue(TEXT("The plugin descriptor should advertise Version 1."), PluginDescriptorText.Contains(TEXT("\"Version\": 1")));
+		TestTrue(TEXT("The plugin descriptor should advertise VersionName 0.1.0."), PluginDescriptorText.Contains(TEXT("\"VersionName\": \"0.1.0\"")));
+	}
+
+	return true;
+}
+
 bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 {
 	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
@@ -2670,8 +2723,12 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 	const FVergilSupportedContractManifest Manifest = AgentSubsystem->InspectSupportedContracts();
 	TestEqual(TEXT("Supported-contract inspection should report the current schema version."), Manifest.SchemaVersion, Vergil::SchemaVersion);
 	TestEqual(TEXT("Supported-contract inspection should report manifest version 1."), Manifest.ManifestVersion, 1);
+	TestEqual(TEXT("Supported-contract inspection should report the current plugin descriptor version."), Manifest.PluginDescriptorVersion, Vergil::PluginDescriptorVersion);
+	TestEqual(TEXT("Supported-contract inspection should report the current plugin semantic version."), Manifest.PluginSemanticVersion, Vergil::GetSemanticVersionString());
 	TestEqual(TEXT("Supported-contract inspection should report the current command-plan format name."), Manifest.CommandPlanFormat, Vergil::GetCommandPlanFormatName());
 	TestEqual(TEXT("Supported-contract inspection should report the current command-plan format version."), Manifest.CommandPlanFormatVersion, Vergil::GetCommandPlanFormatVersion());
+	TestTrue(TEXT("Supported-contract inspection should include 1->2 in the schema migration manifest."), ContainsStringValue(Manifest.SupportedSchemaMigrationPaths, TEXT("1->2")));
+	TestTrue(TEXT("Supported-contract inspection should include 2->3 in the schema migration manifest."), ContainsStringValue(Manifest.SupportedSchemaMigrationPaths, TEXT("2->3")));
 	TestTrue(TEXT("Supported-contract inspection should include Metadata in the document field manifest."), ContainsNameValue(Manifest.SupportedDocumentFields, TEXT("Metadata")));
 	TestTrue(TEXT("Supported-contract inspection should include ConstructionScriptNodes in the document field manifest."), ContainsNameValue(Manifest.SupportedDocumentFields, TEXT("ConstructionScriptNodes")));
 	TestTrue(TEXT("Supported-contract inspection should include EventGraph as a supported target graph."), ContainsNameValue(Manifest.SupportedTargetGraphs, TEXT("EventGraph")));

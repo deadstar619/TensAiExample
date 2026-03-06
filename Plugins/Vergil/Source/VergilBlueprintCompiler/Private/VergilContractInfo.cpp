@@ -348,9 +348,12 @@ namespace
 	{
 		FVergilSupportedContractManifest Manifest;
 		Manifest.ManifestVersion = SupportedContractManifestVersion;
+		Manifest.PluginDescriptorVersion = Vergil::PluginDescriptorVersion;
+		Manifest.PluginSemanticVersion = Vergil::GetSemanticVersionString();
 		Manifest.SchemaVersion = Vergil::SchemaVersion;
 		Manifest.CommandPlanFormat = Vergil::GetCommandPlanFormatName();
 		Manifest.CommandPlanFormatVersion = Vergil::GetCommandPlanFormatVersion();
+		Manifest.SupportedSchemaMigrationPaths = Vergil::GetSupportedSchemaMigrationPaths();
 		Manifest.SupportedDocumentFields = BuildSupportedDocumentFields();
 		Manifest.SupportedTargetGraphs = BuildSupportedTargetGraphs();
 		Manifest.SupportedBlueprintMetadataKeys = BuildSupportedBlueprintMetadataKeys();
@@ -441,12 +444,15 @@ FString FVergilSupportedDescriptorContract::ToDisplayString() const
 FString FVergilSupportedContractManifest::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("%s version=%d schema=%d commandPlanFormat=%s:%d documentFields=%d targetGraphs=%d metadataKeys=%d typeCategories=%d containerTypes=%d commandTypes=%d descriptors=%d"),
+		TEXT("%s version=%d plugin=%s descriptorVersion=%d schema=%d commandPlanFormat=%s:%d schemaMigrations=%d documentFields=%d targetGraphs=%d metadataKeys=%d typeCategories=%d containerTypes=%d commandTypes=%d descriptors=%d"),
 		SupportedContractManifestFormatName,
 		ManifestVersion,
+		*PluginSemanticVersion,
+		PluginDescriptorVersion,
 		SchemaVersion,
 		*CommandPlanFormat,
 		CommandPlanFormatVersion,
+		SupportedSchemaMigrationPaths.Num(),
 		SupportedDocumentFields.Num(),
 		SupportedTargetGraphs.Num(),
 		SupportedBlueprintMetadataKeys.Num(),
@@ -469,6 +475,9 @@ FString Vergil::DescribeSupportedContractManifest()
 	TArray<FString> Lines;
 	Lines.Reserve(6 + Manifest.SupportedDescriptors.Num());
 	Lines.Add(Manifest.ToDisplayString());
+	Lines.Add(FString::Printf(TEXT("pluginSemanticVersion: %s"), *Manifest.PluginSemanticVersion));
+	Lines.Add(FString::Printf(TEXT("pluginDescriptorVersion: %d"), Manifest.PluginDescriptorVersion));
+	Lines.Add(FString::Printf(TEXT("schemaMigrationPaths: %s"), *JoinStringArray(Manifest.SupportedSchemaMigrationPaths)));
 	Lines.Add(FString::Printf(TEXT("documentFields: %s"), *JoinNameArray(Manifest.SupportedDocumentFields)));
 	Lines.Add(FString::Printf(TEXT("targetGraphs: %s"), *JoinNameArray(Manifest.SupportedTargetGraphs)));
 	Lines.Add(FString::Printf(TEXT("blueprintMetadataKeys: %s"), *JoinNameArray(Manifest.SupportedBlueprintMetadataKeys)));
@@ -495,9 +504,12 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 		Writer->WriteObjectStart();
 		Writer->WriteValue(TEXT("format"), SupportedContractManifestFormatName);
 		Writer->WriteValue(TEXT("version"), Manifest.ManifestVersion);
+		Writer->WriteValue(TEXT("pluginDescriptorVersion"), Manifest.PluginDescriptorVersion);
+		Writer->WriteValue(TEXT("pluginSemanticVersion"), Manifest.PluginSemanticVersion);
 		Writer->WriteValue(TEXT("schemaVersion"), Manifest.SchemaVersion);
 		Writer->WriteValue(TEXT("commandPlanFormat"), Manifest.CommandPlanFormat);
 		Writer->WriteValue(TEXT("commandPlanFormatVersion"), Manifest.CommandPlanFormatVersion);
+		WriteStringArray(*Writer, TEXT("supportedSchemaMigrationPaths"), Manifest.SupportedSchemaMigrationPaths);
 		WriteNameArray(*Writer, TEXT("supportedDocumentFields"), Manifest.SupportedDocumentFields);
 		WriteNameArray(*Writer, TEXT("supportedTargetGraphs"), Manifest.SupportedTargetGraphs);
 		WriteNameArray(*Writer, TEXT("supportedBlueprintMetadataKeys"), Manifest.SupportedBlueprintMetadataKeys);
@@ -519,9 +531,12 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 	Writer->WriteObjectStart();
 	Writer->WriteValue(TEXT("format"), SupportedContractManifestFormatName);
 	Writer->WriteValue(TEXT("version"), Manifest.ManifestVersion);
+	Writer->WriteValue(TEXT("pluginDescriptorVersion"), Manifest.PluginDescriptorVersion);
+	Writer->WriteValue(TEXT("pluginSemanticVersion"), Manifest.PluginSemanticVersion);
 	Writer->WriteValue(TEXT("schemaVersion"), Manifest.SchemaVersion);
 	Writer->WriteValue(TEXT("commandPlanFormat"), Manifest.CommandPlanFormat);
 	Writer->WriteValue(TEXT("commandPlanFormatVersion"), Manifest.CommandPlanFormatVersion);
+	WriteStringArray(*Writer, TEXT("supportedSchemaMigrationPaths"), Manifest.SupportedSchemaMigrationPaths);
 	WriteNameArray(*Writer, TEXT("supportedDocumentFields"), Manifest.SupportedDocumentFields);
 	WriteNameArray(*Writer, TEXT("supportedTargetGraphs"), Manifest.SupportedTargetGraphs);
 	WriteNameArray(*Writer, TEXT("supportedBlueprintMetadataKeys"), Manifest.SupportedBlueprintMetadataKeys);

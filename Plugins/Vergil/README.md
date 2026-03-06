@@ -33,10 +33,16 @@ Useful variants:
 
 The runner writes a headless automation log and prints a compile/apply/test summary from that log.
 
+## Versioning and migration
+
+- See [VERSIONING.md](VERSIONING.md) for the current semantic-versioning policy, schema-migration policy, and release-update checklist.
+- The current plugin semantic version is `0.1.0`, the document schema version is `3`, and supported document migrations are currently `1->2` and `2->3`.
+- `UVergilAgentSubsystem` contract inspection now exposes the plugin semantic version, plugin descriptor version, schema version, command-plan format version, and supported schema migration paths from code-backed data.
+
 ## Current supported contracts
 
 - The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
-- `UVergilAgentSubsystem` now exposes read-only supported-contract inspection helpers backed by code, so callers can inspect the current supported document fields, target graphs, metadata keys, command types, and descriptor contracts without scraping markdown.
+- `UVergilAgentSubsystem` now exposes read-only supported-contract inspection helpers backed by code, so callers can inspect the current plugin semantic version, schema migration paths, supported document fields, target graphs, metadata keys, command types, and descriptor contracts without scraping markdown.
 - Document-authored Blueprint metadata is now part of that supported contract surface for `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories`.
 - Document-authored member variables are now part of that supported contract surface, including type/flag/metadata/default authoring.
 - Document-authored function definitions now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function body authoring remains future work.
@@ -57,7 +63,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, and `VGR-8005` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-8005`, and `VGR-9007` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
@@ -66,6 +72,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored construction script definitions now have structural validation, deterministic command planning, editor execution, and headless automation coverage when targeting `UserConstructionScript`.
 - Whole-Blueprint authoring now also has persisted save/reload/native-compile roundtrip coverage across the supported milestone-4 surfaces, including metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
+- Vergil now has an explicit semantic-versioning and migration policy document, and the supported-contract manifest now reports the plugin semantic version, plugin descriptor version, and supported schema migration paths directly from code-backed helpers.
 - Schema migration helpers now exist for older documents, and the compiler now runs schema migration as its first pass so supported legacy documents upgrade automatically before validation and planning.
 - The compiler now runs a dedicated semantic validation pass before planning, rejecting unsupported compile targets plus invalid known-node descriptor/kind/metadata combinations before command generation.
 - The compiler now runs a dedicated symbol resolution pass after semantic validation and before planning, so callable/member references fail explicitly before command generation and inherited owner paths are normalized into planned commands.

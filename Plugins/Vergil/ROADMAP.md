@@ -412,7 +412,7 @@ Tickets:
 - `VGR-9004` Add schema migration tests
 - `VGR-9005` Add source-control diff tests
 - `VGR-9006` Add crash/recovery tests around compile/apply
-- `VGR-9007` Add semantic versioning and migration docs
+- [x] `VGR-9007` Add semantic versioning and migration docs
 - `VGR-9008` Add extension docs for custom handlers
 - `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
 
@@ -421,6 +421,12 @@ Acceptance criteria:
 - CI catches regressions before manual testing
 - migrations are versioned and tested
 - performance is measured on large graphs
+
+Session note for `VGR-9007` (2026-03-06):
+
+- `Vergil::GetSemanticVersionString()` plus `Vergil::PluginDescriptorVersion` now make the plugin release version a code-backed surface instead of a markdown-only convention, and `Vergil.Scaffold.VersioningAndMigrationContracts` verifies those values stay aligned with `Vergil.uplugin`.
+- `Vergil::GetSupportedSchemaMigrationPaths()` now exposes the exact forward migration steps implemented by the model layer, and `FVergilSupportedContractManifest` now reports plugin semantic version, descriptor version, and supported schema migration paths for agent/tool inspection.
+- `VERSIONING.md`, `README.md`, and `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now document semantic-versioning policy, migration rules, and the release-update checklist for schema, command-plan, and inspection-manifest version changes.
 
 ## Critical Path
 The main dependency chain is:
@@ -436,13 +442,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9007`
-2. `VGR-5007`
-3. `VGR-7001`
-4. `VGR-5001`
-5. `VGR-8001`
+1. `VGR-5007`
+2. `VGR-7001`
+3. `VGR-5001`
+4. `VGR-8001`
+5. `VGR-9004`
 
-This keeps pressure on release/documentation work, higher-level inspection/tooling, and remaining K2 breadth now that the agent layer can inspect the code-backed support manifest and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on remaining K2 breadth, higher-level inspection/tooling, and release hardening now that the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:
