@@ -75,7 +75,7 @@ Tickets:
 - [x] `VGR-1003` Add function definitions with purity, access, inputs, and outputs
 - [x] `VGR-1004` Add macro graph definitions
 - [x] `VGR-1005` Add component definitions with parent/attach/transform/template properties
-- `VGR-1006` Add implemented interface definitions
+- [x] `VGR-1006` Add implemented interface definitions
 - `VGR-1007` Add class default definitions
 - `VGR-1008` Add construction script graph definition
 - `VGR-1009` Add schema migration helpers
@@ -149,11 +149,11 @@ Goal:
 Tickets:
 
 - [x] `VGR-4001` Implement variable creation/default application
-- `VGR-4002` Implement function graph creation/update
-- `VGR-4003` Implement macro graph creation/update
-- `VGR-4004` Implement component hierarchy authoring
+- [x] `VGR-4002` Implement function graph creation/update
+- [x] `VGR-4003` Implement macro graph creation/update
+- [x] `VGR-4004` Implement component hierarchy authoring
 - `VGR-4005` Implement component template property setting
-- `VGR-4006` Implement interface application
+- [x] `VGR-4006` Implement interface application
 - `VGR-4007` Implement class default writing
 - `VGR-4008` Implement construction script authoring
 - `VGR-4009` Add save/reload/compile roundtrip tests
@@ -161,19 +161,25 @@ Tickets:
 Session note for `VGR-4002` (2026-03-06):
 
 - Current branch already contains a first pass: document-authored `Functions` lower into `EnsureFunctionGraph`, the executor synchronizes function purity/access/signature pins, and new `Vergil.Scaffold.FunctionDefinitionPlanning` plus `Vergil.Scaffold.FunctionAuthoringExecution` coverage exists.
-- Raw `UnrealBuildTool.exe` verification is blocked in the current sandbox unless the session can write to `C:\Users\marco\AppData\Local\UnrealEngine`, `C:\Users\marco\AppData\Local\UnrealBuildTool`, and `C:\Users\marco\AppData\Roaming\Unreal Engine\UnrealBuildTool`.
+- `mcp__tensai__build_project` succeeded in `Development`, and the documented headless runner now re-verifies `Vergil.Scaffold.*` cleanly in this workspace.
 
 Session note for `VGR-4003` (2026-03-06):
 
 - Current branch now adds document-authored `Macros` to the canonical model and structural validation surface, lowers them into `EnsureMacroGraph`, and synchronizes entry/exit tunnel pins for exec/data inputs and outputs.
 - New `Vergil.Scaffold.MacroDefinitionModel`, `Vergil.Scaffold.MacroDefinitionPlanning`, and `Vergil.Scaffold.MacroAuthoringExecution` coverage exists, and `mcp__tensai__build_project` succeeded in `Development` after the change.
-- The documented headless `Invoke-VergilScaffoldAutomation.ps1` runner could not be re-verified from the current shell because `UnrealEditor-Cmd.exe` returned without producing its requested log file, so the ticket remains un-ticked pending a clean full automation rerun.
+- The documented headless `Invoke-VergilScaffoldAutomation.ps1` runner now re-verifies `Vergil.Scaffold.*` cleanly in this workspace.
 
 Session note for `VGR-4004` (2026-03-06):
 
 - Current branch now lowers document-authored `Components` into explicit `EnsureComponent`, `AttachComponent`, and relative-transform `SetComponentProperty` commands. This covers component creation, parent attachment, attach sockets, and relative location/rotation/scale updates through `CompileDocument`.
 - New `Vergil.Scaffold.ComponentDefinitionPlanning` plus `Vergil.Scaffold.ComponentAuthoringExecution` coverage was added alongside the existing explicit-command component test. Component template-property lowering remains intentionally deferred to `VGR-4005`.
-- `mcp__tensai__build_project` succeeded in `Development` after the change. Direct shell-based headless automation remained unreliable in this session because `UnrealEditor-Cmd.exe` did not materialize the requested log file.
+- `mcp__tensai__build_project` succeeded in `Development`, and the documented headless runner now re-verifies `Vergil.Scaffold.*` cleanly in this workspace.
+
+Session note for `VGR-4006` (2026-03-06):
+
+- Current branch now adds document-authored `Interfaces` to the canonical model and structural validation surface, lowers them into explicit `EnsureInterface` commands, and applies them through `CompileDocument(..., bApplyCommands=true)` using the existing explicit executor path.
+- New `Vergil.Scaffold.InterfaceDefinitionModel`, `Vergil.Scaffold.InterfaceDefinitionPlanning`, and `Vergil.Scaffold.InterfaceAuthoringExecution` coverage exists alongside the pre-existing explicit command-surface interface test.
+- `mcp__tensai__build_project` succeeded in `Development`, `Vergil.Scaffold.Interface*` passed headlessly, and a clean full `Vergil.Scaffold` rerun was re-verified from the documented headless runner in this workspace.
 
 Acceptance criteria:
 
@@ -298,13 +304,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-4002`
-2. `VGR-4004`
-3. `VGR-4005`
-4. `VGR-1006`
-5. `VGR-4006`
-6. `VGR-1007`
-7. `VGR-4007`
+1. `VGR-4005`
+2. `VGR-1007`
+3. `VGR-4007`
+4. `VGR-1008`
+5. `VGR-4008`
+6. `VGR-1009`
+7. `VGR-2002`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

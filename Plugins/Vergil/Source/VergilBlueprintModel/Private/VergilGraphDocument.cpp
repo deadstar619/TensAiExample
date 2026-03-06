@@ -836,6 +836,35 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		}
 	}
 
+	TSet<FString> InterfaceClassPaths;
+	for (const FVergilInterfaceDefinition& Interface : Interfaces)
+	{
+		const FString TrimmedInterfaceClassPath = Interface.InterfaceClassPath.TrimStartAndEnd();
+		if (TrimmedInterfaceClassPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InterfaceClassPathMissing"),
+				TEXT("Every implemented interface must declare an interface class path."));
+			continue;
+		}
+
+		if (InterfaceClassPaths.Contains(TrimmedInterfaceClassPath))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InterfaceClassPathDuplicate"),
+				FString::Printf(TEXT("Duplicate implemented interface class path '%s'."), *TrimmedInterfaceClassPath));
+			continue;
+		}
+
+		InterfaceClassPaths.Add(TrimmedInterfaceClassPath);
+	}
+
 	for (const FVergilGraphNode& Node : Nodes)
 	{
 		if (!Node.Id.IsValid())

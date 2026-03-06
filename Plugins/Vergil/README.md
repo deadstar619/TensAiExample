@@ -40,17 +40,19 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored function definitions now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function body authoring remains future work.
 - Document-authored macro definitions now lower into Blueprint macro graph/signature authoring for exec/data inputs and outputs. Macro body authoring remains future work.
 - Document-authored component definitions now lower into Blueprint component hierarchy authoring for component creation, parent attachment, attach sockets, and relative transforms. Template-property authoring remains future work.
+- Document-authored implemented interfaces now lower into Blueprint interface application for authored interface class paths.
 - Direct command-plan execution now supports explicit function/macro graph creation, component creation/attachment/property mutation, interface application, class default writes, member renames, node removal/movement, and explicit Blueprint compile commands.
 - Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
 
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-2001`, and `VGR-4001` are complete.
+- `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-2001`, `VGR-4001`, and `VGR-4006` are complete.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
 - Document-authored component definitions now have structural validation plus deterministic command planning and editor execution for component creation, attachment, attach sockets, and relative transforms.
-- The explicit editor command surface now covers function graphs, macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile commands. Document lowering now exists for variables, dispatchers, function definitions, macro definitions, and component hierarchy data; the remaining asset-model slices are still future work.
+- Document-authored implemented interfaces now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
+- The explicit editor command surface now covers function graphs, macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile commands. Document lowering now exists for variables, dispatchers, function definitions, macro definitions, component hierarchy data, and implemented interfaces; the remaining asset-model slices are still future work.
 - `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 
 ## Planning

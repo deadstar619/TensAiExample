@@ -344,6 +344,15 @@ struct VERGILBLUEPRINTMODEL_API FVergilComponentDefinition
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilInterfaceDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString InterfaceClassPath;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 {
 	GENERATED_BODY()
@@ -368,6 +377,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilComponentDefinition> Components;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilInterfaceDefinition> Interfaces;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilGraphNode> Nodes;

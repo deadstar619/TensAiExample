@@ -4,14 +4,15 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Interfaces`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
 - `Functions` now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function-body authoring is still separate future work.
 - `Macros` now lower into Blueprint macro graph/signature authoring for exec/data inputs and outputs. Macro-body authoring is still separate future work.
 - `Components` now lower into Blueprint component hierarchy authoring for component creation, parent attachment, attach sockets, and relative transforms. Template-property authoring is still separate future work.
-- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, and component hierarchy data is not implemented yet through document compile/apply. There is no current lowering from document-authored component template properties, interfaces, class defaults, or construction script definitions into command plans.
+- `Interfaces` now lower into Blueprint interface application for authored interface class paths.
+- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, component hierarchy data, and implemented interfaces is not implemented yet through document compile/apply. There is no current lowering from document-authored component template properties, class defaults, or construction script definitions into command plans.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 
 ## Structural validation rules
@@ -32,6 +33,8 @@ This document describes the current scaffold contracts implemented in code today
 - Component parents that are not authored in the same document emit warnings because they may target inherited components on the Blueprint.
 - Authored relative transform overrides must use finite numeric values.
 - Component template properties must use non-empty property names.
+- Every implemented interface must declare a non-empty `InterfaceClassPath`.
+- Implemented interface class paths must be unique within one document.
 - Every node must have a valid unique GUID and a non-empty descriptor.
 - Every pin must have a valid unique GUID.
 - Every edge must reference existing node IDs and pin IDs.
@@ -83,6 +86,13 @@ This document describes the current scaffold contracts implemented in code today
 - `TemplateProperties` stores raw component-template property overrides as property-name to serialized-value string pairs for future application work.
 - Component definitions now lower into `EnsureComponent`, `AttachComponent`, and relative-transform `SetComponentProperty` commands. Template properties do not lower yet.
 
+## Interface definition contracts
+
+- Implemented interfaces are authored from `Interfaces` on the document.
+- Each interface definition currently uses `InterfaceClassPath`.
+- `InterfaceClassPath` must be non-empty and unique within one document.
+- Interface definitions now lower into `EnsureInterface` commands that apply Blueprint interfaces on the target Blueprint.
+
 ## Explicit command plan contracts
 
 - `EnsureVariable`, `SetVariableMetadata`, and `SetVariableDefault` are supported through direct command-plan execution and remain the current end-to-end path for document-authored variable definitions.
@@ -98,7 +108,7 @@ This document describes the current scaffold contracts implemented in code today
 - `RenameMember` requires `Name` for the existing member name, `SecondaryName` for the new name, and `Attributes["MemberType"]` set to one of `Variable`, `Dispatcher`, `FunctionGraph`, `MacroGraph`, or `Component`.
 - `MoveNode` and `RemoveNode` require `GraphName` plus `NodeId` to identify the existing node to mutate.
 - `CompileBlueprint` performs an explicit editor compile of the target Blueprint.
-- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, and component hierarchy definitions into `EnsureComponent` / `AttachComponent` / transform `SetComponentProperty` commands; component template properties, implemented interfaces, and class-default definitions still do not lower automatically.
+- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, component hierarchy definitions into `EnsureComponent` / `AttachComponent` / transform `SetComponentProperty` commands, and implemented interfaces into `EnsureInterface`; component template properties and class-default definitions still do not lower automatically.
 
 ## Dispatcher contracts
 
@@ -155,4 +165,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, and component-hierarchy definitions. Function bodies, macro bodies, component template properties, interface definitions, and class-default definitions are modeled and partially supported through direct command execution, but they are not yet all lowered from the document compiler into compile/apply execution.
+- One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, component-hierarchy, and implemented-interface definitions. Function bodies, macro bodies, component template properties, and class-default definitions are modeled and partially supported through direct command execution, but they are not yet all lowered from the document compiler into compile/apply execution.

@@ -1401,6 +1401,14 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		AddComponentTransformCommands(Result.Commands, Component);
 	}
 
+	for (const FVergilInterfaceDefinition& Interface : Request.Document.Interfaces)
+	{
+		FVergilCompilerCommand EnsureInterfaceCommand;
+		EnsureInterfaceCommand.Type = EVergilCommandType::EnsureInterface;
+		EnsureInterfaceCommand.StringValue = Interface.InterfaceClassPath.TrimStartAndEnd();
+		Result.Commands.Add(EnsureInterfaceCommand);
+	}
+
 	FVergilCompilerCommand EnsureGraphCommand;
 	EnsureGraphCommand.Type = EVergilCommandType::EnsureGraph;
 	EnsureGraphCommand.GraphName = Context.GetGraphName();

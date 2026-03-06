@@ -478,6 +478,30 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("ComponentParentCycle");
 	}));
 
+	FVergilGraphDocument InvalidInterfaceDocument;
+	InvalidInterfaceDocument.SchemaVersion = 1;
+	InvalidInterfaceDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidInterfaces");
+
+	FVergilInterfaceDefinition MissingInterface;
+
+	FVergilInterfaceDefinition DuplicateInterface;
+	DuplicateInterface.InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+
+	FVergilInterfaceDefinition DuplicateInterfaceAgain = DuplicateInterface;
+
+	InvalidInterfaceDocument.Interfaces = { MissingInterface, DuplicateInterface, DuplicateInterfaceAgain };
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid interface definitions should fail structural validation."), InvalidInterfaceDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Interface validation reports missing class paths."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("InterfaceClassPathMissing");
+	}));
+	TestTrue(TEXT("Interface validation reports duplicate class paths."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("InterfaceClassPathDuplicate");
+	}));
+
 	return true;
 }
 
@@ -589,6 +613,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ComponentDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilInterfaceDefinitionModelTest,
+	"Vergil.Scaffold.InterfaceDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
@@ -625,6 +654,25 @@ bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Visual component should retain relative rotation override."), Document.Components[1].RelativeTransform.bHasRelativeRotation);
 	TestEqual(TEXT("Visual component should retain relative scale."), Document.Components[1].RelativeTransform.RelativeScale3D, FVector(1.0f, 1.5f, 1.0f));
 	TestEqual(TEXT("Visual component should retain template properties."), Document.Components[1].TemplateProperties.FindRef(TEXT("CollisionProfileName")), FString(TEXT("NoCollision")));
+
+	return true;
+}
+
+bool FVergilInterfaceDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_InterfaceModel");
+
+	FVergilInterfaceDefinition Interface;
+	Interface.InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+	Document.Interfaces.Add(Interface);
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid interface definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid interface definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored interfaces."), Document.Interfaces.Num(), 1);
+	TestEqual(TEXT("Interface should retain its class path."), Document.Interfaces[0].InterfaceClassPath, Interface.InterfaceClassPath);
 
 	return true;
 }
@@ -668,6 +716,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilInterfaceDefinitionPlanningTest,
+	"Vergil.Scaffold.InterfaceDefinitionPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilResultSummaryUtilitiesTest,
 	"Vergil.Scaffold.ResultSummaries",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -690,6 +743,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilComponentAuthoringExecutionTest,
 	"Vergil.Scaffold.ComponentAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilInterfaceAuthoringExecutionTest,
+	"Vergil.Scaffold.InterfaceAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -1516,6 +1574,38 @@ bool FVergilComponentDefinitionPlanningTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilInterfaceDefinitionPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilInterfaceDefinition Interface;
+	Interface.InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_InterfacePlanning");
+	Document.Interfaces.Add(Interface);
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Interface definition planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Interface definition planning should emit an interface command plus the target graph ensure."), Result.Commands.Num(), 2);
+	if (!Result.bSucceeded || Result.Commands.Num() != 2)
+	{
+		return false;
+	}
+
+	const FVergilCompilerCommand& EnsureInterface = Result.Commands[0];
+	TestEqual(TEXT("Planner should lower interface definitions into EnsureInterface."), EnsureInterface.Type, EVergilCommandType::EnsureInterface);
+	TestEqual(TEXT("Interface command should preserve the authored class path."), EnsureInterface.StringValue, Interface.InterfaceClassPath);
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[1].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
 bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -1642,6 +1732,45 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 		&& VisualTemplate->GetRelativeLocation().Equals(FVector(15.0f, 5.0f, 0.0f), KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Visual component should retain its authored relative scale."), VisualTemplate != nullptr
 		&& VisualTemplate->GetRelativeScale3D().Equals(FVector(1.0f, 1.5f, 1.0f), KINDA_SMALL_NUMBER));
+
+	return true;
+}
+
+bool FVergilInterfaceAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilInterfaceDefinition Interface;
+	Interface.InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilInterfaceAuthoring");
+	Document.Interfaces.Add(Interface);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+	TestTrue(TEXT("Interface authoring document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Interface authoring document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Interface authoring document should execute commands."), Result.ExecutedCommandCount > 0);
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	TArray<UClass*> ImplementedInterfaces;
+	FBlueprintEditorUtils::FindImplementedInterfaces(Blueprint, true, ImplementedInterfaces);
+	TestTrue(TEXT("Document-authored interfaces should be implemented on the blueprint."), ImplementedInterfaces.Contains(UVergilAutomationTestInterface::StaticClass()));
 
 	return true;
 }
