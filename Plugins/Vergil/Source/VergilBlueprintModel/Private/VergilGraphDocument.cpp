@@ -117,7 +117,8 @@ namespace
 			return false;
 		}
 
-		if (TypeCategoryRequiresObjectPath(PinCategory) && ObjectPath.IsEmpty())
+		const FString TrimmedObjectPath = ObjectPath.TrimStartAndEnd();
+		if (TypeCategoryRequiresObjectPath(PinCategory) && TrimmedObjectPath.IsEmpty())
 		{
 			AddDiagnostic(
 				OutDiagnostics,
@@ -234,6 +235,21 @@ namespace
 		return bIsValid;
 	}
 
+	bool ValidateDispatcherParameterTypeReference(
+		const FVergilDispatcherParameter& Parameter,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		return ValidateTypeReference(
+			Parameter.PinCategory,
+			Parameter.ObjectPath,
+			ContextLabel,
+			TEXT("DispatcherParameterCategoryMissing"),
+			TEXT("DispatcherParameterCategoryUnsupported"),
+			TEXT("DispatcherParameterObjectPathMissing"),
+			OutDiagnostics);
+	}
+
 	bool ValidateMacroParameterTypeReference(
 		const FVergilMacroParameterDefinition& Parameter,
 		const FString& ContextLabel,
@@ -318,6 +334,7 @@ namespace
 		bool bIsValid = true;
 		TSet<FGuid> LocalNodeIds;
 		TSet<FGuid> LocalPinIds;
+		TMap<FGuid, TSet<FGuid>> NodePinIds;
 
 		for (const FVergilGraphNode& Node : GraphNodes)
 		{
@@ -384,6 +401,7 @@ namespace
 				{
 					GlobalPinIds.Add(Pin.Id);
 					LocalPinIds.Add(Pin.Id);
+					NodePinIds.FindOrAdd(Node.Id).Add(Pin.Id);
 				}
 			}
 		}
@@ -403,6 +421,23 @@ namespace
 					EVergilDiagnosticSeverity::Error,
 					TEXT("EdgeReferenceInvalid"),
 					FString::Printf(TEXT("%s edges must reference nodes and pins authored in the same graph definition."), *GraphLabel),
+					Edge.Id);
+				continue;
+			}
+
+			const TSet<FGuid>* const SourceNodePins = NodePinIds.Find(Edge.SourceNodeId);
+			const TSet<FGuid>* const TargetNodePins = NodePinIds.Find(Edge.TargetNodeId);
+			if (SourceNodePins == nullptr
+				|| TargetNodePins == nullptr
+				|| !SourceNodePins->Contains(Edge.SourcePinId)
+				|| !TargetNodePins->Contains(Edge.TargetPinId))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("EdgePinNodeMismatch"),
+					FString::Printf(TEXT("%s edges must connect pins owned by their declared source and target nodes."), *GraphLabel),
 					Edge.Id);
 			}
 		}
@@ -456,6 +491,10 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		TSet<FName> ParameterNames;
 		for (const FVergilDispatcherParameter& Parameter : Dispatcher.Parameters)
 		{
+			const FString ParameterLabel = Parameter.Name.IsNone()
+				? FString::Printf(TEXT("Dispatcher '%s' parameter"), *Dispatcher.Name.ToString())
+				: FString::Printf(TEXT("Dispatcher '%s' parameter '%s'"), *Dispatcher.Name.ToString(), *Parameter.Name.ToString());
+
 			if (Parameter.Name.IsNone())
 			{
 				bIsValid = false;
@@ -471,12 +510,7 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 			}
 
 			ParameterNames.Add(Parameter.Name);
-
-			if (Parameter.PinCategory.IsNone())
-			{
-				bIsValid = false;
-				AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("DispatcherParameterCategoryMissing"), FString::Printf(TEXT("Dispatcher '%s' parameter '%s' must declare a pin category."), *Dispatcher.Name.ToString(), *Parameter.Name.ToString()));
-			}
+			bIsValid &= ValidateDispatcherParameterTypeReference(Parameter, ParameterLabel, OutDiagnostics);
 		}
 	}
 
@@ -518,6 +552,19 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 		VariableNames.Add(Variable.Name);
 
 		bIsValid &= ValidateVariableTypeReference(Variable.Type, VariableLabel, OutDiagnostics);
+
+		for (const TPair<FName, FString>& MetadataEntry : Variable.Metadata)
+		{
+			if (MetadataEntry.Key.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("VariableMetadataKeyMissing"),
+					FString::Printf(TEXT("%s contains metadata with an empty key."), *VariableLabel));
+			}
+		}
 
 		if (Variable.Flags.bExposeOnSpawn && !Variable.Flags.bInstanceEditable)
 		{
@@ -852,7 +899,7 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 				FString::Printf(TEXT("Component '%s' conflicts with a macro of the same name."), *Component.Name.ToString()));
 		}
 
-		if (Component.ComponentClassPath.IsEmpty())
+		if (Component.ComponentClassPath.TrimStartAndEnd().IsEmpty())
 		{
 			bIsValid = false;
 			AddDiagnostic(

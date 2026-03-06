@@ -23,13 +23,14 @@ This document describes the current scaffold contracts implemented in code today
 - Older document schemas can be upgraded explicitly when a supported forward migration path exists. A newer document schema than the compiler schema still emits a warning, and downgrades are not attempted.
 - Every variable must have a unique non-empty name and cannot conflict with a dispatcher name.
 - Every variable must declare a supported type category.
+- Variable metadata entries must use non-empty keys.
 - `ExposeOnSpawn` requires `bInstanceEditable`.
 - Every dispatcher must have a unique name.
-- Every dispatcher parameter must have a unique name inside that dispatcher and a non-empty `PinCategory`.
+- Every dispatcher parameter must have a unique name inside that dispatcher, a supported `PinCategory`, and an `ObjectPath` for `enum`, `object`, `class`, and `struct` categories.
 - Every macro must have a unique non-empty name and cannot conflict with authored variable, function, dispatcher, or component names.
 - Macro signature member names must be unique within a macro across both inputs and outputs.
 - Exec macro pins must not also declare data-type metadata.
-- Every component must have a unique non-empty name and a non-empty `ComponentClassPath`.
+- Every component must have a unique non-empty name and a non-empty, non-whitespace `ComponentClassPath`.
 - Component names cannot conflict with authored variables, functions, macros, or dispatchers.
 - Component parent self-references and authored parent cycles fail structural validation.
 - Component parents that are not authored in the same document emit warnings because they may target inherited components on the Blueprint.
@@ -41,6 +42,7 @@ This document describes the current scaffold contracts implemented in code today
 - Every node must have a valid unique GUID and a non-empty descriptor.
 - Every pin must have a valid unique GUID.
 - Every edge must reference existing node IDs and pin IDs.
+- Every edge must connect pins owned by its declared source node and target node.
 - Node and pin GUIDs must remain unique across both the primary graph surface and the construction-script graph surface.
 - `ConstructionScriptEdges` may only reference nodes and pins authored in `ConstructionScriptNodes`.
 
@@ -59,11 +61,12 @@ This document describes the current scaffold contracts implemented in code today
 - `Type` currently supports these logical categories: `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `Type.ContainerType` currently supports `None`, `Array`, `Set`, and `Map`.
 - `enum`, `object`, `class`, and `struct` variable categories require `Type.ObjectPath`.
+- Whitespace-only object paths are treated as missing during structural validation.
 - Map variables must declare `Type.ValuePinCategory`. If the value category is `enum`, `object`, `class`, or `struct`, `Type.ValueObjectPath` is also required.
 - Non-map variables must not declare map value-type fields.
 - `Flags` currently supports `bInstanceEditable`, `bBlueprintReadOnly`, `bExposeOnSpawn`, `bPrivate`, `bTransient`, `bSaveGame`, `bAdvancedDisplay`, `bDeprecated`, and `bExposeToCinematics`.
 - `ExposeOnSpawn` is only accepted when `bInstanceEditable` is also true.
-- `Metadata` is applied as Blueprint variable metadata key/value pairs.
+- `Metadata` is applied as Blueprint variable metadata key/value pairs and must use non-empty keys.
 - `DefaultValue` is applied through Blueprint compilation to the generated class default object. The editor-side `FBPVariableDescription.DefaultValue` string is not treated as a stable post-compile source of truth.
 
 ## Function definition contracts
@@ -92,7 +95,7 @@ This document describes the current scaffold contracts implemented in code today
 
 - Components are authored from `Components` on the document.
 - Each component definition currently uses `Name`, `ComponentClassPath`, `ParentComponentName`, `AttachSocketName`, `RelativeTransform`, and `TemplateProperties`.
-- `ComponentClassPath` is expected to name a component class and now lowers into `EnsureComponent` for Blueprint component creation/update. Structural validation still requires only that it be non-empty.
+- `ComponentClassPath` is expected to name a component class and now lowers into `EnsureComponent` for Blueprint component creation/update. Structural validation requires a non-empty, non-whitespace path.
 - `ParentComponentName` may reference another authored component by name or an inherited component expected on the target Blueprint.
 - `AttachSocketName` optionally names the parent socket or bone and now lowers into `AttachComponent` when a parent component is authored.
 - `RelativeTransform` stores optional relative location, rotation, and scale overrides through `bHasRelativeLocation`, `bHasRelativeRotation`, and `bHasRelativeScale`.
@@ -148,7 +151,7 @@ This document describes the current scaffold contracts implemented in code today
 - Dispatchers are authored from `Dispatchers` on the document.
 - Each dispatcher parameter uses `Name`, `PinCategory`, optional `PinSubCategory`, optional `ObjectPath`, and optional `bIsArray`.
 - The current parameter type resolver supports these logical categories: `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
-- `enum`, `object`, `class`, and `struct` categories require `ObjectPath` to resolve the referenced type.
+- `enum`, `object`, `class`, and `struct` categories require `ObjectPath` to resolve the referenced type, and whitespace-only object paths are treated as missing during structural validation.
 - Dispatchers are supported on regular Blueprints. Macro libraries are rejected explicitly.
 
 ## Supported node descriptor contracts

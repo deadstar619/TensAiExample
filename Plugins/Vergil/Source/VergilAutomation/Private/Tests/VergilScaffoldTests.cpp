@@ -252,6 +252,37 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Empty document is structurally valid."), Document.IsStructurallyValid(&Diagnostics));
 	TestEqual(TEXT("Empty document has no diagnostics."), Diagnostics.Num(), 0);
 
+	FVergilGraphDocument InvalidDispatcherDocument;
+	InvalidDispatcherDocument.SchemaVersion = Vergil::SchemaVersion;
+	InvalidDispatcherDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidDispatchers");
+
+	FVergilDispatcherDefinition InvalidDispatcher;
+	InvalidDispatcher.Name = TEXT("OnBrokenState");
+
+	FVergilDispatcherParameter UnsupportedDispatcherParameter;
+	UnsupportedDispatcherParameter.Name = TEXT("Mode");
+	UnsupportedDispatcherParameter.PinCategory = TEXT("unsupported");
+	InvalidDispatcher.Parameters.Add(UnsupportedDispatcherParameter);
+
+	FVergilDispatcherParameter MissingObjectPathDispatcherParameter;
+	MissingObjectPathDispatcherParameter.Name = TEXT("TargetActor");
+	MissingObjectPathDispatcherParameter.PinCategory = TEXT("object");
+	MissingObjectPathDispatcherParameter.ObjectPath = TEXT("   ");
+	InvalidDispatcher.Parameters.Add(MissingObjectPathDispatcherParameter);
+
+	InvalidDispatcherDocument.Dispatchers.Add(InvalidDispatcher);
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid dispatcher definitions should fail structural validation."), InvalidDispatcherDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Dispatcher validation reports unsupported parameter categories."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("DispatcherParameterCategoryUnsupported");
+	}));
+	TestTrue(TEXT("Dispatcher validation reports missing object paths for typed parameters."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("DispatcherParameterObjectPathMissing");
+	}));
+
 	FVergilGraphDocument InvalidDocument;
 	InvalidDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidVariables");
@@ -266,6 +297,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 
 	FVergilVariableDefinition MissingTypeVariable;
 	MissingTypeVariable.Name = TEXT("BrokenVar");
+	MissingTypeVariable.Metadata.Add(NAME_None, TEXT("Broken"));
 
 	FVergilVariableDefinition DuplicateVariable;
 	DuplicateVariable.Name = TEXT("BrokenVar");
@@ -291,6 +323,10 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Variable validation reports duplicate variable names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Code == TEXT("VariableNameDuplicate");
+	}));
+	TestTrue(TEXT("Variable validation reports metadata keys without names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("VariableMetadataKeyMissing");
 	}));
 	TestTrue(TEXT("Variable validation reports expose-on-spawn inconsistencies."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
 	{
@@ -436,6 +472,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 
 	FVergilComponentDefinition MissingClassComponent;
 	MissingClassComponent.Name = TEXT("MissingClass");
+	MissingClassComponent.ComponentClassPath = TEXT("   ");
 
 	FVergilComponentDefinition SelfParentComponent;
 	SelfParentComponent.Name = TEXT("LoopRoot");
@@ -541,6 +578,62 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Construction script validation reports duplicate node ids across graph surfaces."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Code == TEXT("NodeIdDuplicate");
+	}));
+
+	FVergilGraphDocument InvalidEdgeOwnershipDocument;
+	InvalidEdgeOwnershipDocument.SchemaVersion = Vergil::SchemaVersion;
+	InvalidEdgeOwnershipDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidEdgeOwnership");
+
+	FVergilGraphNode SourceNode;
+	SourceNode.Id = FGuid::NewGuid();
+	SourceNode.Kind = EVergilNodeKind::Event;
+	SourceNode.Descriptor = TEXT("K2.Event.BeginPlay");
+
+	FVergilGraphPin SourceExecPin;
+	SourceExecPin.Id = FGuid::NewGuid();
+	SourceExecPin.Name = TEXT("Then");
+	SourceExecPin.Direction = EVergilPinDirection::Output;
+	SourceExecPin.bIsExec = true;
+	SourceNode.Pins.Add(SourceExecPin);
+
+	FVergilGraphNode IntermediateNode;
+	IntermediateNode.Id = FGuid::NewGuid();
+	IntermediateNode.Kind = EVergilNodeKind::Comment;
+	IntermediateNode.Descriptor = TEXT("UI.Comment");
+
+	FVergilGraphPin IntermediatePin;
+	IntermediatePin.Id = FGuid::NewGuid();
+	IntermediatePin.Name = TEXT("CommentPin");
+	IntermediatePin.Direction = EVergilPinDirection::Output;
+	IntermediateNode.Pins.Add(IntermediatePin);
+
+	FVergilGraphNode TargetNode;
+	TargetNode.Id = FGuid::NewGuid();
+	TargetNode.Kind = EVergilNodeKind::Call;
+	TargetNode.Descriptor = TEXT("K2.Call.PrintString");
+
+	FVergilGraphPin TargetExecPin;
+	TargetExecPin.Id = FGuid::NewGuid();
+	TargetExecPin.Name = TEXT("Execute");
+	TargetExecPin.Direction = EVergilPinDirection::Input;
+	TargetExecPin.bIsExec = true;
+	TargetNode.Pins.Add(TargetExecPin);
+
+	FVergilGraphEdge InvalidOwnershipEdge;
+	InvalidOwnershipEdge.Id = FGuid::NewGuid();
+	InvalidOwnershipEdge.SourceNodeId = SourceNode.Id;
+	InvalidOwnershipEdge.SourcePinId = IntermediatePin.Id;
+	InvalidOwnershipEdge.TargetNodeId = TargetNode.Id;
+	InvalidOwnershipEdge.TargetPinId = TargetExecPin.Id;
+
+	InvalidEdgeOwnershipDocument.Nodes = { SourceNode, IntermediateNode, TargetNode };
+	InvalidEdgeOwnershipDocument.Edges.Add(InvalidOwnershipEdge);
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Graph edges should fail validation when their pins do not belong to their declared nodes."), InvalidEdgeOwnershipDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Graph validation reports pin ownership mismatches for edges."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("EdgePinNodeMismatch");
 	}));
 
 	return true;

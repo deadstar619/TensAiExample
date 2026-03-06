@@ -79,7 +79,7 @@ Tickets:
 - [x] `VGR-1007` Add class default definitions
 - [x] `VGR-1008` Add construction script graph definition
 - [x] `VGR-1009` Add schema migration helpers
-- `VGR-1010` Extend structural validation for all new model types
+- [x] `VGR-1010` Extend structural validation for all new model types
 
 Session note for `VGR-1008` (2026-03-06):
 
@@ -91,6 +91,12 @@ Session note for `VGR-1009` (2026-03-06):
 - `Vergil::SchemaVersion` is now `2`, and the model module exposes `CanMigrateSchemaVersion(...)`, `MigrateDocumentSchema(...)`, and `MigrateDocumentToCurrentSchema(...)` as explicit forward-migration helpers.
 - The current `1 -> 2` step is additive and preserves authored document fields while advancing the schema stamp, which keeps the whole-asset document surface backward-compatible with schema `1`.
 - `Vergil.Scaffold.SchemaMigrationHelpers` now covers successful forward migration, same-version no-op migration, downgrade rejection, and missing-path diagnostics. Dedicated compiler-pass orchestration remains future work under `VGR-3001`.
+
+Session note for `VGR-1010` (2026-03-06):
+
+- `FVergilGraphDocument::IsStructurallyValid(...)` now validates dispatcher parameter type categories and required object paths with the same typed-shape rules used by other authored member definitions, and whitespace-only typed object paths now fail validation instead of reaching execution.
+- Variable metadata keys must be non-empty, component class paths must be non-whitespace, and graph edges must connect pins that actually belong to their declared source and target nodes.
+- `Vergil.Scaffold.GraphDocumentValidation` now covers dispatcher type-shape failures, empty variable metadata keys, whitespace-only component class paths, and graph-edge pin ownership mismatches.
 
 Acceptance criteria:
 
@@ -334,11 +340,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1010`
-2. `VGR-2002`
-3. `VGR-1001`
-4. `VGR-3001`
-5. `VGR-4009`
+1. `VGR-2002`
+2. `VGR-1001`
+3. `VGR-3001`
+4. `VGR-4009`
+5. `VGR-8005`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

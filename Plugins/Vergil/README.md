@@ -44,13 +44,14 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored class defaults now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Document-authored construction script definitions now lower into construction-script graph authoring when the compile target graph is `UserConstructionScript`.
 - Legacy document schemas now have explicit model-level forward-migration helpers.
+- Structural validation now also rejects empty variable metadata keys, whitespace-only typed object/class paths, invalid dispatcher parameter type shapes, and graph edges that reference pins outside their declared source/target nodes.
 - Direct command-plan execution now supports explicit function/macro graph creation, component creation/attachment/property mutation, interface application, class default writes, member renames, node removal/movement, and explicit Blueprint compile commands.
 - Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
 
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-2001`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, and `VGR-4008` are complete.
+- `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, and `VGR-4008` are complete.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
 - Document-authored component definitions now have structural validation plus deterministic command planning and editor execution for component creation, attachment, attach sockets, template properties, and relative transforms.
@@ -58,6 +59,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored construction script definitions now have structural validation, deterministic command planning, editor execution, and headless automation coverage when targeting `UserConstructionScript`.
 - Schema migration helpers now exist for older documents, with focused automation coverage for forward migration, no-op migration, downgrade rejection, and missing-path diagnostics.
+- Structural validation now checks dispatcher parameter type shapes, variable metadata keys, trimmed object/class paths, and graph-edge pin ownership across both graph surfaces.
 - The explicit editor command surface now covers function graphs, macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile commands. Document lowering now exists for variables, dispatchers, function definitions, macro definitions, component hierarchy data, component template properties, class defaults, implemented interfaces, and construction-script graphs; the dedicated schema-migration pass and remaining asset-model slices are still future work.
 - `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 
