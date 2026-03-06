@@ -16,7 +16,7 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
-- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, and then command planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, and then command planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -58,12 +58,12 @@ This document describes the current scaffold contracts implemented in code today
 - `Vergil::MigrateDocumentSchema(...)` copies the source document, applies each supported forward migration step in order, and updates `SchemaVersion` on the migrated copy.
 - `Vergil::MigrateDocumentToCurrentSchema(...)` is the convenience helper for upgrading to the current scaffold schema version.
 - The current `1 -> 2` and `2 -> 3` migrations are additive: they advance the schema stamp while preserving authored document fields because the expanded whole-asset model remains backward-compatible with older document revisions.
-- `FVergilSchemaMigrationPass` now runs first in the compiler pipeline, upgrades older documents into a working document copy, and feeds that migrated view into structural validation plus command planning.
+- `FVergilSchemaMigrationPass` now runs first in the compiler pipeline, upgrades older documents into a working document copy, and feeds that migrated view into later validation, lowering, and command-planning passes.
 - Current-schema documents are left unchanged, and newer-than-compiler schemas still flow through unchanged so structural validation can emit the existing future-schema warning without attempting a downgrade.
 
 ## Semantic validation contracts
 
-- `FVergilSemanticValidationPass` now runs after structural validation and before command planning.
+- `FVergilSemanticValidationPass` now runs after structural validation and before later lowering and command-planning passes.
 - The canonical graph-surface compile targets are currently `EventGraph` and `UserConstructionScript`; other `FVergilCompileRequest.TargetGraphName` values are rejected during semantic validation.
 - Known descriptor families now validate their expected authored shape before planning. This includes descriptor suffixes for `K2.Event.*`, `K2.CustomEvent.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, delegate helper descriptors, and required metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.FormatText`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
 - `K2.Event.*` descriptors now validate against node kind `Event`, `K2.Call.*` against kind `Call`, `K2.VarGet.*` against kind `VariableGet`, and `K2.VarSet.*` against kind `VariableSet`, which prevents those authored nodes from silently falling through to generic planning.
@@ -71,7 +71,7 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Symbol resolution contracts
 
-- `FVergilSymbolResolutionPass` now runs after semantic validation and before command planning.
+- `FVergilSymbolResolutionPass` now runs after semantic validation and before later lowering and command-planning passes.
 - The symbol pass resolves callable/member references for `K2.Event.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, `K2.BindDelegate.*`, `K2.RemoveDelegate.*`, `K2.ClearDelegate.*`, `K2.CallDelegate.*`, `K2.CreateDelegate.*`, custom-event delegate-signature metadata, and `K2.ForLoop` macro references.
 - Explicit `OwnerClassPath` and `DelegateOwnerClassPath` metadata is authoritative. If authored, the symbol pass resolves only against that owner path and fails explicitly when the owner or member cannot be found.
 - Without explicit owner metadata, variable and delegate symbols resolve in this order: document-authored members first, then existing Blueprint-local members, then inherited/native members.
@@ -82,12 +82,20 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Type resolution contracts
 
-- `FVergilTypeResolutionPass` now runs after symbol resolution and before command planning.
+- `FVergilTypeResolutionPass` now runs after symbol resolution and before node lowering plus final command planning.
 - The type pass normalizes authored type metadata across variable definitions, function signatures, macro signatures, dispatcher parameters, component class paths, interface class paths, and explicit typed-node metadata on the active graph surface.
 - Supported logical type categories remain `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` references now resolve to canonical object paths before planning, so planned commands stop depending on raw authored whitespace or alternate path spellings.
 - The type pass currently resolves explicit type metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
-- Failed type resolution stops compilation before command planning, so invalid authored type references now return zero planned commands.
+- Failed type resolution stops compilation before node lowering or command planning, so invalid authored type references now return zero planned commands.
+
+## Node lowering contracts
+
+- `FVergilNodeLoweringPass` now runs after type resolution and before final command planning.
+- The node-lowering pass resolves handlers against the normalized working document and emits node-scoped `AddNode`, `SetNodeMetadata`, and `FinalizeNode` commands into the compiler context before the final plan is assembled.
+- `K2.CreateDelegate.*` finalization is now owned by node lowering instead of command planning, so function-name selection and normalized metadata travel with the lowered node output.
+- Comment and generic metadata-lowering commands are emitted in deterministic key order.
+- Failed node lowering stops compilation before final command planning, so handler failures now return zero planned commands.
 
 ## Blueprint metadata contracts
 

@@ -24,7 +24,6 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		nullptr,
 		&Request.Document,
 		&Result.Diagnostics,
-		&Result.Commands,
 		Request.TargetGraphName);
 
 	const TArray<TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>> Passes =
@@ -34,6 +33,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		MakeShared<FVergilSemanticValidationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilSymbolResolutionPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilTypeResolutionPass, ESPMode::ThreadSafe>(),
+		MakeShared<FVergilNodeLoweringPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
 	};
 

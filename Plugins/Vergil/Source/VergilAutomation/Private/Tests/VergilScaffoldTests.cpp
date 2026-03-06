@@ -76,6 +76,25 @@ namespace
 
 	};
 
+	class FTestFailingNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Test.FailLowering");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			Context.AddDiagnostic(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("IntentionalNodeLoweringFailure"),
+				TEXT("Intentional node-lowering failure for automation coverage."),
+				Node.Id);
+			return false;
+		}
+	};
+
 	UBlueprint* MakeTestBlueprint()
 	{
 		const FName BlueprintName = MakeUniqueObjectName(GetTransientPackage(), UBlueprint::StaticClass(), TEXT("BP_VergilTransient"));
@@ -1036,6 +1055,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.TypeResolutionPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilNodeLoweringPassTest,
+	"Vergil.Scaffold.NodeLoweringPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1801,6 +1825,93 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid wildcard node categories should fail type resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid wildcard node categories should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid wildcard node categories should report InvalidSelectValueType."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidSelectValueType")));
+	}
+
+	return true;
+}
+
+bool FVergilNodeLoweringPassTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code, const FGuid& SourceId = FGuid())
+	{
+		return Diagnostics.ContainsByPredicate([Code, SourceId](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code
+				&& (!SourceId.IsValid() || Diagnostic.SourceId == SourceId);
+		});
+	};
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const EVergilCommandType Type, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([Type, NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == Type && Command.NodeId == NodeId;
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+
+	{
+		FVergilGraphNode HandlerNode;
+		HandlerNode.Id = FGuid::NewGuid();
+		HandlerNode.Kind = EVergilNodeKind::Custom;
+		HandlerNode.Descriptor = TEXT("K2.CustomEvent.HandleSignal");
+		HandlerNode.Position = FVector2D(0.0f, 0.0f);
+
+		FVergilGraphNode CreateDelegateNode;
+		CreateDelegateNode.Id = FGuid::NewGuid();
+		CreateDelegateNode.Kind = EVergilNodeKind::Custom;
+		CreateDelegateNode.Descriptor = TEXT("K2.CreateDelegate.HandleSignal");
+		CreateDelegateNode.Position = FVector2D(320.0f, 0.0f);
+		CreateDelegateNode.Metadata.Add(TEXT("Title"), TEXT("Create Handler Delegate"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_NodeLowering_CreateDelegate");
+		Request.Document.Nodes = { HandlerNode, CreateDelegateNode };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("CreateDelegate lowering should succeed after prior semantic and symbol passes."), Result.bSucceeded);
+
+		const FVergilCompilerCommand* const LoweredCreateDelegateNode = FindNodeCommand(Result.Commands, EVergilCommandType::AddNode, CreateDelegateNode.Id);
+		TestNotNull(TEXT("Node lowering should still emit an AddNode command for CreateDelegate."), LoweredCreateDelegateNode);
+		if (LoweredCreateDelegateNode != nullptr)
+		{
+			TestEqual(TEXT("CreateDelegate should lower through the dedicated handler descriptor."), LoweredCreateDelegateNode->Name, FName(TEXT("Vergil.K2.CreateDelegate")));
+			TestEqual(TEXT("CreateDelegate should preserve the resolved function name."), LoweredCreateDelegateNode->SecondaryName, FName(TEXT("HandleSignal")));
+		}
+
+		const FVergilCompilerCommand* const FinalizeCreateDelegateNode = FindNodeCommand(Result.Commands, EVergilCommandType::FinalizeNode, CreateDelegateNode.Id);
+		TestNotNull(TEXT("Node lowering should emit the CreateDelegate finalize command before planning assembles the final plan."), FinalizeCreateDelegateNode);
+		if (FinalizeCreateDelegateNode != nullptr)
+		{
+			TestEqual(TEXT("CreateDelegate finalization should target the dedicated finalize payload."), FinalizeCreateDelegateNode->Name, FName(TEXT("Vergil.K2.CreateDelegate")));
+			TestEqual(TEXT("CreateDelegate finalization should preserve the selected function name."), FinalizeCreateDelegateNode->SecondaryName, FName(TEXT("HandleSignal")));
+			TestEqual(TEXT("CreateDelegate finalization should preserve normalized metadata for later execution."), FinalizeCreateDelegateNode->Attributes.FindRef(TEXT("Title")), FString(TEXT("Create Handler Delegate")));
+		}
+	}
+
+	{
+		FVergilNodeRegistry::Get().Reset();
+		FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestFailingNodeHandler, ESPMode::ThreadSafe>());
+
+		FVergilGraphNode FailingNode;
+		FailingNode.Id = FGuid::NewGuid();
+		FailingNode.Kind = EVergilNodeKind::Custom;
+		FailingNode.Descriptor = TEXT("Test.FailLowering");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_NodeLowering_Failure");
+		Request.Document.Nodes.Add(FailingNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Node lowering failures should stop compilation."), Result.bSucceeded);
+		TestEqual(TEXT("Node lowering failures should prevent command planning from producing a partial plan."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Handler-reported lowering failures should preserve the specific node-level cause."), ContainsDiagnostic(Result.Diagnostics, TEXT("IntentionalNodeLoweringFailure"), FailingNode.Id));
+		TestTrue(TEXT("Node lowering failures should also report the dedicated pass-level diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("NodeLoweringFailed"), FailingNode.Id));
+
+		FVergilNodeRegistry::Get().Reset();
 	}
 
 	return true;

@@ -17,13 +17,11 @@ public:
 		UEdGraph* InGraph,
 		const FVergilGraphDocument* InDocument,
 		TArray<FVergilDiagnostic>* InDiagnostics,
-		TArray<FVergilCompilerCommand>* InCommands,
 		const FName InGraphName)
 		: Blueprint(InBlueprint)
 		, Graph(InGraph)
 		, Document(InDocument)
 		, Diagnostics(InDiagnostics)
-		, Commands(InCommands)
 		, GraphName(InGraphName)
 	{
 	}
@@ -71,14 +69,19 @@ public:
 		return GraphName;
 	}
 
-	void AddCommand(const FVergilCompilerCommand& Command) const
+	void ResetLoweredNodeCommands()
 	{
-		if (Commands == nullptr)
-		{
-			return;
-		}
+		LoweredNodeCommands.Reset();
+	}
 
-		Commands->Add(Command);
+	void AddCommand(const FVergilCompilerCommand& Command)
+	{
+		LoweredNodeCommands.Add(Command);
+	}
+
+	const TArray<FVergilCompilerCommand>& GetLoweredNodeCommands() const
+	{
+		return LoweredNodeCommands;
 	}
 
 private:
@@ -87,7 +90,7 @@ private:
 	const FVergilGraphDocument* Document = nullptr;
 	FVergilGraphDocument WorkingDocument;
 	TArray<FVergilDiagnostic>* Diagnostics = nullptr;
-	TArray<FVergilCompilerCommand>* Commands = nullptr;
+	TArray<FVergilCompilerCommand> LoweredNodeCommands;
 	FName GraphName = TEXT("EventGraph");
 };
 

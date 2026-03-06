@@ -169,7 +169,7 @@ Tickets:
 - [x] `VGR-3002` Add semantic validation pass
 - [x] `VGR-3003` Add symbol resolution pass
 - [x] `VGR-3004` Add type resolution and wildcard resolution pass
-- `VGR-3005` Add node lowering pass
+- [x] `VGR-3005` Add node lowering pass
 - `VGR-3006` Add connection legality validation pass
 - `VGR-3007` Add post-compile finalize pass
 - `VGR-3008` Split layout/comment work into explicit post-passes
@@ -205,6 +205,12 @@ Session note for `VGR-3004` (2026-03-06):
 - `FVergilTypeResolutionPass` now runs after symbol resolution and before command planning, resolving and normalizing authored type metadata across variable/function/macro/dispatcher definitions, component and interface class paths, and typed or wildcard-heavy K2 node metadata.
 - Object-backed type references now normalize to canonical class, enum, or struct paths in the compiler working document, so planned commands stop depending on raw authored whitespace or alternate path spellings for typed surfaces.
 - `Vergil.Scaffold.TypeResolutionPass` now covers successful normalization for definitions plus typed K2 nodes and explicit zero-command failures for invalid variable, function, dispatcher, macro, component, interface, cast, and wildcard-node type references.
+
+Session note for `VGR-3005` (2026-03-06):
+
+- `FVergilNodeLoweringPass` now runs after type resolution and before final command planning, so handler-driven node lowering executes once against the normalized compiler working document instead of being interleaved with document-definition planning.
+- `FVergilCompilerContext` now buffers lowered node commands separately, and `FVergilCommandPlanningPass` now only assembles the final deterministic plan from document-level commands, ensured graph setup, lowered nodes, edges, and later finalize phases.
+- `K2.CreateDelegate.*` finalization now lowers during the node pass, node metadata commands now emit in deterministic key order, and `Vergil.Scaffold.NodeLoweringPass` covers both successful create-delegate lowering and explicit zero-command pass failures for handler errors.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -388,13 +394,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3005`
+1. `VGR-3006`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
-5. `VGR-3006`
+5. `VGR-3010`
 
-This keeps pressure on the remaining lowering/legality pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, and type resolution stages.
+This keeps pressure on the remaining legality/finalize pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, and dedicated node-lowering stages.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:
