@@ -42,6 +42,20 @@ namespace
 			|| Category == TEXT("struct");
 	}
 
+	bool IsFiniteVector(const FVector& Value)
+	{
+		return FMath::IsFinite(Value.X)
+			&& FMath::IsFinite(Value.Y)
+			&& FMath::IsFinite(Value.Z);
+	}
+
+	bool IsFiniteRotator(const FRotator& Value)
+	{
+		return FMath::IsFinite(Value.Roll)
+			&& FMath::IsFinite(Value.Pitch)
+			&& FMath::IsFinite(Value.Yaw);
+	}
+
 	bool ValidateTypeReference(
 		const FName PinCategory,
 		const FString& ObjectPath,
@@ -411,6 +425,194 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 
 			SignatureNames.Add(Output.Name);
 			bIsValid &= ValidateFunctionParameterTypeReference(Output.Type, OutputLabel, OutDiagnostics);
+		}
+	}
+
+	TSet<FName> AllComponentNames;
+	for (const FVergilComponentDefinition& Component : Components)
+	{
+		if (!Component.Name.IsNone())
+		{
+			AllComponentNames.Add(Component.Name);
+		}
+	}
+
+	TSet<FName> ComponentNames;
+	TSet<FName> SelfParentComponentNames;
+	TMap<FName, FName> ComponentParents;
+	for (const FVergilComponentDefinition& Component : Components)
+	{
+		const FString ComponentLabel = Component.Name.IsNone()
+			? FString(TEXT("Component"))
+			: FString::Printf(TEXT("Component '%s'"), *Component.Name.ToString());
+
+		if (Component.Name.IsNone())
+		{
+			bIsValid = false;
+			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("ComponentNameMissing"), TEXT("Every component must declare a name."));
+			continue;
+		}
+
+		if (ComponentNames.Contains(Component.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentNameDuplicate"),
+				FString::Printf(TEXT("Duplicate component name '%s'."), *Component.Name.ToString()));
+			continue;
+		}
+
+		ComponentNames.Add(Component.Name);
+		ComponentParents.Add(Component.Name, Component.ParentComponentName);
+
+		if (VariableNames.Contains(Component.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentNameConflictsWithVariable"),
+				FString::Printf(TEXT("Component '%s' conflicts with a variable of the same name."), *Component.Name.ToString()));
+		}
+
+		if (FunctionNames.Contains(Component.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentNameConflictsWithFunction"),
+				FString::Printf(TEXT("Component '%s' conflicts with a function of the same name."), *Component.Name.ToString()));
+		}
+
+		if (DispatcherNames.Contains(Component.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentNameConflictsWithDispatcher"),
+				FString::Printf(TEXT("Component '%s' conflicts with a dispatcher of the same name."), *Component.Name.ToString()));
+		}
+
+		if (Component.ComponentClassPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentClassPathMissing"),
+				FString::Printf(TEXT("%s must declare a component class path."), *ComponentLabel));
+		}
+
+		if (Component.ParentComponentName == Component.Name)
+		{
+			bIsValid = false;
+			SelfParentComponentNames.Add(Component.Name);
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentParentSelfReference"),
+				FString::Printf(TEXT("%s cannot name itself as its parent component."), *ComponentLabel));
+		}
+		else if (!Component.ParentComponentName.IsNone() && !AllComponentNames.Contains(Component.ParentComponentName))
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Warning,
+				TEXT("ComponentParentMissing"),
+				FString::Printf(
+					TEXT("%s references parent '%s' which is not authored in this document. This may be intentional for inherited components, but Vergil cannot validate that attachment target locally."),
+					*ComponentLabel,
+					*Component.ParentComponentName.ToString()));
+		}
+
+		if (!Component.AttachSocketName.IsNone() && Component.ParentComponentName.IsNone())
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Warning,
+				TEXT("ComponentAttachSocketWithoutParent"),
+				FString::Printf(TEXT("%s declares attach socket '%s' without naming a parent component."), *ComponentLabel, *Component.AttachSocketName.ToString()));
+		}
+
+		if (Component.RelativeTransform.bHasRelativeLocation && !IsFiniteVector(Component.RelativeTransform.RelativeLocation))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentRelativeLocationInvalid"),
+				FString::Printf(TEXT("%s declares a non-finite relative location."), *ComponentLabel));
+		}
+
+		if (Component.RelativeTransform.bHasRelativeRotation && !IsFiniteRotator(Component.RelativeTransform.RelativeRotation))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentRelativeRotationInvalid"),
+				FString::Printf(TEXT("%s declares a non-finite relative rotation."), *ComponentLabel));
+		}
+
+		if (Component.RelativeTransform.bHasRelativeScale && !IsFiniteVector(Component.RelativeTransform.RelativeScale3D))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("ComponentRelativeScaleInvalid"),
+				FString::Printf(TEXT("%s declares a non-finite relative scale."), *ComponentLabel));
+		}
+
+		for (const TPair<FName, FString>& TemplateProperty : Component.TemplateProperties)
+		{
+			if (TemplateProperty.Key.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ComponentTemplatePropertyNameMissing"),
+					FString::Printf(TEXT("%s contains a template property with an empty name."), *ComponentLabel));
+			}
+		}
+	}
+
+	for (const TPair<FName, FName>& ComponentParentPair : ComponentParents)
+	{
+		if (ComponentParentPair.Value.IsNone() || SelfParentComponentNames.Contains(ComponentParentPair.Key))
+		{
+			continue;
+		}
+
+		TSet<FName> VisitedComponents;
+		FName CurrentComponentName = ComponentParentPair.Key;
+		while (!CurrentComponentName.IsNone())
+		{
+			if (VisitedComponents.Contains(CurrentComponentName))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ComponentParentCycle"),
+					FString::Printf(TEXT("Component '%s' participates in a circular parent chain."), *ComponentParentPair.Key.ToString()));
+				break;
+			}
+
+			VisitedComponents.Add(CurrentComponentName);
+
+			const FName* ParentComponentName = ComponentParents.Find(CurrentComponentName);
+			if (ParentComponentName == nullptr || ParentComponentName->IsNone() || !AllComponentNames.Contains(*ParentComponentName))
+			{
+				break;
+			}
+
+			CurrentComponentName = *ParentComponentName;
 		}
 	}
 

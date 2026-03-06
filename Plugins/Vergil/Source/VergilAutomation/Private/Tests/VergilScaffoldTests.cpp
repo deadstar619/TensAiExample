@@ -1,6 +1,8 @@
 #include "Misc/AutomationTest.h"
 
 #include "Editor.h"
+#include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "EdGraphNode_Comment.h"
 #include "Engine/Blueprint.h"
 #include "GameFramework/Actor.h"
@@ -260,6 +262,66 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("FunctionNameDuplicate");
 	}));
 
+	FVergilGraphDocument InvalidComponentDocument;
+	InvalidComponentDocument.SchemaVersion = 1;
+	InvalidComponentDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidComponents");
+
+	FVergilFunctionDefinition ExistingFunction;
+	ExistingFunction.Name = TEXT("SharedComponent");
+	InvalidComponentDocument.Functions.Add(ExistingFunction);
+
+	FVergilComponentDefinition ConflictingComponent;
+	ConflictingComponent.Name = TEXT("SharedComponent");
+	ConflictingComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+
+	FVergilComponentDefinition MissingClassComponent;
+	MissingClassComponent.Name = TEXT("MissingClass");
+
+	FVergilComponentDefinition SelfParentComponent;
+	SelfParentComponent.Name = TEXT("LoopRoot");
+	SelfParentComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	SelfParentComponent.ParentComponentName = TEXT("LoopRoot");
+
+	FVergilComponentDefinition InvalidTemplateComponent;
+	InvalidTemplateComponent.Name = TEXT("Visual");
+	InvalidTemplateComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	InvalidTemplateComponent.TemplateProperties.Add(NAME_None, TEXT("Broken"));
+
+	FVergilComponentDefinition CycleA;
+	CycleA.Name = TEXT("CycleA");
+	CycleA.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	CycleA.ParentComponentName = TEXT("CycleB");
+
+	FVergilComponentDefinition CycleB;
+	CycleB.Name = TEXT("CycleB");
+	CycleB.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	CycleB.ParentComponentName = TEXT("CycleA");
+
+	InvalidComponentDocument.Components = { ConflictingComponent, MissingClassComponent, SelfParentComponent, InvalidTemplateComponent, CycleA, CycleB };
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid component definitions should fail structural validation."), InvalidComponentDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Component validation reports function conflicts."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ComponentNameConflictsWithFunction");
+	}));
+	TestTrue(TEXT("Component validation reports missing class paths."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ComponentClassPathMissing");
+	}));
+	TestTrue(TEXT("Component validation reports self-parent references."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ComponentParentSelfReference");
+	}));
+	TestTrue(TEXT("Component validation reports template properties without names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ComponentTemplatePropertyNameMissing");
+	}));
+	TestTrue(TEXT("Component validation reports circular parent chains."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("ComponentParentCycle");
+	}));
+
 	return true;
 }
 
@@ -312,6 +374,51 @@ bool FVergilFunctionDefinitionModelTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Function should retain purity."), Document.Functions[0].bPure);
 	TestEqual(TEXT("Function should retain access."), Document.Functions[0].AccessSpecifier, EVergilFunctionAccessSpecifier::Protected);
 	TestEqual(TEXT("Array outputs should retain container type."), Document.Functions[0].Outputs[1].Type.ContainerType, EVergilVariableContainerType::Array);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilComponentDefinitionModelTest,
+	"Vergil.Scaffold.ComponentDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_ComponentModel");
+
+	FVergilComponentDefinition RootComponent;
+	RootComponent.Name = TEXT("Root");
+	RootComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	RootComponent.RelativeTransform.bHasRelativeLocation = true;
+	RootComponent.RelativeTransform.RelativeLocation = FVector(25.0f, 50.0f, 75.0f);
+
+	FVergilComponentDefinition VisualComponent;
+	VisualComponent.Name = TEXT("VisualMesh");
+	VisualComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	VisualComponent.ParentComponentName = RootComponent.Name;
+	VisualComponent.AttachSocketName = TEXT("WeaponSocket");
+	VisualComponent.RelativeTransform.bHasRelativeRotation = true;
+	VisualComponent.RelativeTransform.RelativeRotation = FRotator(0.0f, 45.0f, 0.0f);
+	VisualComponent.RelativeTransform.bHasRelativeScale = true;
+	VisualComponent.RelativeTransform.RelativeScale3D = FVector(1.0f, 1.5f, 1.0f);
+	VisualComponent.TemplateProperties.Add(TEXT("CollisionProfileName"), TEXT("NoCollision"));
+
+	Document.Components = { RootComponent, VisualComponent };
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid component definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid component definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored components."), Document.Components.Num(), 2);
+	TestEqual(TEXT("Second component should retain its parent reference."), Document.Components[1].ParentComponentName, RootComponent.Name);
+	TestEqual(TEXT("Second component should retain its attach socket."), Document.Components[1].AttachSocketName, FName(TEXT("WeaponSocket")));
+	TestTrue(TEXT("Root component should retain relative location override."), Document.Components[0].RelativeTransform.bHasRelativeLocation);
+	TestEqual(TEXT("Root component should retain relative location."), Document.Components[0].RelativeTransform.RelativeLocation, FVector(25.0f, 50.0f, 75.0f));
+	TestTrue(TEXT("Visual component should retain relative rotation override."), Document.Components[1].RelativeTransform.bHasRelativeRotation);
+	TestEqual(TEXT("Visual component should retain relative scale."), Document.Components[1].RelativeTransform.RelativeScale3D, FVector(1.0f, 1.5f, 1.0f));
+	TestEqual(TEXT("Visual component should retain template properties."), Document.Components[1].TemplateProperties.FindRef(TEXT("CollisionProfileName")), FString(TEXT("NoCollision")));
 
 	return true;
 }

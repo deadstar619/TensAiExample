@@ -4,11 +4,12 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Components`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
 - `Functions` are currently part of the canonical model and structural validation surface only. Compile/apply does not author function graphs or signatures yet.
+- `Components` are currently part of the canonical model and structural validation surface only. Compile/apply does not author Blueprint component hierarchies or template properties yet.
 - Asset-level authoring beyond variables and dispatchers is not implemented yet. There is no current compile/apply support for Blueprint metadata, functions, macros, components, interfaces, class defaults, or construction script definitions.
 
 ## Structural validation rules
@@ -20,6 +21,12 @@ This document describes the current scaffold contracts implemented in code today
 - `ExposeOnSpawn` requires `bInstanceEditable`.
 - Every dispatcher must have a unique name.
 - Every dispatcher parameter must have a unique name inside that dispatcher and a non-empty `PinCategory`.
+- Every component must have a unique non-empty name and a non-empty `ComponentClassPath`.
+- Component names cannot conflict with authored variables, functions, or dispatchers.
+- Component parent self-references and authored parent cycles fail structural validation.
+- Component parents that are not authored in the same document emit warnings because they may target inherited components on the Blueprint.
+- Authored relative transform overrides must use finite numeric values.
+- Component template properties must use non-empty property names.
 - Every node must have a valid unique GUID and a non-empty descriptor.
 - Every pin must have a valid unique GUID.
 - Every edge must reference existing node IDs and pin IDs.
@@ -48,6 +55,17 @@ This document describes the current scaffold contracts implemented in code today
 - Signature member names must be unique within a function across both inputs and outputs.
 - Function parameter types currently support the same logical categories and container rules as document-authored variables.
 - Function definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint function graphs.
+
+## Component definition contracts
+
+- Components are authored from `Components` on the document.
+- Each component definition currently uses `Name`, `ComponentClassPath`, `ParentComponentName`, `AttachSocketName`, `RelativeTransform`, and `TemplateProperties`.
+- `ComponentClassPath` is expected to name a component class for future authoring work. Structural validation currently requires only that it be non-empty.
+- `ParentComponentName` may reference another authored component by name or an inherited component expected on the target Blueprint.
+- `AttachSocketName` optionally names the parent socket or bone for future attachment authoring.
+- `RelativeTransform` stores optional relative location, rotation, and scale overrides through `bHasRelativeLocation`, `bHasRelativeRotation`, and `bHasRelativeScale`.
+- `TemplateProperties` stores raw component-template property overrides as property-name to serialized-value string pairs for future application work.
+- Component definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint component hierarchies or template properties.
 
 ## Dispatcher contracts
 
@@ -104,4 +122,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function definitions are modeled and validated, but they are not yet part of compile/apply execution.
+- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function and component definitions are modeled and validated, but they are not yet part of compile/apply execution.

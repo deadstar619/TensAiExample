@@ -266,6 +266,54 @@ struct VERGILBLUEPRINTMODEL_API FVergilFunctionDefinition
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilComponentTransformDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bHasRelativeLocation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVector RelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bHasRelativeRotation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FRotator RelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bHasRelativeScale = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVector RelativeScale3D = FVector(1.0f, 1.0f, 1.0f);
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilComponentDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString ComponentClassPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName ParentComponentName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName AttachSocketName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilComponentTransformDefinition RelativeTransform;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TMap<FName, FString> TemplateProperties;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 {
 	GENERATED_BODY()
@@ -284,6 +332,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilDispatcherDefinition> Dispatchers;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilComponentDefinition> Components;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilGraphNode> Nodes;
