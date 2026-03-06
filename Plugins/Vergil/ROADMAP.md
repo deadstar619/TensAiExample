@@ -134,7 +134,7 @@ Tickets:
   - `CompileBlueprint`
 - [x] `VGR-2002` Add command validation prior to execution
 - [x] `VGR-2003` Add deterministic command ordering rules
-- `VGR-2004` Add command debug printing/serialization
+- [x] `VGR-2004` Add command debug printing/serialization
 
 Acceptance criteria:
 
@@ -150,6 +150,13 @@ Session note for `VGR-2003` (2026-03-06):
 
 - Compiler output and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply, so logged plans match replay order across blueprint definition, graph structure, connection, finalize, compile, and post-compile class-default phases.
 - `Vergil.Scaffold.CommandPlanOrdering` now covers the direct command surface ordering contract, and class-default planning coverage now asserts the normalized post-compile ordering.
+
+Session note for `VGR-2004` (2026-03-06):
+
+- `FVergilCompilerCommand` and `FVergilPlannedPin` now expose stable debug strings, and the compiler module now provides `Vergil::DescribeCommandPlan(...)`, `Vergil::SerializeCommandPlan(...)`, and `Vergil::DeserializeCommandPlan(...)` as versioned inspection/replay helpers.
+- The current serialized command-plan format is `format="Vergil.CommandPlan"` with `version=1`, a deterministic field order, and bare-array parsing support for convenience.
+- `UVergilEditorSubsystem` now exposes `SerializeCommandPlan(...)` plus `ExecuteSerializedCommandPlan(...)`, and compile/direct-command paths log normalized plans at debug verbosity.
+- `Vergil.Scaffold.CommandSerializationUtilities` now covers deterministic serialization, deserialization diagnostics, and replay through the serialized editor-subsystem path.
 
 ## Milestone 3: Harden The Compiler Pipeline
 Goal:
@@ -357,13 +364,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-2004`
-2. `VGR-3001`
-3. `VGR-4009`
-4. `VGR-8005`
-5. `VGR-9007`
+1. `VGR-3001`
+2. `VGR-4009`
+3. `VGR-8005`
+4. `VGR-9007`
+5. `VGR-3002`
 
-This keeps pressure on command-surface hardening and migration/documentation work now that the canonical asset model surface is broader.
+This keeps pressure on migration hardening, roundtrip validation, and inspection/documentation work now that the command surface is easier to inspect and replay.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

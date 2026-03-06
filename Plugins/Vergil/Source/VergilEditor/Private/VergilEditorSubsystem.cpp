@@ -19,6 +19,18 @@ namespace
 			}
 		}
 	}
+
+	void LogCommandPlanIfPresent(const TCHAR* Label, const TArray<FVergilCompilerCommand>& Commands)
+	{
+		if (Commands.Num() == 0)
+		{
+			UE_LOG(LogVergil, Verbose, TEXT("%s: <empty command plan>"), Label);
+			return;
+		}
+
+		UE_LOG(LogVergil, Verbose, TEXT("%s (%d commands)\n%s"), Label, Commands.Num(), *Vergil::DescribeCommandPlan(Commands));
+		UE_LOG(LogVergil, VeryVerbose, TEXT("%s json=%s"), Label, *Vergil::SerializeCommandPlan(Commands, false));
+	}
 }
 
 void UVergilEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -66,6 +78,7 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocumentToGraph(
 
 	const FVergilBlueprintCompilerService CompilerService;
 	FVergilCompileResult Result = CompilerService.Compile(Request);
+	LogCommandPlanIfPresent(TEXT("Vergil planned command plan"), Result.Commands);
 	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString());
 
 	if (bApplyCommands && Result.bSucceeded)
@@ -84,12 +97,31 @@ FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blue
 	FVergilCompileResult Result;
 	Result.Commands = Commands;
 	Vergil::NormalizeCommandPlan(Result.Commands);
+	LogCommandPlanIfPresent(TEXT("Vergil direct command plan"), Result.Commands);
 
 	const FVergilCommandExecutor Executor;
 	Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
 	RefreshCompileResultState(Result);
 	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 	return Result;
+}
+
+FString UVergilEditorSubsystem::SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCommandPlan(Commands, bPrettyPrint);
+}
+
+FVergilCompileResult UVergilEditorSubsystem::ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const
+{
+	FVergilCompileResult Result;
+	if (!Vergil::DeserializeCommandPlan(SerializedCommandPlan, Result.Commands, &Result.Diagnostics))
+	{
+		RefreshCompileResultState(Result);
+		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
+		return Result;
+	}
+
+	return ExecuteCommandPlan(Blueprint, Result.Commands);
 }
 
 const UVergilDeveloperSettings* UVergilEditorSubsystem::GetVergilSettings() const

@@ -46,6 +46,8 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilPlannedPin
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	bool bIsExec = false;
+
+	FString ToDisplayString() const;
 };
 
 USTRUCT(BlueprintType)
@@ -91,4 +93,6 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompilerCommand
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilPlannedPin> PlannedPins;
+
+	FString ToDisplayString() const;
 };

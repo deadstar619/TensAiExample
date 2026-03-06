@@ -33,5 +33,11 @@ public:
 	FVergilCompileResult ExecuteCommandPlan(UBlueprint* Blueprint, const TArray<FVergilCompilerCommand>& Commands) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCompileResult ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
 	const UVergilDeveloperSettings* GetVergilSettings() const;
 };

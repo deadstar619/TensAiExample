@@ -19,6 +19,7 @@ This document describes the current scaffold contracts implemented in code today
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
+- Command plans now expose stable debug strings plus versioned JSON serialization/deserialization helpers for inspection and replay.
 
 ## Structural validation rules
 
@@ -142,6 +143,10 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Explicit command plan contracts
 
+- `FVergilCompilerCommand::ToDisplayString()` returns a stable human-readable summary for one command, and `Vergil::DescribeCommandPlan(...)` formats a whole plan as indexed lines for debug logging.
+- `Vergil::SerializeCommandPlan(...)` emits a versioned JSON wrapper with `format="Vergil.CommandPlan"`, `version=1`, and a `commands` array.
+- `Vergil::DeserializeCommandPlan(...)` accepts that wrapper back into `FVergilCompilerCommand` arrays. Bare JSON command arrays are also accepted for convenience.
+- `UVergilEditorSubsystem::SerializeCommandPlan(...)` exposes the serializer on the editor subsystem, and `UVergilEditorSubsystem::ExecuteSerializedCommandPlan(...)` is the supported replay helper for applying serialized plans to a target Blueprint.
 - `SetBlueprintMetadata` is supported through direct command-plan execution and currently accepts `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories` through `Name` plus `StringValue`.
 - `EnsureVariable`, `SetVariableMetadata`, and `SetVariableDefault` are supported through direct command-plan execution and remain the current end-to-end path for document-authored variable definitions.
 - `EnsureFunctionGraph` creates or resolves a Blueprint function graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.

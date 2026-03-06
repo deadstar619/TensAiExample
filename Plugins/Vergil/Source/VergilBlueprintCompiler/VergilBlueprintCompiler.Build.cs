@@ -20,6 +20,7 @@ public class VergilBlueprintCompiler : ModuleRules
 			new string[]
 			{
 				"BlueprintGraph",
+				"Json",
 				"Kismet",
 				"KismetCompiler",
 				"Projects",

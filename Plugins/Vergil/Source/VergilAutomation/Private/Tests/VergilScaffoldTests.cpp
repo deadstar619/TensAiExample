@@ -1074,6 +1074,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCommandSerializationUtilitiesTest,
+	"Vergil.Scaffold.CommandSerializationUtilities",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilVariableAuthoringExecutionTest,
 	"Vergil.Scaffold.VariableAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1169,6 +1174,154 @@ bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Test summary reports executed command count."), TestSummary.ExecutedCommandCount, 1);
 
 	return true;
+}
+
+bool FVergilCommandSerializationUtilitiesTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	FVergilCompilerCommand SerializableCommand;
+	SerializableCommand.Type = EVergilCommandType::AddNode;
+	SerializableCommand.GraphName = TEXT("EventGraph");
+	SerializableCommand.NodeId = FGuid::NewGuid();
+	SerializableCommand.Name = TEXT("Vergil.Comment");
+	SerializableCommand.StringValue = TEXT("Serialized\nComment");
+	SerializableCommand.Attributes.Add(TEXT("CommentWidth"), TEXT("420"));
+	SerializableCommand.Attributes.Add(TEXT("Color"), TEXT("Red"));
+	SerializableCommand.Position = FVector2D(128.5f, 64.25f);
+
+	FVergilPlannedPin PlannedExecPin;
+	PlannedExecPin.PinId = FGuid::NewGuid();
+	PlannedExecPin.Name = TEXT("Execute");
+	PlannedExecPin.bIsInput = true;
+	PlannedExecPin.bIsExec = true;
+	SerializableCommand.PlannedPins.Add(PlannedExecPin);
+
+	const TArray<FVergilCompilerCommand> SerializableCommands = { SerializableCommand };
+
+	TestTrue(TEXT("Planned-pin debug strings should include their authored names."), PlannedExecPin.ToDisplayString().Contains(TEXT("Execute")));
+	TestTrue(TEXT("Command debug strings should include the command type."), SerializableCommand.ToDisplayString().Contains(TEXT("AddNode")));
+	TestTrue(TEXT("Command debug strings should include authored attributes."), SerializableCommand.ToDisplayString().Contains(TEXT("CommentWidth=420")));
+	TestTrue(TEXT("Command-plan descriptions should include indexed command output."), Vergil::DescribeCommandPlan(SerializableCommands).Contains(TEXT("0: AddNode")));
+
+	const FString SerializedPlanA = Vergil::SerializeCommandPlan(SerializableCommands, false);
+	const FString SerializedPlanB = Vergil::SerializeCommandPlan(SerializableCommands, false);
+	TestEqual(TEXT("Command serialization should be deterministic for the same input plan."), SerializedPlanA, SerializedPlanB);
+	TestTrue(TEXT("Serialized command plans should advertise their format marker."), SerializedPlanA.Contains(TEXT("\"format\":\"Vergil.CommandPlan\"")));
+
+	TArray<FVergilCompilerCommand> RoundTrippedCommands;
+	TArray<FVergilDiagnostic> RoundTripDiagnostics;
+	TestTrue(TEXT("Serialized command plans should deserialize successfully."), Vergil::DeserializeCommandPlan(SerializedPlanA, RoundTrippedCommands, &RoundTripDiagnostics));
+	TestEqual(TEXT("Round-tripped command plans should preserve command count."), RoundTrippedCommands.Num(), 1);
+	TestEqual(TEXT("Successful command-plan deserialization should not emit diagnostics."), RoundTripDiagnostics.Num(), 0);
+	if (RoundTrippedCommands.Num() != 1)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Round-tripped command should preserve its type."), RoundTrippedCommands[0].Type, SerializableCommand.Type);
+	TestEqual(TEXT("Round-tripped command should preserve its graph name."), RoundTrippedCommands[0].GraphName, SerializableCommand.GraphName);
+	TestEqual(TEXT("Round-tripped command should preserve its node id."), RoundTrippedCommands[0].NodeId, SerializableCommand.NodeId);
+	TestEqual(TEXT("Round-tripped command should preserve its descriptor name."), RoundTrippedCommands[0].Name, SerializableCommand.Name);
+	TestEqual(TEXT("Round-tripped command should preserve its string value."), RoundTrippedCommands[0].StringValue, SerializableCommand.StringValue);
+	TestEqual(TEXT("Round-tripped command should preserve attribute count."), RoundTrippedCommands[0].Attributes.Num(), SerializableCommand.Attributes.Num());
+	TestEqual(TEXT("Round-tripped command should preserve the CommentWidth attribute."), RoundTrippedCommands[0].Attributes.FindRef(TEXT("CommentWidth")), FString(TEXT("420")));
+	TestEqual(TEXT("Round-tripped command should preserve the Color attribute."), RoundTrippedCommands[0].Attributes.FindRef(TEXT("Color")), FString(TEXT("Red")));
+	TestEqual(TEXT("Round-tripped command should preserve X position."), RoundTrippedCommands[0].Position.X, SerializableCommand.Position.X);
+	TestEqual(TEXT("Round-tripped command should preserve Y position."), RoundTrippedCommands[0].Position.Y, SerializableCommand.Position.Y);
+	TestEqual(TEXT("Round-tripped command should preserve planned pin count."), RoundTrippedCommands[0].PlannedPins.Num(), 1);
+	if (RoundTrippedCommands[0].PlannedPins.Num() != 1)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Round-tripped planned pin should preserve pin id."), RoundTrippedCommands[0].PlannedPins[0].PinId, PlannedExecPin.PinId);
+	TestEqual(TEXT("Round-tripped planned pin should preserve pin name."), RoundTrippedCommands[0].PlannedPins[0].Name, PlannedExecPin.Name);
+	TestEqual(TEXT("Round-tripped planned pin should preserve input direction."), RoundTrippedCommands[0].PlannedPins[0].bIsInput, PlannedExecPin.bIsInput);
+	TestEqual(TEXT("Round-tripped planned pin should preserve exec state."), RoundTrippedCommands[0].PlannedPins[0].bIsExec, PlannedExecPin.bIsExec);
+
+	TArray<FVergilCompilerCommand> InvalidCommands;
+	TArray<FVergilDiagnostic> InvalidDiagnostics;
+	TestFalse(
+		TEXT("Invalid serialized command types should fail deserialization."),
+		Vergil::DeserializeCommandPlan(
+			TEXT("{\"format\":\"Vergil.CommandPlan\",\"version\":1,\"commands\":[{\"type\":\"UnsupportedCommand\"}]}"),
+			InvalidCommands,
+			&InvalidDiagnostics));
+	TestTrue(TEXT("Invalid serialized command types should emit a typed diagnostic."), ContainsDiagnostic(InvalidDiagnostics, TEXT("SerializedCommandTypeInvalid")));
+
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FName VariableName(TEXT("SerializedFlag"));
+
+	FVergilCompilerCommand SetClassDefault;
+	SetClassDefault.Type = EVergilCommandType::SetClassDefault;
+	SetClassDefault.Name = VariableName;
+	SetClassDefault.StringValue = TEXT("True");
+
+	FVergilCompilerCommand SetBlueprintDescription;
+	SetBlueprintDescription.Type = EVergilCommandType::SetBlueprintMetadata;
+	SetBlueprintDescription.Name = TEXT("BlueprintDescription");
+	SetBlueprintDescription.StringValue = TEXT("Serialized replay path.");
+
+	FVergilCompilerCommand CompileBlueprint;
+	CompileBlueprint.Type = EVergilCommandType::CompileBlueprint;
+
+	FVergilCompilerCommand EnsureVariable;
+	EnsureVariable.Type = EVergilCommandType::EnsureVariable;
+	EnsureVariable.SecondaryName = VariableName;
+	EnsureVariable.Attributes.Add(TEXT("PinCategory"), TEXT("bool"));
+
+	const TArray<FVergilCompilerCommand> ReplayCommands = { SetClassDefault, SetBlueprintDescription, CompileBlueprint, EnsureVariable };
+	const FString SerializedReplayCommands = EditorSubsystem->SerializeCommandPlan(ReplayCommands, false);
+	const FVergilCompileResult ReplayResult = EditorSubsystem->ExecuteSerializedCommandPlan(Blueprint, SerializedReplayCommands);
+
+	TestTrue(TEXT("Serialized command-plan replay should succeed."), ReplayResult.bSucceeded);
+	TestTrue(TEXT("Serialized command-plan replay should apply commands."), ReplayResult.bApplied);
+	TestEqual(TEXT("Serialized command-plan replay should execute every normalized command once."), ReplayResult.ExecutedCommandCount, ReplayCommands.Num());
+	TestEqual(TEXT("Serialized command-plan replay should preserve command count."), ReplayResult.Commands.Num(), ReplayCommands.Num());
+	if (!ReplayResult.bSucceeded || !ReplayResult.bApplied || ReplayResult.Commands.Num() != ReplayCommands.Num())
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Serialized replay should normalize blueprint metadata commands into the first phase position."), ReplayResult.Commands[0].Type, EVergilCommandType::SetBlueprintMetadata);
+	TestEqual(TEXT("Serialized replay should normalize variable creation into the same definition phase after metadata."), ReplayResult.Commands[1].Type, EVergilCommandType::EnsureVariable);
+	TestEqual(TEXT("Serialized replay should normalize explicit compile commands before post-compile defaults."), ReplayResult.Commands[2].Type, EVergilCommandType::CompileBlueprint);
+	TestEqual(TEXT("Serialized replay should normalize class-default commands last."), ReplayResult.Commands[3].Type, EVergilCommandType::SetClassDefault);
+	TestEqual(TEXT("Serialized replay should update the Blueprint description."), Blueprint->BlueprintDescription, FString(TEXT("Serialized replay path.")));
+
+	UClass* const GeneratedClass = Blueprint->GeneratedClass.Get();
+	TestNotNull(TEXT("Serialized replay should leave a generated class available."), GeneratedClass);
+	FBoolProperty* const VariableProperty = GeneratedClass != nullptr
+		? FindFProperty<FBoolProperty>(GeneratedClass, VariableName)
+		: nullptr;
+	TestNotNull(TEXT("Serialized replay should create the authored bool variable."), VariableProperty);
+	TestTrue(
+		TEXT("Serialized replay should apply the authored class default after compile."),
+		VariableProperty != nullptr
+			&& GeneratedClass != nullptr
+			&& VariableProperty->GetPropertyValue_InContainer(GeneratedClass->GetDefaultObject()));
+
+	return VariableProperty != nullptr && GeneratedClass != nullptr;
 }
 
 bool FVergilVariableAuthoringExecutionTest::RunTest(const FString& Parameters)
