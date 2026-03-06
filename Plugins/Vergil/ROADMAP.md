@@ -125,7 +125,7 @@ Tickets:
   - `RenameMember`
   - `MoveNode`
   - `CompileBlueprint`
-- `VGR-2002` Add command validation prior to execution
+- [x] `VGR-2002` Add command validation prior to execution
 - `VGR-2003` Add deterministic command ordering rules
 - `VGR-2004` Add command debug printing/serialization
 
@@ -133,6 +133,11 @@ Acceptance criteria:
 
 - asset-level mutations no longer require ad hoc editor-side logic outside commands
 - commands can be logged, inspected, and replayed deterministically
+
+Session note for `VGR-2002` (2026-03-06):
+
+- `FVergilCommandExecutor::Execute(...)` now preflight-validates command-plan shape and intra-plan references before opening an editor transaction, which prevents malformed plans from partially mutating the Blueprint before failure.
+- `Vergil.Scaffold.CommandPlanValidation` now covers zero-mutation rejection for malformed component commands, broken metadata references, and duplicate node/pin ids, and the full `Vergil.Scaffold` suite re-verified cleanly after the change.
 
 ## Milestone 3: Harden The Compiler Pipeline
 Goal:
@@ -340,8 +345,8 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-2002`
-2. `VGR-1001`
+1. `VGR-1001`
+2. `VGR-2003`
 3. `VGR-3001`
 4. `VGR-4009`
 5. `VGR-8005`

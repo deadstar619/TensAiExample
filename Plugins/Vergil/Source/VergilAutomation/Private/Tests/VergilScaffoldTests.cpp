@@ -2896,6 +2896,178 @@ bool FVergilMoveAndRemoveNodeExecutionTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCommandPlanValidationTest,
+	"Vergil.Scaffold.CommandPlanValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilCommandPlanValidationTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for preflight-mutation coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FVergilCompilerCommand EnsureFunctionGraph;
+		EnsureFunctionGraph.Type = EVergilCommandType::EnsureFunctionGraph;
+		EnsureFunctionGraph.GraphName = TEXT("ShouldNotExist");
+		EnsureFunctionGraph.SecondaryName = EnsureFunctionGraph.GraphName;
+
+		FVergilCompilerCommand InvalidEnsureComponent;
+		InvalidEnsureComponent.Type = EVergilCommandType::EnsureComponent;
+		InvalidEnsureComponent.SecondaryName = TEXT("BrokenComponent");
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { EnsureFunctionGraph, InvalidEnsureComponent });
+
+		TestFalse(TEXT("Invalid command plans should fail execution."), Result.bSucceeded);
+		TestFalse(TEXT("Invalid command plans should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Preflight failures should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Invalid component command should be reported during preflight."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidEnsureComponentCommand")));
+		TestNull(TEXT("Preflight failure should not create a function graph."), FindBlueprintGraphByName(Blueprint, TEXT("ShouldNotExist")));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for metadata reference coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		const FGuid CommentNodeId = FGuid::NewGuid();
+
+		FVergilCompilerCommand SetMetadataBeforeAdd;
+		SetMetadataBeforeAdd.Type = EVergilCommandType::SetNodeMetadata;
+		SetMetadataBeforeAdd.GraphName = TEXT("EventGraph");
+		SetMetadataBeforeAdd.NodeId = CommentNodeId;
+		SetMetadataBeforeAdd.Name = TEXT("CommentText");
+		SetMetadataBeforeAdd.StringValue = TEXT("Should never apply");
+
+		FVergilCompilerCommand AddComment;
+		AddComment.Type = EVergilCommandType::AddNode;
+		AddComment.GraphName = TEXT("EventGraph");
+		AddComment.NodeId = CommentNodeId;
+		AddComment.Name = TEXT("Vergil.Comment");
+		AddComment.Position = FVector2D(64.0f, 64.0f);
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { SetMetadataBeforeAdd, AddComment });
+
+		TestFalse(TEXT("Metadata commands that reference a future AddNode should fail execution."), Result.bSucceeded);
+		TestFalse(TEXT("Metadata preflight failures should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Metadata preflight failures should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Metadata preflight should report the missing target node."), ContainsDiagnostic(Result.Diagnostics, TEXT("CommandValidationMetadataTargetMissing")));
+
+		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+		TestNotNull(TEXT("Event graph should still exist on transient blueprints."), EventGraph);
+		TestNull(TEXT("Preflight failure should not create the deferred comment node."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, CommentNodeId) : nullptr);
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for duplicate node coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		const FGuid DuplicateNodeId = FGuid::NewGuid();
+
+		FVergilCompilerCommand AddFirstComment;
+		AddFirstComment.Type = EVergilCommandType::AddNode;
+		AddFirstComment.GraphName = TEXT("EventGraph");
+		AddFirstComment.NodeId = DuplicateNodeId;
+		AddFirstComment.Name = TEXT("Vergil.Comment");
+		AddFirstComment.Position = FVector2D(0.0f, 0.0f);
+
+		FVergilCompilerCommand AddSecondComment;
+		AddSecondComment.Type = EVergilCommandType::AddNode;
+		AddSecondComment.GraphName = TEXT("EventGraph");
+		AddSecondComment.NodeId = DuplicateNodeId;
+		AddSecondComment.Name = TEXT("Vergil.Comment");
+		AddSecondComment.Position = FVector2D(200.0f, 0.0f);
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { AddFirstComment, AddSecondComment });
+
+		TestFalse(TEXT("Duplicate AddNode ids should fail execution."), Result.bSucceeded);
+		TestFalse(TEXT("Duplicate AddNode ids should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Duplicate AddNode ids should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Duplicate AddNode ids should emit a preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("CommandValidationNodeIdDuplicate")));
+
+		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+		TestNotNull(TEXT("Event graph should exist for duplicate node coverage."), EventGraph);
+		TestNull(TEXT("Duplicate node validation should prevent comment creation."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, DuplicateNodeId) : nullptr);
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for duplicate pin coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		const FGuid FirstNodeId = FGuid::NewGuid();
+		const FGuid SecondNodeId = FGuid::NewGuid();
+		const FGuid DuplicatePinId = FGuid::NewGuid();
+
+		FVergilCompilerCommand AddFirstComment;
+		AddFirstComment.Type = EVergilCommandType::AddNode;
+		AddFirstComment.GraphName = TEXT("EventGraph");
+		AddFirstComment.NodeId = FirstNodeId;
+		AddFirstComment.Name = TEXT("Vergil.Comment");
+		AddFirstComment.Position = FVector2D(0.0f, 0.0f);
+
+		FVergilPlannedPin FirstPlannedPin;
+		FirstPlannedPin.PinId = DuplicatePinId;
+		FirstPlannedPin.Name = TEXT("SharedPin");
+		AddFirstComment.PlannedPins.Add(FirstPlannedPin);
+
+		FVergilCompilerCommand AddSecondComment;
+		AddSecondComment.Type = EVergilCommandType::AddNode;
+		AddSecondComment.GraphName = TEXT("EventGraph");
+		AddSecondComment.NodeId = SecondNodeId;
+		AddSecondComment.Name = TEXT("Vergil.Comment");
+		AddSecondComment.Position = FVector2D(200.0f, 0.0f);
+
+		FVergilPlannedPin SecondPlannedPin;
+		SecondPlannedPin.PinId = DuplicatePinId;
+		SecondPlannedPin.Name = TEXT("SharedPin");
+		AddSecondComment.PlannedPins.Add(SecondPlannedPin);
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { AddFirstComment, AddSecondComment });
+
+		TestFalse(TEXT("Duplicate planned pin ids should fail execution."), Result.bSucceeded);
+		TestFalse(TEXT("Duplicate planned pin ids should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Duplicate planned pin ids should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Duplicate planned pin ids should emit a preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("CommandValidationPinIdDuplicate")));
+
+		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+		TestNotNull(TEXT("Event graph should exist for duplicate pin coverage."), EventGraph);
+		TestNull(TEXT("Duplicate pin validation should prevent the first comment creation."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, FirstNodeId) : nullptr);
+		TestNull(TEXT("Duplicate pin validation should prevent the second comment creation."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, SecondNodeId) : nullptr);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilSupportedK2ChainExecutionTest,
 	"Vergil.Scaffold.SupportedK2ChainExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

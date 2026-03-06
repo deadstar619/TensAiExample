@@ -499,23 +499,31 @@ namespace
 
 	bool TryParseFloat(const FString& InValue, float& OutValue)
 	{
-		if (InValue.IsEmpty())
+		const FString TrimmedValue = InValue.TrimStartAndEnd();
+		if (TrimmedValue.IsEmpty())
 		{
 			return false;
 		}
 
-		OutValue = FCString::Atof(*InValue);
-		return true;
+		return LexTryParseString(OutValue, *TrimmedValue);
 	}
 
 	bool TryParseInt(const FString& InValue, int32& OutValue)
 	{
-		if (InValue.IsEmpty())
+		const FString TrimmedValue = InValue.TrimStartAndEnd();
+		if (TrimmedValue.IsEmpty())
 		{
 			return false;
 		}
 
-		OutValue = FCString::Atoi(*InValue);
+		TCHAR* EndPtr = nullptr;
+		const int64 ParsedValue = FCString::Strtoi64(*TrimmedValue, &EndPtr, 10);
+		if (EndPtr == *TrimmedValue || EndPtr == nullptr || *EndPtr != '\0')
+		{
+			return false;
+		}
+
+		OutValue = static_cast<int32>(ParsedValue);
 		return true;
 	}
 
@@ -527,6 +535,244 @@ namespace
 		}
 
 		return FString();
+	}
+
+	bool IsSupportedCommandPinCategory(const FString& PinCategory)
+	{
+		const FString Category = PinCategory.TrimStartAndEnd().ToLower();
+		return Category == TEXT("bool")
+			|| Category == TEXT("int")
+			|| Category == TEXT("float")
+			|| Category == TEXT("double")
+			|| Category == TEXT("string")
+			|| Category == TEXT("name")
+			|| Category == TEXT("text")
+			|| Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool CommandPinCategoryRequiresObjectPath(const FString& PinCategory)
+	{
+		const FString Category = PinCategory.TrimStartAndEnd().ToLower();
+		return Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool ValidateCommandTypeShape(
+		const FString& PinCategoryValue,
+		const FString& ObjectPathValue,
+		const FString& ContextLabel,
+		const FName MissingCategoryCode,
+		const FName UnsupportedCategoryCode,
+		const FName MissingObjectPathCode,
+		const FGuid& SourceId,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		const FString PinCategory = PinCategoryValue.TrimStartAndEnd();
+		const FString ObjectPath = ObjectPathValue.TrimStartAndEnd();
+		if (PinCategory.IsEmpty())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				MissingCategoryCode,
+				FString::Printf(TEXT("%s must declare a type category."), *ContextLabel),
+				SourceId));
+			return false;
+		}
+
+		if (!IsSupportedCommandPinCategory(PinCategory))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				UnsupportedCategoryCode,
+				FString::Printf(TEXT("%s declares unsupported type category '%s'."), *ContextLabel, *PinCategory),
+				SourceId));
+			return false;
+		}
+
+		if (CommandPinCategoryRequiresObjectPath(PinCategory) && ObjectPath.IsEmpty())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				MissingObjectPathCode,
+				FString::Printf(TEXT("%s type category '%s' requires an object path."), *ContextLabel, *PinCategory),
+				SourceId));
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ValidateCommandVariableTypeShape(
+		const FVergilCompilerCommand& Command,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		bool bIsValid = ValidateCommandTypeShape(
+			GetCommandAttribute(Command, TEXT("PinCategory")),
+			GetCommandAttribute(Command, TEXT("ObjectPath")),
+			ContextLabel,
+			TEXT("VariableTypeCategoryMissing"),
+			TEXT("VariableTypeCategoryUnsupported"),
+			TEXT("VariableTypeObjectPathMissing"),
+			Command.NodeId,
+			Diagnostics);
+
+		const FString ContainerType = GetCommandAttribute(Command, TEXT("ContainerType")).TrimStartAndEnd().ToLower();
+		if (ContainerType.IsEmpty() || ContainerType == TEXT("none"))
+		{
+			if (!GetCommandAttribute(Command, TEXT("ValuePinCategory")).TrimStartAndEnd().IsEmpty()
+				|| !GetCommandAttribute(Command, TEXT("ValueObjectPath")).TrimStartAndEnd().IsEmpty())
+			{
+				bIsValid = false;
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("VariableValueTypeUnexpected"),
+					FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel),
+					Command.NodeId));
+			}
+
+			return bIsValid;
+		}
+
+		if (ContainerType == TEXT("array") || ContainerType == TEXT("set"))
+		{
+			if (!GetCommandAttribute(Command, TEXT("ValuePinCategory")).TrimStartAndEnd().IsEmpty()
+				|| !GetCommandAttribute(Command, TEXT("ValueObjectPath")).TrimStartAndEnd().IsEmpty())
+			{
+				bIsValid = false;
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("VariableValueTypeUnexpected"),
+					FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel),
+					Command.NodeId));
+			}
+
+			return bIsValid;
+		}
+
+		if (ContainerType != TEXT("map"))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableContainerTypeInvalid"),
+				FString::Printf(TEXT("%s uses unsupported container type '%s'."), *ContextLabel, *ContainerType),
+				Command.NodeId));
+			return false;
+		}
+
+		return ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+				GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+				FString::Printf(TEXT("%s value type"), *ContextLabel),
+				TEXT("VariableMapValueCategoryMissing"),
+				TEXT("VariableTypeCategoryUnsupported"),
+				TEXT("VariableTypeObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics)
+			&& bIsValid;
+	}
+
+	bool TryGetCommandCountAttribute(const FVergilCompilerCommand& Command, const TCHAR* Key, int32& OutCount, TArray<FVergilDiagnostic>& Diagnostics, const FName InvalidCode)
+	{
+		const FString CountValue = GetCommandAttribute(Command, Key);
+		if (CountValue.IsEmpty())
+		{
+			OutCount = 0;
+			return true;
+		}
+
+		if (!TryParseInt(CountValue, OutCount))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				InvalidCode,
+				FString::Printf(TEXT("Command attribute '%s' has invalid integer value '%s'."), Key, *CountValue),
+				Command.NodeId));
+			return false;
+		}
+
+		return true;
+	}
+
+	FName MakeSignatureAttributeKey(const TCHAR* Prefix, const int32 Index, const TCHAR* Suffix);
+
+	bool ValidateCommandSignatureTypeShape(
+		const FVergilCompilerCommand& Command,
+		const TCHAR* Prefix,
+		const int32 ParameterIndex,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		bool bIsValid = ValidateCommandTypeShape(
+			GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("PinCategory"))),
+			GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ObjectPath"))),
+			ContextLabel,
+			TEXT("FunctionParameterTypeCategoryMissing"),
+			TEXT("FunctionParameterTypeCategoryUnsupported"),
+			TEXT("FunctionParameterTypeObjectPathMissing"),
+			Command.NodeId,
+			Diagnostics);
+
+		const FString ContainerType = GetCommandAttribute(
+			Command,
+			MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ContainerType"))).TrimStartAndEnd().ToLower();
+		if (ContainerType.IsEmpty() || ContainerType == TEXT("none"))
+		{
+			if (!GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValuePinCategory"))).TrimStartAndEnd().IsEmpty()
+				|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValueObjectPath"))).TrimStartAndEnd().IsEmpty())
+			{
+				bIsValid = false;
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionParameterValueTypeUnexpected"),
+					FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel),
+					Command.NodeId));
+			}
+
+			return bIsValid;
+		}
+
+		if (ContainerType == TEXT("array") || ContainerType == TEXT("set"))
+		{
+			if (!GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValuePinCategory"))).TrimStartAndEnd().IsEmpty()
+				|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValueObjectPath"))).TrimStartAndEnd().IsEmpty())
+			{
+				bIsValid = false;
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionParameterValueTypeUnexpected"),
+					FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel),
+					Command.NodeId));
+			}
+
+			return bIsValid;
+		}
+
+		if (ContainerType != TEXT("map"))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionParameterContainerTypeInvalid"),
+				FString::Printf(TEXT("%s uses unsupported container type '%s'."), *ContextLabel, *ContainerType),
+				Command.NodeId));
+			return false;
+		}
+
+		return ValidateCommandTypeShape(
+				GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValuePinCategory"))),
+				GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, ParameterIndex, TEXT("ValueObjectPath"))),
+				FString::Printf(TEXT("%s value type"), *ContextLabel),
+				TEXT("FunctionParameterMapValueCategoryMissing"),
+				TEXT("FunctionParameterTypeCategoryUnsupported"),
+				TEXT("FunctionParameterTypeObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics)
+			&& bIsValid;
 	}
 
 	FName MakeSignatureAttributeKey(const TCHAR* Prefix, const int32 Index, const TCHAR* Suffix)
@@ -3691,6 +3937,930 @@ namespace
 
 		return true;
 	}
+
+	bool ValidateCommandPlan(
+		UBlueprint* Blueprint,
+		const TArray<FVergilCompilerCommand>& Commands,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingBlueprint"),
+				TEXT("Cannot execute a command plan without a target blueprint.")));
+			return false;
+		}
+
+		bool bIsValid = true;
+		TMap<FGuid, int32> PlannedNodeIndices;
+		TMap<FGuid, FName> PlannedNodeGraphs;
+		TMap<FGuid, int32> PlannedPinIndices;
+		TMap<FGuid, FGuid> PlannedPinOwners;
+		TMap<FGuid, FName> PlannedPinGraphs;
+
+		auto AddValidationError = [&](const FName Code, const FString& Message, const FGuid& SourceId = FGuid())
+		{
+			bIsValid = false;
+			Diagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Error, Code, Message, SourceId));
+		};
+
+		auto ValidateOptionalBoolAttribute = [&](const FVergilCompilerCommand& Command, const FName Key, const FName ErrorCode) -> void
+		{
+			const FString RawValue = GetCommandAttribute(Command, Key);
+			if (RawValue.IsEmpty())
+			{
+				return;
+			}
+
+			bool bBoolValue = false;
+			if (!TryParseBoolAttribute(Command, Key, bBoolValue))
+			{
+				AddValidationError(
+					ErrorCode,
+					FString::Printf(TEXT("Command attribute '%s' must be 'true', 'false', '1', or '0'."), *Key.ToString()),
+					Command.NodeId);
+			}
+		};
+
+		auto ValidateGraphBackedEnsureName = [&](const FVergilCompilerCommand& Command, const TCHAR* ContextLabel) -> void
+		{
+			const bool bHasExplicitGraphName = !Command.SecondaryName.IsNone()
+				|| (!Command.GraphName.IsNone() && Command.GraphName != TEXT("EventGraph"));
+			if (!bHasExplicitGraphName)
+			{
+				AddValidationError(
+					TEXT("CommandValidationGraphNameMissing"),
+					FString::Printf(TEXT("%s commands require an explicit graph name via GraphName or SecondaryName."), ContextLabel),
+					Command.NodeId);
+			}
+		};
+
+		auto ValidateSignatureCount = [&](const FVergilCompilerCommand& Command,
+			const TCHAR* Key,
+			const FName InvalidCode,
+			const FName NegativeCode,
+			const FString& ContextLabel,
+			const TCHAR* CountLabel,
+			int32& OutCount) -> bool
+		{
+			if (!TryGetCommandCountAttribute(Command, Key, OutCount, Diagnostics, InvalidCode))
+			{
+				bIsValid = false;
+				return false;
+			}
+
+			if (OutCount < 0)
+			{
+				AddValidationError(
+					NegativeCode,
+					FString::Printf(TEXT("%s cannot declare a negative %s count."), *ContextLabel, CountLabel),
+					Command.NodeId);
+				return false;
+			}
+
+			return true;
+		};
+
+		auto ValidatePlannedNodeGraph = [&](const FVergilCompilerCommand& Command, const FName ErrorCode, const TCHAR* ContextLabel) -> void
+		{
+			const FName* const PlannedGraph = PlannedNodeGraphs.Find(Command.NodeId);
+			if (PlannedGraph != nullptr && *PlannedGraph != ResolveCommandGraphName(Command))
+			{
+				AddValidationError(
+					ErrorCode,
+					FString::Printf(
+						TEXT("%s targets graph '%s', but node '%s' belongs to graph '%s'."),
+						ContextLabel,
+						*ResolveCommandGraphName(Command).ToString(),
+						*Command.NodeId.ToString(),
+						*PlannedGraph->ToString()),
+					Command.NodeId);
+			}
+		};
+
+		for (int32 CommandIndex = 0; CommandIndex < Commands.Num(); ++CommandIndex)
+		{
+			const FVergilCompilerCommand& Command = Commands[CommandIndex];
+			if (Command.Type != EVergilCommandType::AddNode)
+			{
+				continue;
+			}
+
+			if (!Command.NodeId.IsValid())
+			{
+				AddValidationError(
+					TEXT("CommandValidationNodeIdMissing"),
+					FString::Printf(TEXT("AddNode command '%s' requires a valid node id."), *Command.Name.ToString()),
+					Command.NodeId);
+			}
+			else if (PlannedNodeIndices.Contains(Command.NodeId))
+			{
+				AddValidationError(
+					TEXT("CommandValidationNodeIdDuplicate"),
+					FString::Printf(TEXT("Command plan reuses node id '%s' across multiple AddNode commands."), *Command.NodeId.ToString()),
+					Command.NodeId);
+			}
+			else
+			{
+				PlannedNodeIndices.Add(Command.NodeId, CommandIndex);
+				PlannedNodeGraphs.Add(Command.NodeId, ResolveCommandGraphName(Command));
+			}
+
+			for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+			{
+				if (!PlannedPin.PinId.IsValid())
+				{
+					continue;
+				}
+
+				if (PlannedPin.Name.IsNone())
+				{
+					AddValidationError(
+						TEXT("CommandValidationPinNameMissing"),
+						FString::Printf(TEXT("AddNode command '%s' contains a planned pin with a valid id but no name."), *Command.Name.ToString()),
+						Command.NodeId);
+					continue;
+				}
+
+				if (PlannedPinIndices.Contains(PlannedPin.PinId))
+				{
+					AddValidationError(
+						TEXT("CommandValidationPinIdDuplicate"),
+						FString::Printf(TEXT("Command plan reuses pin id '%s' across multiple planned pins."), *PlannedPin.PinId.ToString()),
+						Command.NodeId);
+					continue;
+				}
+
+				PlannedPinIndices.Add(PlannedPin.PinId, CommandIndex);
+				PlannedPinOwners.Add(PlannedPin.PinId, Command.NodeId);
+				PlannedPinGraphs.Add(PlannedPin.PinId, ResolveCommandGraphName(Command));
+			}
+		}
+
+		for (int32 CommandIndex = 0; CommandIndex < Commands.Num(); ++CommandIndex)
+		{
+			const FVergilCompilerCommand& Command = Commands[CommandIndex];
+			const FName GraphName = ResolveCommandGraphName(Command);
+
+			switch (Command.Type)
+			{
+			case EVergilCommandType::EnsureDispatcher:
+				if (Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidEnsureDispatcherCommand"), TEXT("Dispatcher creation requires a target blueprint and dispatcher name."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::AddDispatcherParameter:
+				if (Command.SecondaryName.IsNone() || Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("InvalidAddDispatcherParameterCommand"), TEXT("Dispatcher parameter commands require a target blueprint, dispatcher name, and parameter name."), Command.NodeId);
+				}
+				else
+				{
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("PinCategory")),
+						GetCommandAttribute(Command, TEXT("ObjectPath")),
+						FString::Printf(TEXT("Dispatcher '%s' parameter '%s'"), *Command.SecondaryName.ToString(), *Command.Name.ToString()),
+						TEXT("DispatcherParameterCategoryMissing"),
+						TEXT("DispatcherParameterCategoryUnsupported"),
+						TEXT("DispatcherParameterObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+				}
+				ValidateOptionalBoolAttribute(Command, TEXT("bIsArray"), TEXT("DispatcherParameterArrayFlagInvalid"));
+				break;
+
+			case EVergilCommandType::EnsureVariable:
+				if (Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidEnsureVariableCommand"), TEXT("Variable creation requires a target blueprint and variable name."), Command.NodeId);
+				}
+				else
+				{
+					if (!ValidateCommandVariableTypeShape(
+						Command,
+						FString::Printf(TEXT("Variable '%s'"), *Command.SecondaryName.ToString()),
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+				}
+				ValidateOptionalBoolAttribute(Command, TEXT("bInstanceEditable"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bBlueprintReadOnly"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bExposeOnSpawn"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bPrivate"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bTransient"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bSaveGame"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bAdvancedDisplay"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bDeprecated"), TEXT("VariableFlagInvalid"));
+				ValidateOptionalBoolAttribute(Command, TEXT("bExposeToCinematics"), TEXT("VariableFlagInvalid"));
+				break;
+
+			case EVergilCommandType::SetVariableMetadata:
+				if (Command.SecondaryName.IsNone() || Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("InvalidSetVariableMetadataCommand"), TEXT("Variable metadata commands require a target blueprint, variable name, and metadata key."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::SetVariableDefault:
+				if (Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidSetVariableDefaultCommand"), TEXT("Variable default commands require a target blueprint and variable name."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::EnsureFunctionGraph:
+			{
+				ValidateGraphBackedEnsureName(Command, TEXT("Function graph"));
+				if (!HasFunctionSignatureAttributes(Command))
+				{
+					break;
+				}
+
+				int32 InputCount = 0;
+				int32 OutputCount = 0;
+				const FString GraphLabel = FString::Printf(TEXT("Function graph '%s'"), *GraphName.ToString());
+				if (!ValidateSignatureCount(Command, TEXT("InputCount"), TEXT("FunctionSignatureCountInvalid"), TEXT("FunctionSignatureCountNegative"), GraphLabel, TEXT("input"), InputCount)
+					|| !ValidateSignatureCount(Command, TEXT("OutputCount"), TEXT("FunctionSignatureCountInvalid"), TEXT("FunctionSignatureCountNegative"), GraphLabel, TEXT("output"), OutputCount))
+				{
+					break;
+				}
+
+				for (int32 InputIndex = 0; InputIndex < InputCount; ++InputIndex)
+				{
+					const FName ParameterName = *GetCommandAttribute(Command, MakeSignatureAttributeKey(TEXT("Input"), InputIndex, TEXT("Name")));
+					if (ParameterName.IsNone())
+					{
+						AddValidationError(TEXT("FunctionSignatureParameterNameMissing"), FString::Printf(TEXT("Function graph '%s' input parameter %d is missing a name."), *GraphName.ToString(), InputIndex), Command.NodeId);
+						continue;
+					}
+
+					if (!ValidateCommandSignatureTypeShape(
+						Command,
+						TEXT("Input"),
+						InputIndex,
+						FString::Printf(TEXT("Function graph '%s' input '%s'"), *GraphName.ToString(), *ParameterName.ToString()),
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+				}
+
+				for (int32 OutputIndex = 0; OutputIndex < OutputCount; ++OutputIndex)
+				{
+					const FName ParameterName = *GetCommandAttribute(Command, MakeSignatureAttributeKey(TEXT("Output"), OutputIndex, TEXT("Name")));
+					if (ParameterName.IsNone())
+					{
+						AddValidationError(TEXT("FunctionSignatureParameterNameMissing"), FString::Printf(TEXT("Function graph '%s' output parameter %d is missing a name."), *GraphName.ToString(), OutputIndex), Command.NodeId);
+						continue;
+					}
+
+					if (!ValidateCommandSignatureTypeShape(
+						Command,
+						TEXT("Output"),
+						OutputIndex,
+						FString::Printf(TEXT("Function graph '%s' output '%s'"), *GraphName.ToString(), *ParameterName.ToString()),
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+				}
+
+				bool bPure = false;
+				if (!TryParseBoolAttribute(Command, TEXT("bPure"), bPure))
+				{
+					AddValidationError(TEXT("FunctionPurityMissing"), FString::Printf(TEXT("Function graph '%s' is missing the bPure attribute."), *GraphName.ToString()), Command.NodeId);
+				}
+
+				const FString AccessSpecifier = GetCommandAttribute(Command, TEXT("AccessSpecifier")).TrimStartAndEnd().ToLower();
+				if (!AccessSpecifier.IsEmpty()
+					&& AccessSpecifier != TEXT("public")
+					&& AccessSpecifier != TEXT("protected")
+					&& AccessSpecifier != TEXT("private"))
+				{
+					AddValidationError(TEXT("FunctionAccessSpecifierInvalid"), FString::Printf(TEXT("Function graph '%s' uses unsupported access specifier '%s'."), *GraphName.ToString(), *AccessSpecifier), Command.NodeId);
+				}
+				break;
+			}
+
+			case EVergilCommandType::EnsureMacroGraph:
+			{
+				ValidateGraphBackedEnsureName(Command, TEXT("Macro graph"));
+				if (!HasMacroSignatureAttributes(Command))
+				{
+					break;
+				}
+
+				int32 InputCount = 0;
+				int32 OutputCount = 0;
+				const FString GraphLabel = FString::Printf(TEXT("Macro graph '%s'"), *GraphName.ToString());
+				if (!ValidateSignatureCount(Command, TEXT("InputCount"), TEXT("MacroSignatureCountInvalid"), TEXT("MacroSignatureCountNegative"), GraphLabel, TEXT("input"), InputCount)
+					|| !ValidateSignatureCount(Command, TEXT("OutputCount"), TEXT("MacroSignatureCountInvalid"), TEXT("MacroSignatureCountNegative"), GraphLabel, TEXT("output"), OutputCount))
+				{
+					break;
+				}
+
+				auto ValidateMacroPins = [&](const TCHAR* Prefix, const int32 Count)
+				{
+					for (int32 PinIndex = 0; PinIndex < Count; ++PinIndex)
+					{
+						const FName ParameterName = *GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("Name")));
+						if (ParameterName.IsNone())
+						{
+							AddValidationError(TEXT("MacroSignatureParameterNameMissing"), FString::Printf(TEXT("Macro graph '%s' %s pin %d is missing a name."), *GraphName.ToString(), Prefix, PinIndex), Command.NodeId);
+							continue;
+						}
+
+						ValidateOptionalBoolAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("bExec")), TEXT("MacroSignatureExecFlagInvalid"));
+
+						bool bIsExec = false;
+						if (TryParseBoolAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("bExec")), bIsExec) && bIsExec)
+						{
+							if (!GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("PinCategory"))).TrimStartAndEnd().IsEmpty()
+								|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("ObjectPath"))).TrimStartAndEnd().IsEmpty()
+								|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("ContainerType"))).TrimStartAndEnd().IsEmpty()
+								|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("ValuePinCategory"))).TrimStartAndEnd().IsEmpty()
+								|| !GetCommandAttribute(Command, MakeSignatureAttributeKey(Prefix, PinIndex, TEXT("ValueObjectPath"))).TrimStartAndEnd().IsEmpty())
+							{
+								AddValidationError(TEXT("MacroExecPinTypeUnexpected"), FString::Printf(TEXT("Macro graph '%s' exec pin '%s' cannot declare data-type metadata."), *GraphName.ToString(), *ParameterName.ToString()), Command.NodeId);
+							}
+
+							continue;
+						}
+
+						if (!ValidateCommandSignatureTypeShape(
+							Command,
+							Prefix,
+							PinIndex,
+							FString::Printf(TEXT("Macro graph '%s' pin '%s'"), *GraphName.ToString(), *ParameterName.ToString()),
+							Diagnostics))
+						{
+							bIsValid = false;
+						}
+					}
+				};
+
+				ValidateMacroPins(TEXT("Input"), InputCount);
+				ValidateMacroPins(TEXT("Output"), OutputCount);
+				break;
+			}
+
+			case EVergilCommandType::EnsureComponent:
+				if (Command.SecondaryName.IsNone() || Command.StringValue.TrimStartAndEnd().IsEmpty())
+				{
+					AddValidationError(TEXT("InvalidEnsureComponentCommand"), TEXT("Component creation requires a target blueprint, component name, and component class path."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::AttachComponent:
+				if (Command.Name.IsNone() || Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidAttachComponentCommand"), TEXT("Component attachment requires a target blueprint, child component name, and parent component name."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::SetComponentProperty:
+				if (Command.Name.IsNone() || Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidSetComponentPropertyCommand"), TEXT("Component property commands require a target blueprint, component name, and property name."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::EnsureInterface:
+				if (Command.StringValue.TrimStartAndEnd().IsEmpty())
+				{
+					AddValidationError(TEXT("InvalidEnsureInterfaceCommand"), TEXT("Interface commands require a target blueprint and interface class path."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::SetClassDefault:
+				if (Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("InvalidSetClassDefaultCommand"), TEXT("Class default commands require a target blueprint and property name."), Command.NodeId);
+				}
+				break;
+
+			case EVergilCommandType::EnsureGraph:
+				break;
+
+			case EVergilCommandType::AddNode:
+			{
+				if (!Command.NodeId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationNodeIdMissing"), TEXT("AddNode commands require a valid node id."), Command.NodeId);
+				}
+
+				if (Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("InvalidAddNodeCommand"), TEXT("AddNode commands require a node descriptor name."), Command.NodeId);
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.Comment")
+					|| Command.Name == TEXT("Vergil.K2.Branch")
+					|| Command.Name == TEXT("Vergil.K2.Sequence")
+					|| Command.Name == TEXT("Vergil.K2.ForLoop")
+					|| Command.Name == TEXT("Vergil.K2.Delay")
+					|| Command.Name == TEXT("Vergil.K2.Self")
+					|| Command.Name == TEXT("Vergil.K2.Reroute"))
+				{
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.Event"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("InvalidEventCommand"), TEXT("Event node execution requires a parent class and event function name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.CustomEvent"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("InvalidCustomEventCommand"), TEXT("Custom event execution requires the event name in SecondaryName."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.Call"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("MissingFunctionName"), TEXT("Call node execution requires SecondaryName to contain the function name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.CallDelegate")
+					|| Command.Name == TEXT("Vergil.K2.BindDelegate")
+					|| Command.Name == TEXT("Vergil.K2.RemoveDelegate")
+					|| Command.Name == TEXT("Vergil.K2.ClearDelegate"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("MissingDelegatePropertyName"), TEXT("Delegate node execution requires SecondaryName to contain the delegate property name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.CreateDelegate"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("InvalidCreateDelegateCommand"), TEXT("CreateDelegate node execution requires SecondaryName to contain the function name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.Cast"))
+				{
+					if (Command.StringValue.TrimStartAndEnd().IsEmpty())
+					{
+						AddValidationError(TEXT("CastTargetClassMissing"), TEXT("Cast node execution requires StringValue to contain the target class path."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.Select"))
+				{
+					const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("IndexPinCategory")),
+						GetCommandAttribute(Command, TEXT("IndexObjectPath")),
+						TEXT("Select node index pin"),
+						TEXT("MissingSelectIndexCategory"),
+						TEXT("InvalidSelectIndexType"),
+						TEXT("SelectIndexObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+						GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+						TEXT("Select node value pin"),
+						TEXT("MissingSelectValueCategory"),
+						TEXT("InvalidSelectValueType"),
+						TEXT("SelectValueObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					if (IndexCategory == TEXT("bool"))
+					{
+						const FString RawOptions = GetCommandAttribute(Command, TEXT("NumOptions"));
+						if (!RawOptions.TrimStartAndEnd().IsEmpty())
+						{
+							int32 RequestedOptions = 0;
+							if (!TryParseInt(RawOptions, RequestedOptions) || RequestedOptions != 2)
+							{
+								AddValidationError(TEXT("InvalidBoolSelectOptionCount"), TEXT("Bool select nodes always require exactly 2 options."), Command.NodeId);
+							}
+						}
+					}
+					else if (IndexCategory != TEXT("enum"))
+					{
+						const FString RawOptions = GetCommandAttribute(Command, TEXT("NumOptions"));
+						int32 RequestedOptions = 0;
+						if (RawOptions.TrimStartAndEnd().IsEmpty() || !TryParseInt(RawOptions, RequestedOptions) || RequestedOptions < 2)
+						{
+							AddValidationError(TEXT("InvalidSelectOptionCount"), TEXT("Non-bool, non-enum select nodes require NumOptions >= 2."), Command.NodeId);
+						}
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.FormatText"))
+				{
+					if (GetCommandAttribute(Command, TEXT("FormatPattern")).IsEmpty())
+					{
+						AddValidationError(TEXT("MissingFormatPattern"), TEXT("Format text node execution requires attribute FormatPattern."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.SwitchInt"))
+				{
+					const TArray<FName> CasePins = GetPlannedExecOutputPinNames(Command);
+					if (CasePins.Num() == 0)
+					{
+						AddValidationError(TEXT("MissingSwitchIntCases"), TEXT("Switch int nodes require at least one planned case exec pin."), Command.NodeId);
+						break;
+					}
+
+					TArray<int32> CaseValues;
+					bool bCasesValid = true;
+					for (const FName CasePin : CasePins)
+					{
+						int32 ParsedValue = 0;
+						if (!TryParseInt(CasePin.ToString(), ParsedValue))
+						{
+							AddValidationError(TEXT("InvalidSwitchIntCaseName"), FString::Printf(TEXT("Switch int case pin '%s' is not a valid integer."), *CasePin.ToString()), Command.NodeId);
+							bCasesValid = false;
+							break;
+						}
+
+						CaseValues.Add(ParsedValue);
+					}
+
+					if (!bCasesValid)
+					{
+						break;
+					}
+
+					CaseValues.Sort();
+					const int32 StartIndex = CaseValues[0];
+					for (int32 CaseIndex = 1; CaseIndex < CaseValues.Num(); ++CaseIndex)
+					{
+						if (CaseValues[CaseIndex] != StartIndex + CaseIndex)
+						{
+							AddValidationError(TEXT("NonContiguousSwitchIntCases"), TEXT("Switch int cases must form a contiguous ascending integer range."), Command.NodeId);
+							break;
+						}
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.SwitchString"))
+				{
+					if (GetPlannedExecOutputPinNames(Command).Num() == 0)
+					{
+						AddValidationError(TEXT("MissingSwitchStringCases"), TEXT("Switch string nodes require at least one planned case exec pin."), Command.NodeId);
+					}
+					ValidateOptionalBoolAttribute(Command, TEXT("CaseSensitive"), TEXT("SwitchStringCaseSensitiveInvalid"));
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.SwitchEnum"))
+				{
+					if (GetCommandAttribute(Command, TEXT("EnumPath")).TrimStartAndEnd().IsEmpty())
+					{
+						AddValidationError(TEXT("SwitchEnumPathMissing"), TEXT("Switch enum nodes require attribute EnumPath."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.MakeStruct"))
+				{
+					if (GetCommandAttribute(Command, TEXT("StructPath")).TrimStartAndEnd().IsEmpty())
+					{
+						AddValidationError(TEXT("MakeStructTypePathMissing"), TEXT("Make struct nodes require attribute StructPath."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.BreakStruct"))
+				{
+					if (GetCommandAttribute(Command, TEXT("StructPath")).TrimStartAndEnd().IsEmpty())
+					{
+						AddValidationError(TEXT("BreakStructTypePathMissing"), TEXT("Break struct nodes require attribute StructPath."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.MakeArray"))
+				{
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+						GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+						TEXT("Make array node value pin"),
+						TEXT("MakeArrayValueCategoryMissing"),
+						TEXT("InvalidMakeArrayValueType"),
+						TEXT("MakeArrayValueObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					int32 NumInputs = 0;
+					if (!TryGetCommandCountAttribute(Command, TEXT("NumInputs"), NumInputs, Diagnostics, TEXT("InvalidMakeArrayInputCount")))
+					{
+						bIsValid = false;
+					}
+					else if (NumInputs < 1)
+					{
+						AddValidationError(TEXT("InvalidMakeArrayInputCount"), TEXT("Make array nodes require NumInputs >= 1."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.MakeSet"))
+				{
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+						GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+						TEXT("Make set node value pin"),
+						TEXT("MakeSetValueCategoryMissing"),
+						TEXT("InvalidMakeSetValueType"),
+						TEXT("MakeSetValueObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					int32 NumInputs = 0;
+					if (!TryGetCommandCountAttribute(Command, TEXT("NumInputs"), NumInputs, Diagnostics, TEXT("InvalidMakeSetInputCount")))
+					{
+						bIsValid = false;
+					}
+					else if (NumInputs < 1)
+					{
+						AddValidationError(TEXT("InvalidMakeSetInputCount"), TEXT("Make set nodes require NumInputs >= 1."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.MakeMap"))
+				{
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("KeyPinCategory")),
+						GetCommandAttribute(Command, TEXT("KeyObjectPath")),
+						TEXT("Make map node key pin"),
+						TEXT("MakeMapKeyCategoryMissing"),
+						TEXT("InvalidMakeMapKeyType"),
+						TEXT("MakeMapKeyObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					if (!ValidateCommandTypeShape(
+						GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+						GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+						TEXT("Make map node value pin"),
+						TEXT("MakeMapValueCategoryMissing"),
+						TEXT("InvalidMakeMapValueType"),
+						TEXT("MakeMapValueObjectPathMissing"),
+						Command.NodeId,
+						Diagnostics))
+					{
+						bIsValid = false;
+					}
+
+					int32 NumPairs = 0;
+					if (!TryGetCommandCountAttribute(Command, TEXT("NumPairs"), NumPairs, Diagnostics, TEXT("InvalidMakeMapPairCount")))
+					{
+						bIsValid = false;
+					}
+					else if (NumPairs < 1)
+					{
+						AddValidationError(TEXT("InvalidMakeMapPairCount"), TEXT("Make map nodes require NumPairs >= 1."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.VariableGet"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("MissingVariableName"), TEXT("Variable node execution requires SecondaryName to contain the variable name."), Command.NodeId);
+					}
+
+					if (HasPlannedExecPins(Command))
+					{
+						AddValidationError(TEXT("UnsupportedVariableGetVariant"), TEXT("Impure variable getter execution is not implemented. Provide a pure getter shape with no exec pins."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (Command.Name == TEXT("Vergil.K2.VariableSet"))
+				{
+					if (Command.SecondaryName.IsNone())
+					{
+						AddValidationError(TEXT("MissingVariableName"), TEXT("Variable node execution requires SecondaryName to contain the variable name."), Command.NodeId);
+					}
+					break;
+				}
+
+				AddValidationError(
+					TEXT("UnsupportedNodeExecution"),
+					FString::Printf(TEXT("Execution is not implemented for node descriptor '%s'."), *Command.Name.ToString()),
+					Command.NodeId);
+				break;
+			}
+
+			case EVergilCommandType::SetNodeMetadata:
+			{
+				if (!Command.NodeId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationNodeIdMissing"), TEXT("SetNodeMetadata commands require a valid node id."), Command.NodeId);
+				}
+
+				if (Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("CommandValidationMetadataKeyMissing"), TEXT("SetNodeMetadata commands require a metadata key in Name."), Command.NodeId);
+				}
+
+				const int32* const PlannedIndex = PlannedNodeIndices.Find(Command.NodeId);
+				if (PlannedIndex == nullptr || *PlannedIndex >= CommandIndex)
+				{
+					AddValidationError(TEXT("CommandValidationMetadataTargetMissing"), FString::Printf(TEXT("No executed AddNode command exists for metadata target '%s' before this command."), *Command.NodeId.ToString()), Command.NodeId);
+					break;
+				}
+
+				ValidatePlannedNodeGraph(Command, TEXT("CommandValidationMetadataGraphMismatch"), TEXT("SetNodeMetadata"));
+				break;
+			}
+
+			case EVergilCommandType::ConnectPins:
+			{
+				if (!Command.SourcePinId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationSourcePinMissing"), TEXT("ConnectPins commands require a valid source pin id."), Command.SourceNodeId);
+				}
+
+				if (!Command.TargetPinId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationTargetPinMissing"), TEXT("ConnectPins commands require a valid target pin id."), Command.TargetNodeId);
+				}
+
+				if (Command.SourcePinId.IsValid() && Command.SourcePinId == Command.TargetPinId)
+				{
+					AddValidationError(TEXT("CommandValidationSelfConnection"), TEXT("ConnectPins commands cannot connect a pin to itself."), Command.SourceNodeId);
+				}
+
+				const int32* const SourcePinIndex = PlannedPinIndices.Find(Command.SourcePinId);
+				if (Command.SourcePinId.IsValid() && (SourcePinIndex == nullptr || *SourcePinIndex >= CommandIndex))
+				{
+					AddValidationError(TEXT("CommandValidationSourcePinMissing"), FString::Printf(TEXT("Source pin '%s' is not introduced by any earlier AddNode command in this plan."), *Command.SourcePinId.ToString()), Command.SourceNodeId);
+				}
+
+				const int32* const TargetPinIndex = PlannedPinIndices.Find(Command.TargetPinId);
+				if (Command.TargetPinId.IsValid() && (TargetPinIndex == nullptr || *TargetPinIndex >= CommandIndex))
+				{
+					AddValidationError(TEXT("CommandValidationTargetPinMissing"), FString::Printf(TEXT("Target pin '%s' is not introduced by any earlier AddNode command in this plan."), *Command.TargetPinId.ToString()), Command.TargetNodeId);
+				}
+
+				const FGuid* const PlannedSourceOwner = PlannedPinOwners.Find(Command.SourcePinId);
+				if (PlannedSourceOwner != nullptr && Command.SourceNodeId.IsValid() && *PlannedSourceOwner != Command.SourceNodeId)
+				{
+					AddValidationError(TEXT("CommandValidationPinOwnerMismatch"), FString::Printf(TEXT("Source pin '%s' belongs to node '%s', not declared node '%s'."), *Command.SourcePinId.ToString(), *PlannedSourceOwner->ToString(), *Command.SourceNodeId.ToString()), Command.SourceNodeId);
+				}
+
+				const FGuid* const PlannedTargetOwner = PlannedPinOwners.Find(Command.TargetPinId);
+				if (PlannedTargetOwner != nullptr && Command.TargetNodeId.IsValid() && *PlannedTargetOwner != Command.TargetNodeId)
+				{
+					AddValidationError(TEXT("CommandValidationPinOwnerMismatch"), FString::Printf(TEXT("Target pin '%s' belongs to node '%s', not declared node '%s'."), *Command.TargetPinId.ToString(), *PlannedTargetOwner->ToString(), *Command.TargetNodeId.ToString()), Command.TargetNodeId);
+				}
+
+				const FName* const SourceGraph = PlannedPinGraphs.Find(Command.SourcePinId);
+				const FName* const TargetGraph = PlannedPinGraphs.Find(Command.TargetPinId);
+				if (SourceGraph != nullptr && TargetGraph != nullptr && *SourceGraph != *TargetGraph)
+				{
+					AddValidationError(TEXT("CommandValidationPinGraphMismatch"), FString::Printf(TEXT("Connection pins '%s' and '%s' belong to different graphs ('%s' vs '%s')."), *Command.SourcePinId.ToString(), *Command.TargetPinId.ToString(), *SourceGraph->ToString(), *TargetGraph->ToString()), Command.SourceNodeId);
+				}
+
+				if (SourceGraph != nullptr && *SourceGraph != GraphName)
+				{
+					AddValidationError(TEXT("CommandValidationConnectionGraphMismatch"), FString::Printf(TEXT("ConnectPins command targets graph '%s', but source pin '%s' belongs to graph '%s'."), *GraphName.ToString(), *Command.SourcePinId.ToString(), *SourceGraph->ToString()), Command.SourceNodeId);
+				}
+
+				if (TargetGraph != nullptr && *TargetGraph != GraphName)
+				{
+					AddValidationError(TEXT("CommandValidationConnectionGraphMismatch"), FString::Printf(TEXT("ConnectPins command targets graph '%s', but target pin '%s' belongs to graph '%s'."), *GraphName.ToString(), *Command.TargetPinId.ToString(), *TargetGraph->ToString()), Command.TargetNodeId);
+				}
+				break;
+			}
+
+			case EVergilCommandType::RemoveNode:
+				if (!Command.NodeId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationNodeIdMissing"), TEXT("RemoveNode commands require a valid node id."), Command.NodeId);
+				}
+				else
+				{
+					ValidatePlannedNodeGraph(Command, TEXT("CommandValidationRemoveNodeGraphMismatch"), TEXT("RemoveNode"));
+				}
+				break;
+
+			case EVergilCommandType::RenameMember:
+			{
+				if (Command.Name.IsNone() || Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("InvalidRenameMemberCommand"), TEXT("Member rename commands require a target blueprint, old name, and new name."), Command.NodeId);
+					break;
+				}
+
+				const FString MemberType = GetCommandAttribute(Command, TEXT("MemberType")).TrimStartAndEnd().ToLower();
+				if (MemberType != TEXT("variable")
+					&& MemberType != TEXT("dispatcher")
+					&& MemberType != TEXT("functiongraph")
+					&& MemberType != TEXT("macrograph")
+					&& MemberType != TEXT("component"))
+				{
+					AddValidationError(TEXT("UnsupportedRenameMemberType"), FString::Printf(TEXT("Unsupported rename member type '%s'."), *MemberType), Command.NodeId);
+				}
+				break;
+			}
+
+			case EVergilCommandType::MoveNode:
+				if (!Command.NodeId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationNodeIdMissing"), TEXT("MoveNode commands require a valid node id."), Command.NodeId);
+				}
+				else
+				{
+					ValidatePlannedNodeGraph(Command, TEXT("CommandValidationMoveNodeGraphMismatch"), TEXT("MoveNode"));
+				}
+				break;
+
+			case EVergilCommandType::FinalizeNode:
+			{
+				if (!Command.NodeId.IsValid())
+				{
+					AddValidationError(TEXT("CommandValidationNodeIdMissing"), TEXT("FinalizeNode commands require a valid node id."), Command.NodeId);
+					break;
+				}
+
+				const int32* const PlannedFinalizeIndex = PlannedNodeIndices.Find(Command.NodeId);
+				if (PlannedFinalizeIndex == nullptr || *PlannedFinalizeIndex >= CommandIndex)
+				{
+					AddValidationError(TEXT("CommandValidationFinalizeTargetMissing"), FString::Printf(TEXT("FinalizeNode command references node '%s' before its AddNode command executes."), *Command.NodeId.ToString()), Command.NodeId);
+					break;
+				}
+
+				ValidatePlannedNodeGraph(Command, TEXT("CommandValidationFinalizeGraphMismatch"), TEXT("FinalizeNode"));
+
+				if (Command.Name != TEXT("Vergil.K2.CreateDelegate"))
+				{
+					AddValidationError(TEXT("UnsupportedFinalizeNode"), FString::Printf(TEXT("Unsupported finalize node command '%s'."), *Command.Name.ToString()), Command.NodeId);
+					break;
+				}
+
+				if (Command.SecondaryName.IsNone())
+				{
+					AddValidationError(TEXT("FinalizeCreateDelegateMissingFunction"), TEXT("CreateDelegate finalization requires SecondaryName to contain the function name."), Command.NodeId);
+				}
+				break;
+			}
+
+			case EVergilCommandType::CompileBlueprint:
+				break;
+
+			default:
+				AddValidationError(TEXT("UnsupportedCommandType"), TEXT("Encountered an unsupported Vergil command type."), Command.NodeId);
+				break;
+			}
+		}
+
+		return bIsValid;
+	}
 }
 
 bool FVergilCommandExecutor::Execute(
@@ -3704,12 +4874,8 @@ bool FVergilCommandExecutor::Execute(
 		*OutExecutedCommandCount = 0;
 	}
 
-	if (Blueprint == nullptr)
+	if (!ValidateCommandPlan(Blueprint, Commands, Diagnostics))
 	{
-		Diagnostics.Add(FVergilDiagnostic::Make(
-			EVergilDiagnosticSeverity::Error,
-			TEXT("MissingBlueprint"),
-			TEXT("Cannot execute a command plan without a target blueprint.")));
 		return false;
 	}
 
