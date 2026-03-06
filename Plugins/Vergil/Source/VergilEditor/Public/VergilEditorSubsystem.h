@@ -21,6 +21,15 @@ public:
 	FVergilCompileResult CompileDocument(UBlueprint* Blueprint, const FVergilGraphDocument& Document, bool bAutoLayout = true, bool bGenerateComments = true, bool bApplyCommands = false) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCompileResult CompileDocumentToGraph(
+		UBlueprint* Blueprint,
+		const FVergilGraphDocument& Document,
+		FName TargetGraphName,
+		bool bAutoLayout = true,
+		bool bGenerateComments = true,
+		bool bApplyCommands = false) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
 	FVergilCompileResult ExecuteCommandPlan(UBlueprint* Blueprint, const TArray<FVergilCompilerCommand>& Commands) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")

@@ -48,6 +48,8 @@
 
 namespace
 {
+	const FName ConstructionScriptGraphName = UEdGraphSchema_K2::FN_UserConstructionScript;
+
 	struct FVergilExecutionState
 	{
 		TMap<FName, UEdGraph*> GraphsByName;
@@ -101,6 +103,13 @@ namespace
 				return EventGraph;
 			}
 		}
+		else if (GraphName == ConstructionScriptGraphName)
+		{
+			if (UEdGraph* ConstructionScriptGraph = FBlueprintEditorUtils::FindUserConstructionScript(Blueprint))
+			{
+				return ConstructionScriptGraph;
+			}
+		}
 
 		TArray<UEdGraph*> AllGraphs;
 		Blueprint->GetAllGraphs(AllGraphs);
@@ -145,7 +154,25 @@ namespace
 
 	UK2Node_FunctionEntry* FindFunctionEntryNode(UEdGraph* Graph)
 	{
-		return Graph != nullptr ? Cast<UK2Node_FunctionEntry>(FBlueprintEditorUtils::GetEntryNode(Graph)) : nullptr;
+		if (Graph == nullptr)
+		{
+			return nullptr;
+		}
+
+		if (UK2Node_FunctionEntry* const EntryNode = Cast<UK2Node_FunctionEntry>(FBlueprintEditorUtils::GetEntryNode(Graph)))
+		{
+			return EntryNode;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (UK2Node_FunctionEntry* const EntryNode = Cast<UK2Node_FunctionEntry>(Node))
+			{
+				return EntryNode;
+			}
+		}
+
+		return nullptr;
 	}
 
 	UK2Node_EditablePinBase* FindEditableGraphEntryNode(UEdGraph* Graph)
@@ -377,24 +404,32 @@ namespace
 				|| Command.Type == EVergilCommandType::EnsureFunctionGraph
 				|| Command.Type == EVergilCommandType::EnsureMacroGraph))
 		{
-			Graph = FBlueprintEditorUtils::CreateNewGraph(Blueprint, GraphName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
-			if (Graph != nullptr)
+			if (GraphName == ConstructionScriptGraphName)
 			{
-				if (Command.Type == EVergilCommandType::EnsureMacroGraph)
+				FKismetEditorUtilities::CreateUserConstructionScript(Blueprint);
+				Graph = FindGraphByName(Blueprint, GraphName);
+			}
+			else
+			{
+				Graph = FBlueprintEditorUtils::CreateNewGraph(Blueprint, GraphName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+				if (Graph != nullptr)
 				{
-					FBlueprintEditorUtils::AddMacroGraph(Blueprint, Graph, true, static_cast<UClass*>(nullptr));
-				}
-				else if (Command.Type == EVergilCommandType::EnsureFunctionGraph)
-				{
-					FBlueprintEditorUtils::AddFunctionGraph(Blueprint, Graph, true, static_cast<UFunction*>(nullptr));
-				}
-				else if (GraphName == TEXT("EventGraph"))
-				{
-					FBlueprintEditorUtils::AddUbergraphPage(Blueprint, Graph);
-				}
-				else
-				{
-					FBlueprintEditorUtils::AddFunctionGraph(Blueprint, Graph, true, static_cast<UFunction*>(nullptr));
+					if (Command.Type == EVergilCommandType::EnsureMacroGraph)
+					{
+						FBlueprintEditorUtils::AddMacroGraph(Blueprint, Graph, true, static_cast<UClass*>(nullptr));
+					}
+					else if (Command.Type == EVergilCommandType::EnsureFunctionGraph)
+					{
+						FBlueprintEditorUtils::AddFunctionGraph(Blueprint, Graph, true, static_cast<UFunction*>(nullptr));
+					}
+					else if (GraphName == TEXT("EventGraph"))
+					{
+						FBlueprintEditorUtils::AddUbergraphPage(Blueprint, Graph);
+					}
+					else
+					{
+						FBlueprintEditorUtils::AddFunctionGraph(Blueprint, Graph, true, static_cast<UFunction*>(nullptr));
+					}
 				}
 			}
 		}
@@ -2623,7 +2658,29 @@ namespace
 		}
 		else if (Command.Name == TEXT("Vergil.K2.Event"))
 		{
-			if (Blueprint == nullptr || Blueprint->ParentClass == nullptr || Command.SecondaryName.IsNone())
+			if (Command.SecondaryName == ConstructionScriptGraphName)
+			{
+				UK2Node_FunctionEntry* const EntryNode = FindFunctionEntryNode(Graph);
+				if (EntryNode == nullptr)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("ConstructionScriptEntryMissing"),
+						FString::Printf(TEXT("Construction script graph '%s' does not contain a function entry node."), *Graph->GetName()),
+						Command.NodeId));
+					return false;
+				}
+
+				EntryNode->Modify();
+				if (Command.NodeId.IsValid())
+				{
+					EntryNode->NodeGuid = Command.NodeId;
+				}
+				EntryNode->NodePosX = FMath::RoundToInt(Command.Position.X);
+				EntryNode->NodePosY = FMath::RoundToInt(Command.Position.Y);
+				NewNode = EntryNode;
+			}
+			else if (Blueprint == nullptr || Blueprint->ParentClass == nullptr || Command.SecondaryName.IsNone())
 			{
 				Diagnostics.Add(FVergilDiagnostic::Make(
 					EVergilDiagnosticSeverity::Error,
@@ -2633,22 +2690,25 @@ namespace
 				return false;
 			}
 
-			UFunction* Func = Blueprint->ParentClass->FindFunctionByName(Command.SecondaryName);
-			if (Func == nullptr)
+			else
 			{
-				Diagnostics.Add(FVergilDiagnostic::Make(
-					EVergilDiagnosticSeverity::Error,
-					TEXT("EventFunctionNotFound"),
-					FString::Printf(TEXT("Unable to resolve event '%s' on parent class '%s'."), *Command.SecondaryName.ToString(), *Blueprint->ParentClass->GetName()),
-					Command.NodeId));
-				return false;
-			}
+				UFunction* Func = Blueprint->ParentClass->FindFunctionByName(Command.SecondaryName);
+				if (Func == nullptr)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("EventFunctionNotFound"),
+						FString::Printf(TEXT("Unable to resolve event '%s' on parent class '%s'."), *Command.SecondaryName.ToString(), *Blueprint->ParentClass->GetName()),
+						Command.NodeId));
+					return false;
+				}
 
-			UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
-			EventNode->EventReference.SetExternalMember(Command.SecondaryName, Blueprint->ParentClass);
-			EventNode->bOverrideFunction = true;
-			FinalizePlacedNode(Graph, EventNode, Command.Position, Command.NodeId);
-			NewNode = EventNode;
+				UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
+				EventNode->EventReference.SetExternalMember(Command.SecondaryName, Blueprint->ParentClass);
+				EventNode->bOverrideFunction = true;
+				FinalizePlacedNode(Graph, EventNode, Command.Position, Command.NodeId);
+				NewNode = EventNode;
+			}
 		}
 		else if (Command.Name == TEXT("Vergil.K2.CustomEvent"))
 		{

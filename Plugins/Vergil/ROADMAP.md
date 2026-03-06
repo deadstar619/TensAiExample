@@ -160,7 +160,7 @@ Tickets:
 - [x] `VGR-4005` Implement component template property setting
 - [x] `VGR-4006` Implement interface application
 - [x] `VGR-4007` Implement class default writing
-- `VGR-4008` Implement construction script authoring
+- [x] `VGR-4008` Implement construction script authoring
 - `VGR-4009` Add save/reload/compile roundtrip tests
 
 Session note for `VGR-4002` (2026-03-06):
@@ -198,6 +198,12 @@ Session note for `VGR-4007` (2026-03-06):
 - Current branch now adds document-authored `ClassDefaults` to the canonical model and structural validation surface, lowers them into deterministic post-compile `SetClassDefault` commands, and applies them through `CompileDocument(..., bApplyCommands=true)` using the existing explicit executor path.
 - New `Vergil.Scaffold.ClassDefaultDefinitionModel`, `Vergil.Scaffold.ClassDefaultDefinitionPlanning`, and `Vergil.Scaffold.ClassDefaultAuthoringExecution` coverage exists alongside the pre-existing explicit command-surface class-default test.
 - `mcp__tensai__build_project` succeeded in `Development`, `Vergil.Scaffold.ClassDefault*` passed headlessly, and a clean full `Vergil.Scaffold` rerun was re-verified from the documented headless runner in this workspace.
+
+Session note for `VGR-4008` (2026-03-06):
+
+- `UVergilEditorSubsystem` now exposes `CompileDocumentToGraph(...)`, which forwards the requested target graph into `FVergilCompileRequest` while preserving the existing `CompileDocument(...)` default to `EventGraph`.
+- The command executor now resolves `UserConstructionScript` through Unreal's dedicated construction-script graph helpers, creates it through the construction-script utility path when required, and reuses the graph's existing function-entry node for authored `K2.Event.UserConstructionScript` entries instead of spawning a regular override event node.
+- New `Vergil.Scaffold.ConstructionScriptAuthoringExecution` coverage exists alongside the earlier model/planning tests, and `mcp__tensai__build_project` plus the documented headless scaffold runner re-verified cleanly in this workspace.
 
 Acceptance criteria:
 
@@ -322,12 +328,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-4008`
-2. `VGR-1009`
-3. `VGR-2002`
-4. `VGR-1001`
-5. `VGR-3001`
-6. `VGR-4009`
+1. `VGR-1009`
+2. `VGR-2002`
+3. `VGR-1001`
+4. `VGR-3001`
+5. `VGR-4009`
+6. `VGR-1010`
+6. `VGR-1010`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

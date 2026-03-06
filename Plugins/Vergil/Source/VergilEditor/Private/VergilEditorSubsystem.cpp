@@ -40,11 +40,29 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocument(
 	const bool bGenerateComments,
 	const bool bApplyCommands) const
 {
+	return CompileDocumentToGraph(
+		Blueprint,
+		Document,
+		TEXT("EventGraph"),
+		bAutoLayout,
+		bGenerateComments,
+		bApplyCommands);
+}
+
+FVergilCompileResult UVergilEditorSubsystem::CompileDocumentToGraph(
+	UBlueprint* Blueprint,
+	const FVergilGraphDocument& Document,
+	const FName TargetGraphName,
+	const bool bAutoLayout,
+	const bool bGenerateComments,
+	const bool bApplyCommands) const
+{
 	FVergilCompileRequest Request;
 	Request.TargetBlueprint = Blueprint;
 	Request.Document = Document;
 	Request.bAutoLayout = bAutoLayout;
 	Request.bGenerateComments = bGenerateComments;
+	Request.TargetGraphName = TargetGraphName;
 
 	const FVergilBlueprintCompilerService CompilerService;
 	FVergilCompileResult Result = CompilerService.Compile(Request);

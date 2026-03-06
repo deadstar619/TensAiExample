@@ -13,7 +13,7 @@ This document describes the current scaffold contracts implemented in code today
 - `Components` now lower into Blueprint component hierarchy authoring for component creation, parent attachment, attach sockets, template properties, and relative transforms.
 - `Interfaces` now lower into Blueprint interface application for authored interface class paths.
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
-- Asset-level authoring beyond variables, dispatchers, function signatures, macro signatures, component hierarchy data, component template properties, class defaults, implemented interfaces, and construction-script planning is not implemented yet through document compile/apply. Construction script definitions now lower into command plans only when `TargetGraphName` is `UserConstructionScript`; end-to-end construction-script authoring remains future work.
+- Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 
 ## Structural validation rules
@@ -114,7 +114,8 @@ This document describes the current scaffold contracts implemented in code today
 - Construction script authoring is described from `ConstructionScriptNodes` and `ConstructionScriptEdges` on the document.
 - `ConstructionScriptNodes` and `ConstructionScriptEdges` use the same node and edge shapes as the primary graph surface.
 - When `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`, the planner lowers `ConstructionScriptNodes` and `ConstructionScriptEdges` through the existing generic graph-planning path.
-- End-to-end construction-script apply/authoring remains future work under `VGR-4008`.
+- The executor resolves the dedicated construction-script graph, creates it through Unreal's construction-script utility path when needed, and reuses the existing function-entry node for the authored `K2.Event.UserConstructionScript` entry.
+- `UVergilEditorSubsystem::CompileDocumentToGraph(..., UserConstructionScript, ..., bApplyCommands=true)` is the supported editor-subsystem path for end-to-end construction-script authoring.
 
 ## Explicit command plan contracts
 
@@ -188,4 +189,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, component-hierarchy, component-template-property, class-default, and implemented-interface definitions. Function bodies and macro bodies remain separate future work, and construction script definitions still do not lower from the document compiler into compile/apply execution.
+- One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, component-hierarchy, component-template-property, class-default, and implemented-interface definitions. Function bodies and macro bodies remain separate future work. Construction-script definitions participate in compile/apply when the target graph is `UserConstructionScript`.

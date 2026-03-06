@@ -128,6 +128,10 @@ namespace
 		{
 			return FBlueprintEditorUtils::FindEventGraph(Blueprint);
 		}
+		else if (GraphName == UEdGraphSchema_K2::FN_UserConstructionScript)
+		{
+			return FBlueprintEditorUtils::FindUserConstructionScript(Blueprint);
+		}
 
 		TArray<UEdGraph*> AllGraphs;
 		Blueprint->GetAllGraphs(AllGraphs);
@@ -882,6 +886,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilClassDefaultAuthoringExecutionTest,
 	"Vergil.Scaffold.ClassDefaultAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilConstructionScriptAuthoringExecutionTest,
+	"Vergil.Scaffold.ConstructionScriptAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -1836,6 +1845,100 @@ bool FVergilConstructionScriptDefinitionPlanningTest::RunTest(const FString& Par
 	TestEqual(TEXT("Construction event should preserve the authored suffix."), Result.Commands[1].SecondaryName, FName(TEXT("UserConstructionScript")));
 	TestEqual(TEXT("Print node should target the construction-script graph."), Result.Commands[2].GraphName, FName(TEXT("UserConstructionScript")));
 	TestEqual(TEXT("Connection planning should target the construction-script graph."), Result.Commands[3].GraphName, FName(TEXT("UserConstructionScript")));
+
+	return true;
+}
+
+bool FVergilConstructionScriptAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphNode ConstructionEventNode;
+	ConstructionEventNode.Id = FGuid::NewGuid();
+	ConstructionEventNode.Kind = EVergilNodeKind::Event;
+	ConstructionEventNode.Descriptor = TEXT("K2.Event.UserConstructionScript");
+	ConstructionEventNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin ConstructionThenPin;
+	ConstructionThenPin.Id = FGuid::NewGuid();
+	ConstructionThenPin.Name = TEXT("Then");
+	ConstructionThenPin.Direction = EVergilPinDirection::Output;
+	ConstructionThenPin.bIsExec = true;
+	ConstructionEventNode.Pins.Add(ConstructionThenPin);
+
+	FVergilGraphNode SequenceNode;
+	SequenceNode.Id = FGuid::NewGuid();
+	SequenceNode.Kind = EVergilNodeKind::Custom;
+	SequenceNode.Descriptor = TEXT("K2.Sequence");
+	SequenceNode.Position = FVector2D(320.0f, 0.0f);
+
+	FVergilGraphPin SequenceExecPin;
+	SequenceExecPin.Id = FGuid::NewGuid();
+	SequenceExecPin.Name = TEXT("Execute");
+	SequenceExecPin.Direction = EVergilPinDirection::Input;
+	SequenceExecPin.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceExecPin);
+
+	FVergilGraphEdge ConstructionEdge;
+	ConstructionEdge.Id = FGuid::NewGuid();
+	ConstructionEdge.SourceNodeId = ConstructionEventNode.Id;
+	ConstructionEdge.SourcePinId = ConstructionThenPin.Id;
+	ConstructionEdge.TargetNodeId = SequenceNode.Id;
+	ConstructionEdge.TargetPinId = SequenceExecPin.Id;
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilConstructionScriptAuthoring");
+	Document.ConstructionScriptNodes = { ConstructionEventNode, SequenceNode };
+	Document.ConstructionScriptEdges.Add(ConstructionEdge);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocumentToGraph(
+		Blueprint,
+		Document,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		true);
+
+	TestTrue(TEXT("Construction script authoring should succeed."), Result.bSucceeded);
+	TestTrue(TEXT("Construction script authoring should apply commands."), Result.bApplied);
+	TestTrue(TEXT("Construction script authoring should execute commands."), Result.ExecutedCommandCount > 0);
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	UEdGraph* const ConstructionScriptGraph = FindBlueprintGraphByName(Blueprint, UEdGraphSchema_K2::FN_UserConstructionScript);
+	TestNotNull(TEXT("Construction script graph should exist after authoring."), ConstructionScriptGraph);
+	if (ConstructionScriptGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_FunctionEntry* const ConstructionEntryNode = FindGraphNodeByGuid<UK2Node_FunctionEntry>(ConstructionScriptGraph, ConstructionEventNode.Id);
+	UK2Node_ExecutionSequence* const SequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(ConstructionScriptGraph, SequenceNode.Id);
+
+	TestNotNull(TEXT("Construction script should reuse the graph entry node."), ConstructionEntryNode);
+	TestNotNull(TEXT("Construction script should create the Sequence node."), SequenceGraphNode);
+	if (ConstructionEntryNode == nullptr || SequenceGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const ConstructionThenGraphPin = ConstructionEntryNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SequenceExecGraphPin = SequenceGraphNode->GetExecPin();
+	TestTrue(TEXT("Construction entry should execute the Sequence node."), ConstructionThenGraphPin != nullptr && ConstructionThenGraphPin->LinkedTo.Contains(SequenceExecGraphPin));
 
 	return true;
 }
