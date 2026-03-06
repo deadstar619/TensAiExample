@@ -15,6 +15,7 @@ This document describes the current scaffold contracts implemented in code today
 - `Interfaces` now lower into Blueprint interface application for authored interface class paths.
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
+- The current supported whole-asset authoring surface is now covered by a persisted save/reload/native-compile roundtrip automation test on a real `/Game/Tests/...` Blueprint package, spanning Blueprint metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
 - The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and then command planning.
 - `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` now gates the dedicated layout post-pass boundary. The layout pass currently emits no commands until the future layout API lands.
@@ -36,6 +37,7 @@ This document describes the current scaffold contracts implemented in code today
 - `FVergilCompileResult.Statistics.CompletedPassNames`, `LastCompletedPassName`, and `FailedPassName` describe compiler-pipeline progress. Successful compiles leave `FailedPassName` unset. Direct command execution does not populate compiler-pass progress because no compiler pipeline ran.
 - `FVergilCompileResult.PassRecords` are emitted in attempted-pass order for compiler-produced results only. Each record captures the pass name, whether that pass returned success, the cumulative diagnostic/error counts after the pass, and the planned-command count visible at that point in the pipeline.
 - Dry-run compile and compile+apply share the same document-planning helper path in `UVergilEditorSubsystem`. For the same request flags and an equivalent target Blueprint context, they must return identical normalized command plans.
+- Persisted asset roundtrip coverage now also verifies that the current supported whole-asset authoring surface survives package save/reload and that dry-run planning against the reloaded Blueprint preserves the normalized command-plan fingerprints before a native Blueprint compile.
 
 ## Structural validation rules
 

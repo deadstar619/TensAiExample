@@ -257,7 +257,7 @@ Tickets:
 - [x] `VGR-4006` Implement interface application
 - [x] `VGR-4007` Implement class default writing
 - [x] `VGR-4008` Implement construction script authoring
-- `VGR-4009` Add save/reload/compile roundtrip tests
+- [x] `VGR-4009` Add save/reload/compile roundtrip tests
 
 Session note for `VGR-4002` (2026-03-06):
 
@@ -300,6 +300,12 @@ Session note for `VGR-4008` (2026-03-06):
 - `UVergilEditorSubsystem` now exposes `CompileDocumentToGraph(...)`, which forwards the requested target graph into `FVergilCompileRequest` while preserving the existing `CompileDocument(...)` default to `EventGraph`.
 - The command executor now resolves `UserConstructionScript` through Unreal's dedicated construction-script graph helpers, creates it through the construction-script utility path when required, and reuses the graph's existing function-entry node for authored `K2.Event.UserConstructionScript` entries instead of spawning a regular override event node.
 - New `Vergil.Scaffold.ConstructionScriptAuthoringExecution` coverage exists alongside the earlier model/planning tests, and `mcp__tensai__build_project` plus the documented headless scaffold runner re-verified cleanly in this workspace.
+
+Session note for `VGR-4009` (2026-03-06):
+
+- `Vergil.Scaffold.SaveReloadCompileRoundtrip` now creates a real `/Game/Tests/...` Blueprint asset, authors the current milestone-4 whole-asset surface into it, saves the package to disk, reloads it through Unreal's package reload path, and then verifies the authored state survives that reload.
+- The roundtrip test currently covers Blueprint metadata, variable defaults/metadata, function and macro signatures, component hierarchy plus template properties, implemented interfaces, class defaults, the primary event graph, and the construction script on one persisted Blueprint.
+- After reload, the test re-runs dry-run planning against the persisted Blueprint to verify stable normalized command-plan fingerprints and then native-compiles the reloaded asset cleanly before deleting the temporary content package.
 
 Acceptance criteria:
 
@@ -424,13 +430,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-4009`
-2. `VGR-8005`
-3. `VGR-9007`
-4. `VGR-5007`
-5. `VGR-7001`
+1. `VGR-8005`
+2. `VGR-9007`
+3. `VGR-5007`
+4. `VGR-7001`
+5. `VGR-5001`
 
-This keeps pressure on the remaining asset authoring, release/documentation work, and higher-level tooling now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, explicit finalize handling, optional comment/layout post-pass boundaries, structured compile/apply result metadata, and an explicit dry-run/apply planning-parity contract.
+This keeps pressure on release/documentation work, higher-level tooling, and remaining K2 breadth now that whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

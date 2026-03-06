@@ -1,6 +1,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Editor.h"
+#include "HAL/FileManager.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EdGraphNode_Comment.h"
@@ -41,7 +42,11 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "PackageTools.h"
+#include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
 #include "VergilCommandTypes.h"
 #include "VergilBlueprintCompilerService.h"
@@ -131,6 +136,132 @@ namespace
 			UBlueprintGeneratedClass::StaticClass(),
 			TEXT("VergilAutomation"));
 	}
+
+	struct FScopedPersistentTestBlueprint final
+	{
+		explicit FScopedPersistentTestBlueprint(const FString& BaseAssetName)
+		{
+			const FString UniqueSuffix = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+			AssetName = FString::Printf(TEXT("%s_%s"), *BaseAssetName, *UniqueSuffix);
+			PackagePath = FString::Printf(TEXT("/Game/Tests/%s"), *AssetName);
+			ObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
+			verify(FPackageName::TryConvertLongPackageNameToFilename(
+				PackagePath,
+				PackageFilename,
+				FPackageName::GetAssetPackageExtension()));
+		}
+
+		~FScopedPersistentTestBlueprint()
+		{
+			Cleanup();
+		}
+
+		UBlueprint* CreateBlueprintAsset() const
+		{
+			UPackage* const Package = CreatePackage(*PackagePath);
+			if (Package == nullptr)
+			{
+				return nullptr;
+			}
+
+			return FKismetEditorUtilities::CreateBlueprint(
+				AActor::StaticClass(),
+				Package,
+				FName(*AssetName),
+				BPTYPE_Normal,
+				UBlueprint::StaticClass(),
+				UBlueprintGeneratedClass::StaticClass(),
+				TEXT("VergilAutomation"));
+		}
+
+		bool Save(UBlueprint* Blueprint, FString* OutErrorMessage = nullptr) const
+		{
+			if (Blueprint == nullptr)
+			{
+				if (OutErrorMessage != nullptr)
+				{
+					*OutErrorMessage = TEXT("Blueprint was null.");
+				}
+				return false;
+			}
+
+			UPackage* const Package = Blueprint->GetOutermost();
+			if (Package == nullptr)
+			{
+				if (OutErrorMessage != nullptr)
+				{
+					*OutErrorMessage = TEXT("Blueprint package was null.");
+				}
+				return false;
+			}
+
+			Package->MarkPackageDirty();
+
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+			if (!UPackage::SavePackage(Package, Blueprint, *PackageFilename, SaveArgs))
+			{
+				if (OutErrorMessage != nullptr)
+				{
+					*OutErrorMessage = FString::Printf(TEXT("Failed to save package '%s'."), *PackageFilename);
+				}
+				return false;
+			}
+
+			return true;
+		}
+
+		UBlueprint* Reload(FString* OutErrorMessage = nullptr) const
+		{
+			if (UPackage* const ExistingPackage = FindPackage(nullptr, *PackagePath))
+			{
+				const TArray<UPackage*> PackagesToReload = { ExistingPackage };
+				FText ReloadError;
+				if (!UPackageTools::ReloadPackages(
+					PackagesToReload,
+					ReloadError,
+					UPackageTools::EReloadPackagesInteractionMode::AssumePositive))
+				{
+					if (OutErrorMessage != nullptr)
+					{
+						*OutErrorMessage = ReloadError.ToString();
+					}
+					return nullptr;
+				}
+			}
+
+			UBlueprint* const ReloadedBlueprint = LoadObject<UBlueprint>(nullptr, *ObjectPath);
+			if (ReloadedBlueprint == nullptr && OutErrorMessage != nullptr)
+			{
+				*OutErrorMessage = FString::Printf(TEXT("Failed to load blueprint '%s'."), *ObjectPath);
+			}
+
+			return ReloadedBlueprint;
+		}
+
+		void Cleanup() const
+		{
+			if (UPackage* const ExistingPackage = FindPackage(nullptr, *PackagePath))
+			{
+				UPackageTools::FUnloadPackageParams UnloadParams({ ExistingPackage });
+				UnloadParams.bUnloadDirtyPackages = true;
+				UPackageTools::UnloadPackages(UnloadParams);
+			}
+
+			CollectGarbage(RF_NoFlags);
+
+			IFileManager& FileManager = IFileManager::Get();
+			FileManager.Delete(*PackageFilename, false, true, true);
+			FileManager.Delete(*FPaths::ChangeExtension(PackageFilename, TEXT("uexp")), false, true, true);
+			FileManager.Delete(*FPaths::ChangeExtension(PackageFilename, TEXT("ubulk")), false, true, true);
+			FileManager.Delete(*FPaths::ChangeExtension(PackageFilename, TEXT("uptnl")), false, true, true);
+		}
+
+		FString AssetName;
+		FString PackagePath;
+		FString ObjectPath;
+		FString PackageFilename;
+	};
 
 	FName MakeCastResultPinName(UClass* TargetClass)
 	{
@@ -2432,6 +2563,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ConstructionScriptAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSaveReloadCompileRoundtripTest,
+	"Vergil.Scaffold.SaveReloadCompileRoundtrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -3948,6 +4084,464 @@ bool FVergilConstructionScriptAuthoringExecutionTest::RunTest(const FString& Par
 	TestTrue(TEXT("Construction entry should execute the Sequence node."), ConstructionThenGraphPin != nullptr && ConstructionThenGraphPin->LinkedTo.Contains(SequenceExecGraphPin));
 
 	return true;
+}
+
+bool FVergilSaveReloadCompileRoundtripTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FScopedPersistentTestBlueprint PersistentBlueprint(TEXT("BP_VergilRoundtrip"));
+	UBlueprint* const Blueprint = PersistentBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Persistent test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FName RoundtripVariableName(TEXT("RoundtripFlag"));
+	const FName FunctionName(TEXT("ComputeStatus"));
+	const FName MacroName(TEXT("RouteTarget"));
+	const FName RootComponentName(TEXT("Root"));
+	const FName VisualComponentName(TEXT("VisualMesh"));
+
+	FVergilVariableDefinition RoundtripVariable;
+	RoundtripVariable.Name = RoundtripVariableName;
+	RoundtripVariable.Type.PinCategory = TEXT("bool");
+	RoundtripVariable.DefaultValue = TEXT("true");
+	RoundtripVariable.Category = TEXT("State");
+	RoundtripVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Persists across save and reload."));
+
+	FVergilFunctionDefinition Function;
+	Function.Name = FunctionName;
+	Function.bPure = true;
+	Function.AccessSpecifier = EVergilFunctionAccessSpecifier::Protected;
+
+	FVergilFunctionParameterDefinition ThresholdInput;
+	ThresholdInput.Name = TEXT("Threshold");
+	ThresholdInput.Type.PinCategory = TEXT("float");
+	Function.Inputs.Add(ThresholdInput);
+
+	FVergilFunctionParameterDefinition ResultOutput;
+	ResultOutput.Name = TEXT("Result");
+	ResultOutput.Type.PinCategory = TEXT("bool");
+	Function.Outputs.Add(ResultOutput);
+
+	FVergilMacroDefinition Macro;
+	Macro.Name = MacroName;
+
+	FVergilMacroParameterDefinition ExecuteInput;
+	ExecuteInput.Name = TEXT("Execute");
+	ExecuteInput.bIsExec = true;
+	Macro.Inputs.Add(ExecuteInput);
+
+	FVergilMacroParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	Macro.Inputs.Add(TargetInput);
+
+	FVergilMacroParameterDefinition ThenOutput;
+	ThenOutput.Name = TEXT("Then");
+	ThenOutput.bIsExec = true;
+	Macro.Outputs.Add(ThenOutput);
+
+	FVergilMacroParameterDefinition CountOutput;
+	CountOutput.Name = TEXT("Count");
+	CountOutput.Type.PinCategory = TEXT("int");
+	Macro.Outputs.Add(CountOutput);
+
+	FVergilComponentDefinition RootComponent;
+	RootComponent.Name = RootComponentName;
+	RootComponent.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	RootComponent.RelativeTransform.bHasRelativeLocation = true;
+	RootComponent.RelativeTransform.RelativeLocation = FVector(25.0f, 10.0f, 5.0f);
+
+	FVergilComponentDefinition VisualComponent;
+	VisualComponent.Name = VisualComponentName;
+	VisualComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
+	VisualComponent.ParentComponentName = RootComponentName;
+	VisualComponent.AttachSocketName = TEXT("GripSocket");
+	VisualComponent.TemplateProperties.Add(TEXT("HiddenInGame"), TEXT("True"));
+	VisualComponent.TemplateProperties.Add(TEXT("CastShadow"), TEXT("False"));
+
+	FVergilInterfaceDefinition Interface;
+	Interface.InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetClassPathName().ToString();
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = TEXT("Then");
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode EventSequenceNode;
+	EventSequenceNode.Id = FGuid::NewGuid();
+	EventSequenceNode.Kind = EVergilNodeKind::Custom;
+	EventSequenceNode.Descriptor = TEXT("K2.Sequence");
+	EventSequenceNode.Position = FVector2D(320.0f, 0.0f);
+
+	FVergilGraphPin EventSequenceExecPin;
+	EventSequenceExecPin.Id = FGuid::NewGuid();
+	EventSequenceExecPin.Name = TEXT("Execute");
+	EventSequenceExecPin.Direction = EVergilPinDirection::Input;
+	EventSequenceExecPin.bIsExec = true;
+	EventSequenceNode.Pins.Add(EventSequenceExecPin);
+
+	FVergilGraphEdge EventGraphEdge;
+	EventGraphEdge.Id = FGuid::NewGuid();
+	EventGraphEdge.SourceNodeId = BeginPlayNode.Id;
+	EventGraphEdge.SourcePinId = BeginPlayThenPin.Id;
+	EventGraphEdge.TargetNodeId = EventSequenceNode.Id;
+	EventGraphEdge.TargetPinId = EventSequenceExecPin.Id;
+
+	FVergilGraphDocument EventDocument;
+	EventDocument.BlueprintPath = PersistentBlueprint.PackagePath;
+	EventDocument.Metadata.Add(TEXT("BlueprintDisplayName"), TEXT("Vergil Roundtrip Asset"));
+	EventDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Persisted save/reload/compile coverage."));
+	EventDocument.Metadata.Add(TEXT("BlueprintCategory"), TEXT("Vergil|Roundtrip"));
+	EventDocument.Metadata.Add(TEXT("HideCategories"), TEXT("Rendering, Actor"));
+	EventDocument.Variables.Add(RoundtripVariable);
+	EventDocument.Functions.Add(Function);
+	EventDocument.Macros.Add(Macro);
+	EventDocument.Components = { RootComponent, VisualComponent };
+	EventDocument.Interfaces.Add(Interface);
+	EventDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+	EventDocument.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("4.5"));
+	EventDocument.Nodes = { BeginPlayNode, EventSequenceNode };
+	EventDocument.Edges.Add(EventGraphEdge);
+
+	FVergilGraphNode ConstructionEventNode;
+	ConstructionEventNode.Id = FGuid::NewGuid();
+	ConstructionEventNode.Kind = EVergilNodeKind::Event;
+	ConstructionEventNode.Descriptor = TEXT("K2.Event.UserConstructionScript");
+	ConstructionEventNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin ConstructionThenPin;
+	ConstructionThenPin.Id = FGuid::NewGuid();
+	ConstructionThenPin.Name = TEXT("Then");
+	ConstructionThenPin.Direction = EVergilPinDirection::Output;
+	ConstructionThenPin.bIsExec = true;
+	ConstructionEventNode.Pins.Add(ConstructionThenPin);
+
+	FVergilGraphNode ConstructionSequenceNode;
+	ConstructionSequenceNode.Id = FGuid::NewGuid();
+	ConstructionSequenceNode.Kind = EVergilNodeKind::Custom;
+	ConstructionSequenceNode.Descriptor = TEXT("K2.Sequence");
+	ConstructionSequenceNode.Position = FVector2D(320.0f, 0.0f);
+
+	FVergilGraphPin ConstructionSequenceExecPin;
+	ConstructionSequenceExecPin.Id = FGuid::NewGuid();
+	ConstructionSequenceExecPin.Name = TEXT("Execute");
+	ConstructionSequenceExecPin.Direction = EVergilPinDirection::Input;
+	ConstructionSequenceExecPin.bIsExec = true;
+	ConstructionSequenceNode.Pins.Add(ConstructionSequenceExecPin);
+
+	FVergilGraphEdge ConstructionEdge;
+	ConstructionEdge.Id = FGuid::NewGuid();
+	ConstructionEdge.SourceNodeId = ConstructionEventNode.Id;
+	ConstructionEdge.SourcePinId = ConstructionThenPin.Id;
+	ConstructionEdge.TargetNodeId = ConstructionSequenceNode.Id;
+	ConstructionEdge.TargetPinId = ConstructionSequenceExecPin.Id;
+
+	FVergilGraphDocument ConstructionDocument;
+	ConstructionDocument.BlueprintPath = PersistentBlueprint.PackagePath;
+	ConstructionDocument.ConstructionScriptNodes = { ConstructionEventNode, ConstructionSequenceNode };
+	ConstructionDocument.ConstructionScriptEdges.Add(ConstructionEdge);
+
+	auto MakeMessage = [](const TCHAR* Phase, const TCHAR* Message) -> FString
+	{
+		return FString::Printf(TEXT("%s: %s"), Phase, Message);
+	};
+
+	auto VerifyBlueprintState = [&](UBlueprint* CandidateBlueprint, const TCHAR* Phase) -> bool
+	{
+		TestNotNull(*MakeMessage(Phase, TEXT("Blueprint should exist.")), CandidateBlueprint);
+		if (CandidateBlueprint == nullptr)
+		{
+			return false;
+		}
+
+		TestEqual(*MakeMessage(Phase, TEXT("Blueprint display name should persist.")),
+			CandidateBlueprint->BlueprintDisplayName,
+			FString(TEXT("Vergil Roundtrip Asset")));
+		TestEqual(*MakeMessage(Phase, TEXT("Blueprint description should persist.")),
+			CandidateBlueprint->BlueprintDescription,
+			FString(TEXT("Persisted save/reload/compile coverage.")));
+		TestEqual(*MakeMessage(Phase, TEXT("Blueprint category should persist.")),
+			CandidateBlueprint->BlueprintCategory,
+			FString(TEXT("Vergil|Roundtrip")));
+		TestEqual(*MakeMessage(Phase, TEXT("HideCategories count should persist.")),
+			CandidateBlueprint->HideCategories.Num(),
+			2);
+		if (CandidateBlueprint->HideCategories.Num() == 2)
+		{
+			TestEqual(*MakeMessage(Phase, TEXT("First hide category should remain sorted.")),
+				CandidateBlueprint->HideCategories[0],
+				FString(TEXT("Actor")));
+			TestEqual(*MakeMessage(Phase, TEXT("Second hide category should remain sorted.")),
+				CandidateBlueprint->HideCategories[1],
+				FString(TEXT("Rendering")));
+		}
+
+		const FBPVariableDescription* const VariableDescription = FindBlueprintVariableDescription(CandidateBlueprint, RoundtripVariableName);
+		TestNotNull(*MakeMessage(Phase, TEXT("Roundtrip variable should exist.")), VariableDescription);
+		if (VariableDescription == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(*MakeMessage(Phase, TEXT("Roundtrip variable should remain a bool.")),
+			VariableDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+		TestEqual(*MakeMessage(Phase, TEXT("Roundtrip variable category should persist.")),
+			FBlueprintEditorUtils::GetBlueprintVariableCategory(CandidateBlueprint, RoundtripVariableName, nullptr).ToString(),
+			FString(TEXT("State")));
+
+		FString VariableTooltip;
+		TestTrue(*MakeMessage(Phase, TEXT("Roundtrip variable tooltip should exist.")),
+			FBlueprintEditorUtils::GetBlueprintVariableMetaData(CandidateBlueprint, RoundtripVariableName, nullptr, TEXT("Tooltip"), VariableTooltip));
+		TestEqual(*MakeMessage(Phase, TEXT("Roundtrip variable tooltip should persist.")),
+			VariableTooltip,
+			FString(TEXT("Persists across save and reload.")));
+
+		UEdGraph* const FunctionGraph = FindBlueprintGraphByName(CandidateBlueprint, FunctionName);
+		UK2Node_FunctionEntry* const FunctionEntry = FindFunctionEntryNode(FunctionGraph);
+		UK2Node_FunctionResult* const FunctionResult = FindFunctionResultNode(FunctionGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("Function graph should persist.")), FunctionGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("Function entry should persist.")), FunctionEntry);
+		TestNotNull(*MakeMessage(Phase, TEXT("Function result should persist.")), FunctionResult);
+		if (FunctionGraph == nullptr || FunctionEntry == nullptr || FunctionResult == nullptr)
+		{
+			return false;
+		}
+
+		UEdGraphPin* const ThresholdPin = FunctionEntry->FindPin(TEXT("Threshold"));
+		UEdGraphPin* const ResultPin = FunctionResult->FindPin(TEXT("Result"));
+		TestNotNull(*MakeMessage(Phase, TEXT("Function Threshold input should persist.")), ThresholdPin);
+		TestNotNull(*MakeMessage(Phase, TEXT("Function Result output should persist.")), ResultPin);
+		TestTrue(*MakeMessage(Phase, TEXT("Function purity should persist.")), FunctionEntry->HasAllExtraFlags(FUNC_BlueprintPure));
+		TestTrue(*MakeMessage(Phase, TEXT("Function protected access should persist.")), FunctionEntry->HasAllExtraFlags(FUNC_Protected));
+
+		UEdGraph* const MacroGraph = FindBlueprintGraphByName(CandidateBlueprint, MacroName);
+		UK2Node_EditablePinBase* const MacroEntry = FindEditableGraphEntryNode(MacroGraph);
+		UK2Node_EditablePinBase* const MacroExit = FindEditableGraphResultNode(MacroGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro graph should persist.")), MacroGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro entry tunnel should persist.")), MacroEntry);
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro exit tunnel should persist.")), MacroExit);
+		if (MacroGraph == nullptr || MacroEntry == nullptr || MacroExit == nullptr)
+		{
+			return false;
+		}
+
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro Execute pin should persist.")), MacroEntry->FindPin(TEXT("Execute")));
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro TargetActor pin should persist.")), MacroEntry->FindPin(TEXT("TargetActor")));
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro Then pin should persist.")), MacroExit->FindPin(TEXT("Then")));
+		TestNotNull(*MakeMessage(Phase, TEXT("Macro Count pin should persist.")), MacroExit->FindPin(TEXT("Count")));
+
+		USCS_Node* const RootNode = FindBlueprintComponentNode(CandidateBlueprint, RootComponentName);
+		USCS_Node* const VisualNode = FindBlueprintComponentNode(CandidateBlueprint, VisualComponentName);
+		TestNotNull(*MakeMessage(Phase, TEXT("Root component should persist.")), RootNode);
+		TestNotNull(*MakeMessage(Phase, TEXT("Visual component should persist.")), VisualNode);
+		if (RootNode == nullptr || VisualNode == nullptr || CandidateBlueprint->SimpleConstructionScript == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(*MakeMessage(Phase, TEXT("Visual component should remain attached to the root component.")),
+			CandidateBlueprint->SimpleConstructionScript->FindParentNode(VisualNode) == RootNode);
+		TestEqual(*MakeMessage(Phase, TEXT("Visual attach socket should persist.")),
+			VisualNode->AttachToName,
+			FName(TEXT("GripSocket")));
+
+		USceneComponent* const RootTemplate = Cast<USceneComponent>(RootNode->ComponentTemplate);
+		UStaticMeshComponent* const VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
+		TestNotNull(*MakeMessage(Phase, TEXT("Root component template should be a scene component.")), RootTemplate);
+		TestNotNull(*MakeMessage(Phase, TEXT("Visual component template should be a static mesh component.")), VisualTemplate);
+		TestTrue(*MakeMessage(Phase, TEXT("Root component location should persist.")),
+			RootTemplate != nullptr
+				&& RootTemplate->GetRelativeLocation().Equals(FVector(25.0f, 10.0f, 5.0f), KINDA_SMALL_NUMBER));
+
+		const FBoolProperty* const HiddenInGameProperty = VisualTemplate != nullptr
+			? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("bHiddenInGame"))
+			: nullptr;
+		const FBoolProperty* const CastShadowProperty = VisualTemplate != nullptr
+			? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("CastShadow"))
+			: nullptr;
+		TestNotNull(*MakeMessage(Phase, TEXT("Visual HiddenInGame property should exist.")), HiddenInGameProperty);
+		TestNotNull(*MakeMessage(Phase, TEXT("Visual CastShadow property should exist.")), CastShadowProperty);
+		TestTrue(*MakeMessage(Phase, TEXT("Visual HiddenInGame value should persist.")),
+			HiddenInGameProperty != nullptr && VisualTemplate != nullptr && HiddenInGameProperty->GetPropertyValue_InContainer(VisualTemplate));
+		TestTrue(*MakeMessage(Phase, TEXT("Visual CastShadow value should persist.")),
+			CastShadowProperty != nullptr && VisualTemplate != nullptr && !CastShadowProperty->GetPropertyValue_InContainer(VisualTemplate));
+
+		TArray<UClass*> ImplementedInterfaces;
+		FBlueprintEditorUtils::FindImplementedInterfaces(CandidateBlueprint, true, ImplementedInterfaces);
+		TestTrue(*MakeMessage(Phase, TEXT("Implemented interface should persist.")),
+			ImplementedInterfaces.Contains(UVergilAutomationTestInterface::StaticClass()));
+
+		AActor* const BlueprintCDO = CandidateBlueprint->GeneratedClass != nullptr
+			? Cast<AActor>(CandidateBlueprint->GeneratedClass->GetDefaultObject())
+			: nullptr;
+		TestNotNull(*MakeMessage(Phase, TEXT("Generated class should exist.")), CandidateBlueprint->GeneratedClass.Get());
+		TestNotNull(*MakeMessage(Phase, TEXT("Generated class default object should exist.")), BlueprintCDO);
+		if (CandidateBlueprint->GeneratedClass == nullptr || BlueprintCDO == nullptr)
+		{
+			return false;
+		}
+
+		const FBoolProperty* const RoundtripFlagProperty = FindFProperty<FBoolProperty>(CandidateBlueprint->GeneratedClass, RoundtripVariableName);
+		TestNotNull(*MakeMessage(Phase, TEXT("Generated class should expose the roundtrip variable.")), RoundtripFlagProperty);
+		TestTrue(*MakeMessage(Phase, TEXT("Roundtrip variable default should persist on the CDO.")),
+			RoundtripFlagProperty != nullptr && RoundtripFlagProperty->GetPropertyValue_InContainer(BlueprintCDO));
+		TestTrue(*MakeMessage(Phase, TEXT("Replicates class default should persist.")), BlueprintCDO->GetIsReplicated());
+		TestTrue(*MakeMessage(Phase, TEXT("InitialLifeSpan class default should persist.")),
+			FMath::IsNearlyEqual(BlueprintCDO->InitialLifeSpan, 4.5f));
+
+		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(CandidateBlueprint);
+		UK2Node_Event* const BeginPlayGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+		UK2Node_ExecutionSequence* const EventSequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(EventGraph, EventSequenceNode.Id);
+		TestNotNull(*MakeMessage(Phase, TEXT("Event graph should persist.")), EventGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("BeginPlay node should persist.")), BeginPlayGraphNode);
+		TestNotNull(*MakeMessage(Phase, TEXT("Event Sequence node should persist.")), EventSequenceGraphNode);
+		if (EventGraph == nullptr || BeginPlayGraphNode == nullptr || EventSequenceGraphNode == nullptr)
+		{
+			return false;
+		}
+
+		UEdGraphPin* const EventThenGraphPin = BeginPlayGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+		UEdGraphPin* const EventSequenceGraphPin = EventSequenceGraphNode->GetExecPin();
+		TestTrue(*MakeMessage(Phase, TEXT("BeginPlay should remain connected to Sequence.")),
+			EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(EventSequenceGraphPin));
+
+		UEdGraph* const ConstructionGraph = FindBlueprintGraphByName(CandidateBlueprint, UEdGraphSchema_K2::FN_UserConstructionScript);
+		UK2Node_FunctionEntry* const ConstructionEntry = FindGraphNodeByGuid<UK2Node_FunctionEntry>(ConstructionGraph, ConstructionEventNode.Id);
+		UK2Node_ExecutionSequence* const ConstructionSequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(ConstructionGraph, ConstructionSequenceNode.Id);
+		TestNotNull(*MakeMessage(Phase, TEXT("Construction script graph should persist.")), ConstructionGraph);
+		TestNotNull(*MakeMessage(Phase, TEXT("Construction entry should persist.")), ConstructionEntry);
+		TestNotNull(*MakeMessage(Phase, TEXT("Construction Sequence node should persist.")), ConstructionSequenceGraphNode);
+		if (ConstructionGraph == nullptr || ConstructionEntry == nullptr || ConstructionSequenceGraphNode == nullptr)
+		{
+			return false;
+		}
+
+		UEdGraphPin* const ConstructionThenGraphPin = ConstructionEntry->FindPin(UEdGraphSchema_K2::PN_Then);
+		UEdGraphPin* const ConstructionSequenceGraphPin = ConstructionSequenceGraphNode->GetExecPin();
+		TestTrue(*MakeMessage(Phase, TEXT("Construction entry should remain connected to Sequence.")),
+			ConstructionThenGraphPin != nullptr && ConstructionThenGraphPin->LinkedTo.Contains(ConstructionSequenceGraphPin));
+
+		return true;
+	};
+
+	const FVergilCompileResult InitialEventResult = EditorSubsystem->CompileDocument(Blueprint, EventDocument, false, false, true);
+	TestTrue(TEXT("Initial roundtrip event-graph authoring should succeed."), InitialEventResult.bSucceeded);
+	TestTrue(TEXT("Initial roundtrip event-graph authoring should apply commands."), InitialEventResult.bApplied);
+	if (!InitialEventResult.bSucceeded || !InitialEventResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult InitialConstructionResult = EditorSubsystem->CompileDocumentToGraph(
+		Blueprint,
+		ConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		true);
+	TestTrue(TEXT("Initial roundtrip construction-script authoring should succeed."), InitialConstructionResult.bSucceeded);
+	TestTrue(TEXT("Initial roundtrip construction-script authoring should apply commands."), InitialConstructionResult.bApplied);
+	if (!InitialConstructionResult.bSucceeded || !InitialConstructionResult.bApplied)
+	{
+		return false;
+	}
+
+	if (!VerifyBlueprintState(Blueprint, TEXT("Initial authoring")))
+	{
+		return false;
+	}
+
+	FString SaveErrorMessage;
+	const bool bSavedPackage = PersistentBlueprint.Save(Blueprint, &SaveErrorMessage);
+	TestTrue(TEXT("Persistent roundtrip blueprint package should save cleanly."), bSavedPackage);
+	if (!SaveErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Roundtrip save status: %s"), *SaveErrorMessage));
+	}
+	if (!bSavedPackage)
+	{
+		return false;
+	}
+
+	FString ReloadErrorMessage;
+	UBlueprint* const ReloadedBlueprint = PersistentBlueprint.Reload(&ReloadErrorMessage);
+	TestNotNull(TEXT("Persistent roundtrip blueprint should reload from disk."), ReloadedBlueprint);
+	if (!ReloadErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Roundtrip reload status: %s"), *ReloadErrorMessage));
+	}
+	if (ReloadedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	if (!VerifyBlueprintState(ReloadedBlueprint, TEXT("Post-reload state")))
+	{
+		return false;
+	}
+
+	const FVergilCompileResult RoundtripEventResult = EditorSubsystem->CompileDocument(ReloadedBlueprint, EventDocument, false, false, false);
+	TestTrue(TEXT("Roundtrip event-graph dry-run compile should succeed after reload."), RoundtripEventResult.bSucceeded);
+	TestFalse(TEXT("Roundtrip event-graph dry-run compile should not apply commands after reload."), RoundtripEventResult.bApplied);
+	if (!RoundtripEventResult.bSucceeded)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult RoundtripConstructionResult = EditorSubsystem->CompileDocumentToGraph(
+		ReloadedBlueprint,
+		ConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		false);
+	TestTrue(TEXT("Roundtrip construction-script dry-run compile should succeed after reload."), RoundtripConstructionResult.bSucceeded);
+	TestFalse(TEXT("Roundtrip construction-script dry-run compile should not apply commands after reload."), RoundtripConstructionResult.bApplied);
+	if (!RoundtripConstructionResult.bSucceeded)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Event-graph roundtrip should preserve command-plan fingerprints."),
+		RoundtripEventResult.Statistics.CommandPlanFingerprint,
+		InitialEventResult.Statistics.CommandPlanFingerprint);
+	TestEqual(TEXT("Construction-script roundtrip should preserve command-plan fingerprints."),
+		RoundtripConstructionResult.Statistics.CommandPlanFingerprint,
+		InitialConstructionResult.Statistics.CommandPlanFingerprint);
+	TestEqual(TEXT("Event-graph roundtrip should preserve planned command counts."),
+		RoundtripEventResult.Commands.Num(),
+		InitialEventResult.Commands.Num());
+	TestEqual(TEXT("Construction-script roundtrip should preserve planned command counts."),
+		RoundtripConstructionResult.Commands.Num(),
+		InitialConstructionResult.Commands.Num());
+
+	FKismetEditorUtilities::CompileBlueprint(ReloadedBlueprint);
+	TestTrue(TEXT("Reloaded blueprint should compile cleanly after roundtrip dry-run verification."), ReloadedBlueprint->IsUpToDate());
+	TestNotNull(TEXT("Reloaded blueprint should retain a generated class after compile."), ReloadedBlueprint->GeneratedClass.Get());
+	if (ReloadedBlueprint->GeneratedClass == nullptr)
+	{
+		return false;
+	}
+
+	return VerifyBlueprintState(ReloadedBlueprint, TEXT("Post-compile state"));
 }
 
 bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
