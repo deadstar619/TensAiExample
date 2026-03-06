@@ -16,6 +16,70 @@ namespace
 
 		OutDiagnostics->Add(FVergilDiagnostic::Make(Severity, Code, Message, SourceId));
 	}
+
+	bool IsSupportedTypeCategory(const FName PinCategory)
+	{
+		const FString Category = PinCategory.ToString().ToLower();
+		return Category == TEXT("bool")
+			|| Category == TEXT("int")
+			|| Category == TEXT("float")
+			|| Category == TEXT("double")
+			|| Category == TEXT("string")
+			|| Category == TEXT("name")
+			|| Category == TEXT("text")
+			|| Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool TypeCategoryRequiresObjectPath(const FName PinCategory)
+	{
+		const FString Category = PinCategory.ToString().ToLower();
+		return Category == TEXT("enum")
+			|| Category == TEXT("object")
+			|| Category == TEXT("class")
+			|| Category == TEXT("struct");
+	}
+
+	bool ValidateTypeReference(
+		const FName PinCategory,
+		const FString& ObjectPath,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		if (PinCategory.IsNone())
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableTypeCategoryMissing"),
+				FString::Printf(TEXT("%s must declare a type category."), *ContextLabel));
+			return false;
+		}
+
+		if (!IsSupportedTypeCategory(PinCategory))
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableTypeCategoryUnsupported"),
+				FString::Printf(TEXT("%s declares unsupported type category '%s'."), *ContextLabel, *PinCategory.ToString()));
+			return false;
+		}
+
+		if (TypeCategoryRequiresObjectPath(PinCategory) && ObjectPath.IsEmpty())
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableTypeObjectPathMissing"),
+				FString::Printf(TEXT("%s type category '%s' requires an object path."), *ContextLabel, *PinCategory.ToString()));
+			return false;
+		}
+
+		return true;
+	}
 }
 
 bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDiagnostics) const
@@ -30,6 +94,7 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 
 	TSet<FGuid> NodeIds;
 	TSet<FGuid> PinIds;
+	TSet<FName> VariableNames;
 	TSet<FName> DispatcherNames;
 
 	for (const FVergilDispatcherDefinition& Dispatcher : Dispatchers)
@@ -74,6 +139,88 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 				bIsValid = false;
 				AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("DispatcherParameterCategoryMissing"), FString::Printf(TEXT("Dispatcher '%s' parameter '%s' must declare a pin category."), *Dispatcher.Name.ToString(), *Parameter.Name.ToString()));
 			}
+		}
+	}
+
+	for (const FVergilVariableDefinition& Variable : Variables)
+	{
+		const FString VariableLabel = Variable.Name.IsNone()
+			? FString(TEXT("Variable"))
+			: FString::Printf(TEXT("Variable '%s'"), *Variable.Name.ToString());
+
+		if (Variable.Name.IsNone())
+		{
+			bIsValid = false;
+			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("VariableNameMissing"), TEXT("Every variable must declare a name."));
+			continue;
+		}
+
+		if (VariableNames.Contains(Variable.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableNameDuplicate"),
+				FString::Printf(TEXT("Duplicate variable name '%s'."), *Variable.Name.ToString()));
+			continue;
+		}
+
+		if (DispatcherNames.Contains(Variable.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableNameConflictsWithDispatcher"),
+				FString::Printf(TEXT("Variable '%s' conflicts with a dispatcher of the same name."), *Variable.Name.ToString()));
+			continue;
+		}
+
+		VariableNames.Add(Variable.Name);
+
+		bIsValid &= ValidateTypeReference(Variable.Type.PinCategory, Variable.Type.ObjectPath, VariableLabel, OutDiagnostics);
+
+		if (Variable.Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			if (Variable.Type.ValuePinCategory.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("VariableMapValueCategoryMissing"),
+					FString::Printf(TEXT("%s map definitions must declare a value type category."), *VariableLabel));
+			}
+			else
+			{
+				bIsValid &= ValidateTypeReference(
+					Variable.Type.ValuePinCategory,
+					Variable.Type.ValueObjectPath,
+					FString::Printf(TEXT("%s value type"), *VariableLabel),
+					OutDiagnostics);
+			}
+		}
+		else if (!Variable.Type.ValuePinCategory.IsNone()
+			|| !Variable.Type.ValuePinSubCategory.IsNone()
+			|| !Variable.Type.ValueObjectPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableValueTypeUnexpected"),
+				FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *VariableLabel));
+		}
+
+		if (Variable.Flags.bExposeOnSpawn && !Variable.Flags.bInstanceEditable)
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableExposeOnSpawnRequiresInstanceEditable"),
+				FString::Printf(TEXT("%s cannot enable ExposeOnSpawn unless it is also instance editable."), *VariableLabel));
 		}
 	}
 

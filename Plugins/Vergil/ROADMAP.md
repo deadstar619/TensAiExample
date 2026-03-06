@@ -48,6 +48,7 @@ Current status:
 
 - Milestone 0 complete
 - `Vergil.Scaffold.*` now passes headlessly without Blueprint deprecation warnings
+- document-defined member variables are supported end-to-end with structural validation, command planning, execution, and automation coverage
 
 Tickets:
 
@@ -70,7 +71,7 @@ Goal:
 Tickets:
 
 - `VGR-1001` Add Blueprint-level metadata
-- `VGR-1002` Add variable definitions with type, flags, metadata, and defaults
+- [x] `VGR-1002` Add variable definitions with type, flags, metadata, and defaults
 - `VGR-1003` Add function definitions with purity, access, inputs, and outputs
 - `VGR-1004` Add macro graph definitions
 - `VGR-1005` Add component definitions with parent/attach/transform/template properties
@@ -280,13 +281,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1002`
-2. `VGR-1003`
-3. `VGR-1005`
-4. `VGR-2001`
-5. `VGR-4001`
-6. `VGR-4002`
-7. `VGR-4004`
+1. `VGR-1003`
+2. `VGR-1005`
+3. `VGR-2001`
+4. `VGR-4001`
+5. `VGR-4002`
+6. `VGR-4004`
+7. `VGR-1010`
 
 This moves Vergil from a graph scaffold toward real asset authoring.
 

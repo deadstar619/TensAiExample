@@ -8,6 +8,9 @@ enum class EVergilCommandType : uint8
 {
 	EnsureDispatcher,
 	AddDispatcherParameter,
+	EnsureVariable,
+	SetVariableMetadata,
+	SetVariableDefault,
 	EnsureGraph,
 	AddNode,
 	SetNodeMetadata,

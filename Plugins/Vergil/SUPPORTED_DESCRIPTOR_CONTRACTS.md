@@ -4,21 +4,38 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Dispatchers`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Dispatchers`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
-- Asset-level authoring beyond dispatchers is not implemented yet. There is no current support for Blueprint metadata, variables, functions, macros, components, interfaces, class defaults, or construction script definitions.
+- Asset-level authoring beyond variables and dispatchers is not implemented yet. There is no current support for Blueprint metadata, functions, macros, components, interfaces, class defaults, or construction script definitions.
 
 ## Structural validation rules
 
 - `SchemaVersion` must be greater than zero.
 - A newer document schema than the compiler schema emits a warning, not an automatic migration.
+- Every variable must have a unique non-empty name and cannot conflict with a dispatcher name.
+- Every variable must declare a supported type category.
+- `ExposeOnSpawn` requires `bInstanceEditable`.
 - Every dispatcher must have a unique name.
 - Every dispatcher parameter must have a unique name inside that dispatcher and a non-empty `PinCategory`.
 - Every node must have a valid unique GUID and a non-empty descriptor.
 - Every pin must have a valid unique GUID.
 - Every edge must reference existing node IDs and pin IDs.
+
+## Variable definition contracts
+
+- Variables are authored from `Variables` on the document.
+- Each variable definition uses `Name`, `Type`, `Flags`, `Category`, `Metadata`, and `DefaultValue`.
+- `Type` currently supports these logical categories: `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
+- `Type.ContainerType` currently supports `None`, `Array`, `Set`, and `Map`.
+- `enum`, `object`, `class`, and `struct` variable categories require `Type.ObjectPath`.
+- Map variables must declare `Type.ValuePinCategory`. If the value category is `enum`, `object`, `class`, or `struct`, `Type.ValueObjectPath` is also required.
+- Non-map variables must not declare map value-type fields.
+- `Flags` currently supports `bInstanceEditable`, `bBlueprintReadOnly`, `bExposeOnSpawn`, `bPrivate`, `bTransient`, `bSaveGame`, `bAdvancedDisplay`, `bDeprecated`, and `bExposeToCinematics`.
+- `ExposeOnSpawn` is only accepted when `bInstanceEditable` is also true.
+- `Metadata` is applied as Blueprint variable metadata key/value pairs.
+- `DefaultValue` is applied through Blueprint compilation to the generated class default object. The editor-side `FBPVariableDescription.DefaultValue` string is not treated as a stable post-compile source of truth.
 
 ## Dispatcher contracts
 
@@ -65,6 +82,7 @@ This document describes the current scaffold contracts implemented in code today
 
 - The current type resolver accepts `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` variants require an accompanying object-path field for the specific contract:
+  - `ObjectPath` for variable definitions
   - `ObjectPath` for dispatcher parameters
   - `IndexObjectPath` and `ValueObjectPath` for select nodes
   - `KeyObjectPath` and `ValueObjectPath` for make-map nodes
@@ -74,4 +92,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional dispatcher definitions. There is no full-asset compile/apply path yet.
+- One compile request currently targets one graph plus optional variable and dispatcher definitions. There is no full-asset compile/apply path yet.

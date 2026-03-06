@@ -36,11 +36,14 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current supported contracts
 
 - The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
+- Document-authored member variables are now part of that supported contract surface, including type/flag/metadata/default authoring.
 - Generic fallback planning is not a guarantee that execution exists. The contract document is the source of truth for what the current scaffold actually supports.
 
 ## Current baseline
 
 - Milestone 0 is complete.
+- `VGR-1002` is complete.
+- Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 
 ## Planning

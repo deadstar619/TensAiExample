@@ -33,6 +33,69 @@ namespace
 		return DescriptorString.RightChop(Prefix.Len());
 	}
 
+	FString GetVariableContainerTypeString(const EVergilVariableContainerType ContainerType)
+	{
+		switch (ContainerType)
+		{
+		case EVergilVariableContainerType::Array:
+			return TEXT("Array");
+
+		case EVergilVariableContainerType::Set:
+			return TEXT("Set");
+
+		case EVergilVariableContainerType::Map:
+			return TEXT("Map");
+
+		case EVergilVariableContainerType::None:
+		default:
+			return TEXT("None");
+		}
+	}
+
+	void AddVariableTypeAttributes(TMap<FName, FString>& Attributes, const FVergilVariableTypeReference& Type)
+	{
+		Attributes.Add(TEXT("PinCategory"), Type.PinCategory.ToString());
+		Attributes.Add(TEXT("ContainerType"), GetVariableContainerTypeString(Type.ContainerType));
+
+		if (!Type.PinSubCategory.IsNone())
+		{
+			Attributes.Add(TEXT("PinSubCategory"), Type.PinSubCategory.ToString());
+		}
+
+		if (!Type.ObjectPath.IsEmpty())
+		{
+			Attributes.Add(TEXT("ObjectPath"), Type.ObjectPath);
+		}
+
+		if (Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			Attributes.Add(TEXT("ValuePinCategory"), Type.ValuePinCategory.ToString());
+
+			if (!Type.ValuePinSubCategory.IsNone())
+			{
+				Attributes.Add(TEXT("ValuePinSubCategory"), Type.ValuePinSubCategory.ToString());
+			}
+
+			if (!Type.ValueObjectPath.IsEmpty())
+			{
+				Attributes.Add(TEXT("ValueObjectPath"), Type.ValueObjectPath);
+			}
+		}
+	}
+
+	void AddVariableFlagAttributes(TMap<FName, FString>& Attributes, const FVergilVariableFlags& Flags)
+	{
+		Attributes.Add(TEXT("bInstanceEditable"), Flags.bInstanceEditable ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bBlueprintReadOnly"), Flags.bBlueprintReadOnly ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bExposeOnSpawn"), Flags.bExposeOnSpawn ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bPrivate"), Flags.bPrivate ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bTransient"), Flags.bTransient ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bSaveGame"), Flags.bSaveGame ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bAdvancedDisplay"), Flags.bAdvancedDisplay ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bDeprecated"), Flags.bDeprecated ? TEXT("true") : TEXT("false"));
+		Attributes.Add(TEXT("bExposeToCinematics"), Flags.bExposeToCinematics ? TEXT("true") : TEXT("false"));
+	}
+
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -1114,6 +1177,41 @@ FName FVergilCommandPlanningPass::GetPassName() const
 bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVergilCompilerContext& Context, FVergilCompileResult& Result) const
 {
 	EnsureGenericFallbackHandler();
+
+	for (const FVergilVariableDefinition& Variable : Request.Document.Variables)
+	{
+		FVergilCompilerCommand EnsureVariableCommand;
+		EnsureVariableCommand.Type = EVergilCommandType::EnsureVariable;
+		EnsureVariableCommand.SecondaryName = Variable.Name;
+		EnsureVariableCommand.StringValue = Variable.DefaultValue;
+		AddVariableTypeAttributes(EnsureVariableCommand.Attributes, Variable.Type);
+		AddVariableFlagAttributes(EnsureVariableCommand.Attributes, Variable.Flags);
+		EnsureVariableCommand.Attributes.Add(TEXT("Category"), Variable.Category);
+		Result.Commands.Add(EnsureVariableCommand);
+
+		TArray<FName> MetadataKeys;
+		Variable.Metadata.GetKeys(MetadataKeys);
+		MetadataKeys.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		for (const FName MetadataKey : MetadataKeys)
+		{
+			FVergilCompilerCommand MetadataCommand;
+			MetadataCommand.Type = EVergilCommandType::SetVariableMetadata;
+			MetadataCommand.SecondaryName = Variable.Name;
+			MetadataCommand.Name = MetadataKey;
+			MetadataCommand.StringValue = Variable.Metadata.FindRef(MetadataKey);
+			Result.Commands.Add(MetadataCommand);
+		}
+
+		FVergilCompilerCommand DefaultCommand;
+		DefaultCommand.Type = EVergilCommandType::SetVariableDefault;
+		DefaultCommand.SecondaryName = Variable.Name;
+		DefaultCommand.StringValue = Variable.DefaultValue;
+		Result.Commands.Add(DefaultCommand);
+	}
 
 	for (const FVergilDispatcherDefinition& Dispatcher : Request.Document.Dispatchers)
 	{

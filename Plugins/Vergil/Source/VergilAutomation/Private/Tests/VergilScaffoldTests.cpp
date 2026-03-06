@@ -36,6 +36,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Modules/ModuleManager.h"
+#include "UObject/UnrealType.h"
 #include "VergilCommandTypes.h"
 #include "VergilBlueprintCompilerService.h"
 #include "VergilCompilerTypes.h"
@@ -108,6 +109,24 @@ namespace
 
 		return nullptr;
 	}
+
+	const FBPVariableDescription* FindBlueprintVariableDescription(const UBlueprint* Blueprint, const FName VariableName)
+	{
+		if (Blueprint == nullptr || VariableName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+		{
+			if (Variable.VarName == VariableName)
+			{
+				return &Variable;
+			}
+		}
+
+		return nullptr;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -139,6 +158,52 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	TArray<FVergilDiagnostic> Diagnostics;
 	TestTrue(TEXT("Empty document is structurally valid."), Document.IsStructurallyValid(&Diagnostics));
 	TestEqual(TEXT("Empty document has no diagnostics."), Diagnostics.Num(), 0);
+
+	FVergilGraphDocument InvalidDocument;
+	InvalidDocument.SchemaVersion = 1;
+	InvalidDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidVariables");
+
+	FVergilDispatcherDefinition Dispatcher;
+	Dispatcher.Name = TEXT("SharedMember");
+	InvalidDocument.Dispatchers.Add(Dispatcher);
+
+	FVergilVariableDefinition ConflictingVariable;
+	ConflictingVariable.Name = TEXT("SharedMember");
+	ConflictingVariable.Type.PinCategory = TEXT("bool");
+
+	FVergilVariableDefinition MissingTypeVariable;
+	MissingTypeVariable.Name = TEXT("BrokenVar");
+
+	FVergilVariableDefinition DuplicateVariable;
+	DuplicateVariable.Name = TEXT("BrokenVar");
+	DuplicateVariable.Type.PinCategory = TEXT("bool");
+
+	FVergilVariableDefinition InvalidSpawnVariable;
+	InvalidSpawnVariable.Name = TEXT("SpawnArg");
+	InvalidSpawnVariable.Type.PinCategory = TEXT("bool");
+	InvalidSpawnVariable.Flags.bExposeOnSpawn = true;
+
+	InvalidDocument.Variables = { ConflictingVariable, MissingTypeVariable, DuplicateVariable, InvalidSpawnVariable };
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid variable definitions should fail structural validation."), InvalidDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Variable validation reports dispatcher conflicts."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("VariableNameConflictsWithDispatcher");
+	}));
+	TestTrue(TEXT("Variable validation reports missing type categories."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("VariableTypeCategoryMissing");
+	}));
+	TestTrue(TEXT("Variable validation reports duplicate variable names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("VariableNameDuplicate");
+	}));
+	TestTrue(TEXT("Variable validation reports expose-on-spawn inconsistencies."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("VariableExposeOnSpawnRequiresInstanceEditable");
+	}));
+
 	return true;
 }
 
@@ -168,6 +233,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilResultSummaryUtilitiesTest,
 	"Vergil.Scaffold.ResultSummaries",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilVariableAuthoringExecutionTest,
+	"Vergil.Scaffold.VariableAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -224,6 +294,309 @@ bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Test summary treats executed work as applied."), TestSummary.bApplied);
 	TestEqual(TEXT("Test summary reports planned command count."), TestSummary.PlannedCommandCount, 5);
 	TestEqual(TEXT("Test summary reports executed command count."), TestSummary.ExecutedCommandCount, 1);
+
+	return true;
+}
+
+bool FVergilVariableAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilVariableDefinition FlagVariable;
+	FlagVariable.Name = TEXT("TestFlag");
+	FlagVariable.Type.PinCategory = TEXT("bool");
+	FlagVariable.Flags.bInstanceEditable = true;
+	FlagVariable.Flags.bSaveGame = true;
+	FlagVariable.Category = TEXT("State");
+	FlagVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Controls the scaffold test flag."));
+	FlagVariable.DefaultValue = TEXT("true");
+
+	FVergilVariableDefinition TargetActorVariable;
+	TargetActorVariable.Name = TEXT("TargetActor");
+	TargetActorVariable.Type.PinCategory = TEXT("object");
+	TargetActorVariable.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	TargetActorVariable.Category = TEXT("References");
+	TargetActorVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Stores a runtime actor reference."));
+
+	FVergilVariableDefinition SpawnTargetVariable;
+	SpawnTargetVariable.Name = TEXT("SpawnTarget");
+	SpawnTargetVariable.Type.PinCategory = TEXT("object");
+	SpawnTargetVariable.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	SpawnTargetVariable.Flags.bInstanceEditable = true;
+	SpawnTargetVariable.Flags.bExposeOnSpawn = true;
+	SpawnTargetVariable.Flags.bPrivate = true;
+	SpawnTargetVariable.Flags.bTransient = true;
+	SpawnTargetVariable.Flags.bAdvancedDisplay = true;
+	SpawnTargetVariable.Flags.bDeprecated = true;
+	SpawnTargetVariable.Flags.bExposeToCinematics = true;
+	SpawnTargetVariable.Category = TEXT("Spawn");
+	SpawnTargetVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Spawn-only target actor."));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThen;
+	BeginPlayThen.Id = FGuid::NewGuid();
+	BeginPlayThen.Name = TEXT("Then");
+	BeginPlayThen.Direction = EVergilPinDirection::Output;
+	BeginPlayThen.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThen);
+
+	FVergilGraphNode SelfNode;
+	SelfNode.Id = FGuid::NewGuid();
+	SelfNode.Kind = EVergilNodeKind::Custom;
+	SelfNode.Descriptor = TEXT("K2.Self");
+	SelfNode.Position = FVector2D(260.0f, -140.0f);
+
+	FVergilGraphPin SelfValue;
+	SelfValue.Id = FGuid::NewGuid();
+	SelfValue.Name = UEdGraphSchema_K2::PN_Self;
+	SelfValue.Direction = EVergilPinDirection::Output;
+	SelfNode.Pins.Add(SelfValue);
+
+	FVergilGraphNode TargetSetterNode;
+	TargetSetterNode.Id = FGuid::NewGuid();
+	TargetSetterNode.Kind = EVergilNodeKind::VariableSet;
+	TargetSetterNode.Descriptor = TEXT("K2.VarSet.TargetActor");
+	TargetSetterNode.Position = FVector2D(560.0f, 0.0f);
+
+	FVergilGraphPin TargetSetterExecIn;
+	TargetSetterExecIn.Id = FGuid::NewGuid();
+	TargetSetterExecIn.Name = TEXT("Execute");
+	TargetSetterExecIn.Direction = EVergilPinDirection::Input;
+	TargetSetterExecIn.bIsExec = true;
+	TargetSetterNode.Pins.Add(TargetSetterExecIn);
+
+	FVergilGraphPin TargetSetterThen;
+	TargetSetterThen.Id = FGuid::NewGuid();
+	TargetSetterThen.Name = TEXT("Then");
+	TargetSetterThen.Direction = EVergilPinDirection::Output;
+	TargetSetterThen.bIsExec = true;
+	TargetSetterNode.Pins.Add(TargetSetterThen);
+
+	FVergilGraphPin TargetSetterValue;
+	TargetSetterValue.Id = FGuid::NewGuid();
+	TargetSetterValue.Name = TEXT("TargetActor");
+	TargetSetterValue.Direction = EVergilPinDirection::Input;
+	TargetSetterNode.Pins.Add(TargetSetterValue);
+
+	FVergilGraphNode FlagGetterNode;
+	FlagGetterNode.Id = FGuid::NewGuid();
+	FlagGetterNode.Kind = EVergilNodeKind::VariableGet;
+	FlagGetterNode.Descriptor = TEXT("K2.VarGet.TestFlag");
+	FlagGetterNode.Position = FVector2D(260.0f, 220.0f);
+
+	FVergilGraphPin FlagGetterValue;
+	FlagGetterValue.Id = FGuid::NewGuid();
+	FlagGetterValue.Name = TEXT("TestFlag");
+	FlagGetterValue.Direction = EVergilPinDirection::Output;
+	FlagGetterNode.Pins.Add(FlagGetterValue);
+
+	FVergilGraphNode NotNode;
+	NotNode.Id = FGuid::NewGuid();
+	NotNode.Kind = EVergilNodeKind::Call;
+	NotNode.Descriptor = TEXT("K2.Call.Not_PreBool");
+	NotNode.Position = FVector2D(560.0f, 220.0f);
+	NotNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetMathLibrary::StaticClass()->GetClassPathName().ToString());
+
+	FVergilGraphPin NotInput;
+	NotInput.Id = FGuid::NewGuid();
+	NotInput.Name = TEXT("A");
+	NotInput.Direction = EVergilPinDirection::Input;
+	NotNode.Pins.Add(NotInput);
+
+	FVergilGraphPin NotReturn;
+	NotReturn.Id = FGuid::NewGuid();
+	NotReturn.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	NotReturn.Direction = EVergilPinDirection::Output;
+	NotNode.Pins.Add(NotReturn);
+
+	FVergilGraphNode FlagSetterNode;
+	FlagSetterNode.Id = FGuid::NewGuid();
+	FlagSetterNode.Kind = EVergilNodeKind::VariableSet;
+	FlagSetterNode.Descriptor = TEXT("K2.VarSet.TestFlag");
+	FlagSetterNode.Position = FVector2D(860.0f, 220.0f);
+
+	FVergilGraphPin FlagSetterExecIn;
+	FlagSetterExecIn.Id = FGuid::NewGuid();
+	FlagSetterExecIn.Name = TEXT("Execute");
+	FlagSetterExecIn.Direction = EVergilPinDirection::Input;
+	FlagSetterExecIn.bIsExec = true;
+	FlagSetterNode.Pins.Add(FlagSetterExecIn);
+
+	FVergilGraphPin FlagSetterValue;
+	FlagSetterValue.Id = FGuid::NewGuid();
+	FlagSetterValue.Name = TEXT("TestFlag");
+	FlagSetterValue.Direction = EVergilPinDirection::Input;
+	FlagSetterNode.Pins.Add(FlagSetterValue);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilVariableAuthoring");
+	Document.Variables = { FlagVariable, TargetActorVariable, SpawnTargetVariable };
+	Document.Nodes = { BeginPlayNode, SelfNode, TargetSetterNode, FlagGetterNode, NotNode, FlagSetterNode };
+
+	FVergilGraphEdge EventToTargetSetter;
+	EventToTargetSetter.Id = FGuid::NewGuid();
+	EventToTargetSetter.SourceNodeId = BeginPlayNode.Id;
+	EventToTargetSetter.SourcePinId = BeginPlayThen.Id;
+	EventToTargetSetter.TargetNodeId = TargetSetterNode.Id;
+	EventToTargetSetter.TargetPinId = TargetSetterExecIn.Id;
+	Document.Edges.Add(EventToTargetSetter);
+
+	FVergilGraphEdge TargetSetterToFlagSetter;
+	TargetSetterToFlagSetter.Id = FGuid::NewGuid();
+	TargetSetterToFlagSetter.SourceNodeId = TargetSetterNode.Id;
+	TargetSetterToFlagSetter.SourcePinId = TargetSetterThen.Id;
+	TargetSetterToFlagSetter.TargetNodeId = FlagSetterNode.Id;
+	TargetSetterToFlagSetter.TargetPinId = FlagSetterExecIn.Id;
+	Document.Edges.Add(TargetSetterToFlagSetter);
+
+	FVergilGraphEdge SelfToTargetSetter;
+	SelfToTargetSetter.Id = FGuid::NewGuid();
+	SelfToTargetSetter.SourceNodeId = SelfNode.Id;
+	SelfToTargetSetter.SourcePinId = SelfValue.Id;
+	SelfToTargetSetter.TargetNodeId = TargetSetterNode.Id;
+	SelfToTargetSetter.TargetPinId = TargetSetterValue.Id;
+	Document.Edges.Add(SelfToTargetSetter);
+
+	FVergilGraphEdge FlagGetterToNot;
+	FlagGetterToNot.Id = FGuid::NewGuid();
+	FlagGetterToNot.SourceNodeId = FlagGetterNode.Id;
+	FlagGetterToNot.SourcePinId = FlagGetterValue.Id;
+	FlagGetterToNot.TargetNodeId = NotNode.Id;
+	FlagGetterToNot.TargetPinId = NotInput.Id;
+	Document.Edges.Add(FlagGetterToNot);
+
+	FVergilGraphEdge NotToFlagSetter;
+	NotToFlagSetter.Id = FGuid::NewGuid();
+	NotToFlagSetter.SourceNodeId = NotNode.Id;
+	NotToFlagSetter.SourcePinId = NotReturn.Id;
+	NotToFlagSetter.TargetNodeId = FlagSetterNode.Id;
+	NotToFlagSetter.TargetPinId = FlagSetterValue.Id;
+	Document.Edges.Add(NotToFlagSetter);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Variable authoring document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Variable authoring document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Variable authoring document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FBPVariableDescription* const FlagDescription = FindBlueprintVariableDescription(Blueprint, TEXT("TestFlag"));
+	const FBPVariableDescription* const TargetActorDescription = FindBlueprintVariableDescription(Blueprint, TEXT("TargetActor"));
+	const FBPVariableDescription* const SpawnTargetDescription = FindBlueprintVariableDescription(Blueprint, TEXT("SpawnTarget"));
+
+	TestNotNull(TEXT("TestFlag variable should exist on the blueprint."), FlagDescription);
+	TestNotNull(TEXT("TargetActor variable should exist on the blueprint."), TargetActorDescription);
+	TestNotNull(TEXT("SpawnTarget variable should exist on the blueprint."), SpawnTargetDescription);
+	if (FlagDescription == nullptr || TargetActorDescription == nullptr || SpawnTargetDescription == nullptr)
+	{
+		return false;
+	}
+
+	UObject* const BlueprintCDO = Blueprint->GeneratedClass != nullptr ? Blueprint->GeneratedClass->GetDefaultObject() : nullptr;
+	TestNotNull(TEXT("Generated class default object should exist."), BlueprintCDO);
+	if (BlueprintCDO == nullptr)
+	{
+		return false;
+	}
+
+	const FBoolProperty* const TestFlagProperty = FindFProperty<FBoolProperty>(Blueprint->GeneratedClass, TEXT("TestFlag"));
+	TestNotNull(TEXT("Generated class should expose the TestFlag property."), TestFlagProperty);
+	if (TestFlagProperty == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("TestFlag should be a bool variable."), FlagDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("TestFlag should apply its default to the generated class default object."), TestFlagProperty->GetPropertyValue_InContainer(BlueprintCDO));
+	TestTrue(TEXT("TestFlag should be instance editable."), (FlagDescription->PropertyFlags & CPF_DisableEditOnInstance) == 0);
+	TestTrue(TEXT("TestFlag should be marked SaveGame."), (FlagDescription->PropertyFlags & CPF_SaveGame) != 0);
+	TestEqual(TEXT("TestFlag should preserve its category."), FBlueprintEditorUtils::GetBlueprintVariableCategory(Blueprint, TEXT("TestFlag"), nullptr).ToString(), FString(TEXT("State")));
+
+	FString TooltipValue;
+	TestTrue(TEXT("TestFlag tooltip metadata should exist."), FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, TEXT("TestFlag"), nullptr, TEXT("Tooltip"), TooltipValue));
+	TestEqual(TEXT("TestFlag tooltip metadata should match the document."), TooltipValue, FString(TEXT("Controls the scaffold test flag.")));
+
+	TestTrue(TEXT("TargetActor should be an object variable."), TargetActorDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Object);
+	TestTrue(TEXT("TargetActor should resolve AActor as its object class."), TargetActorDescription->VarType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestEqual(TEXT("TargetActor should preserve its category."), FBlueprintEditorUtils::GetBlueprintVariableCategory(Blueprint, TEXT("TargetActor"), nullptr).ToString(), FString(TEXT("References")));
+
+	TestTrue(TEXT("SpawnTarget should be an object variable."), SpawnTargetDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Object);
+	TestTrue(TEXT("SpawnTarget should resolve AActor as its object class."), SpawnTargetDescription->VarType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("SpawnTarget should be transient."), (SpawnTargetDescription->PropertyFlags & CPF_Transient) != 0);
+	TestTrue(TEXT("SpawnTarget should be advanced display."), (SpawnTargetDescription->PropertyFlags & CPF_AdvancedDisplay) != 0);
+	TestTrue(TEXT("SpawnTarget should be deprecated."), (SpawnTargetDescription->PropertyFlags & CPF_Deprecated) != 0);
+	TestTrue(TEXT("SpawnTarget should be exposed to cinematics."), (SpawnTargetDescription->PropertyFlags & CPF_Interp) != 0);
+	TestEqual(TEXT("SpawnTarget should preserve its category."), FBlueprintEditorUtils::GetBlueprintVariableCategory(Blueprint, TEXT("SpawnTarget"), nullptr).ToString(), FString(TEXT("Spawn")));
+
+	FString ExposeOnSpawnValue;
+	TestTrue(TEXT("SpawnTarget expose-on-spawn metadata should exist."), FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, TEXT("SpawnTarget"), nullptr, FBlueprintMetadata::MD_ExposeOnSpawn, ExposeOnSpawnValue));
+	TestEqual(TEXT("SpawnTarget expose-on-spawn metadata should be true."), ExposeOnSpawnValue, FString(TEXT("true")));
+
+	FString PrivateValue;
+	TestTrue(TEXT("SpawnTarget private metadata should exist."), FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, TEXT("SpawnTarget"), nullptr, FBlueprintMetadata::MD_Private, PrivateValue));
+	TestEqual(TEXT("SpawnTarget private metadata should be true."), PrivateValue, FString(TEXT("true")));
+
+	TooltipValue.Reset();
+	TestTrue(TEXT("SpawnTarget tooltip metadata should exist."), FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, TEXT("SpawnTarget"), nullptr, TEXT("Tooltip"), TooltipValue));
+	TestEqual(TEXT("SpawnTarget tooltip metadata should match the document."), TooltipValue, FString(TEXT("Spawn-only target actor.")));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after variable authoring execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_Self* const SelfGraphNode = FindGraphNodeByGuid<UK2Node_Self>(EventGraph, SelfNode.Id);
+	UK2Node_VariableSet* const TargetSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, TargetSetterNode.Id);
+	UK2Node_VariableGet* const FlagGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, FlagGetterNode.Id);
+	UK2Node_CallFunction* const NotGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, NotNode.Id);
+	UK2Node_VariableSet* const FlagSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, FlagSetterNode.Id);
+
+	TestNotNull(TEXT("BeginPlay event node should exist."), EventGraphNode);
+	TestNotNull(TEXT("Self node should exist."), SelfGraphNode);
+	TestNotNull(TEXT("TargetActor setter node should exist."), TargetSetterGraphNode);
+	TestNotNull(TEXT("TestFlag getter node should exist."), FlagGetterGraphNode);
+	TestNotNull(TEXT("Not call node should exist."), NotGraphNode);
+	TestNotNull(TEXT("TestFlag setter node should exist."), FlagSetterGraphNode);
+	if (EventGraphNode == nullptr || SelfGraphNode == nullptr || TargetSetterGraphNode == nullptr || FlagGetterGraphNode == nullptr || NotGraphNode == nullptr || FlagSetterGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenPin = EventGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const TargetSetterExecPin = TargetSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const TargetSetterThenPin = TargetSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const FlagSetterExecPin = FlagSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SelfOutputPin = SelfGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const TargetSetterValuePin = TargetSetterGraphNode->FindPin(TEXT("TargetActor"));
+	UEdGraphPin* const FlagGetterValuePin = FlagGetterGraphNode->FindPin(TEXT("TestFlag"));
+	UEdGraphPin* const NotInputPin = NotGraphNode->FindPin(TEXT("A"));
+	UEdGraphPin* const NotReturnPin = NotGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const FlagSetterValuePin = FlagSetterGraphNode->FindPin(TEXT("TestFlag"));
+
+	TestTrue(TEXT("TargetActor setter should accept the self pin connection."), SelfOutputPin != nullptr && SelfOutputPin->LinkedTo.Contains(TargetSetterValuePin));
+	TestTrue(TEXT("BeginPlay should execute the TargetActor setter."), EventThenPin != nullptr && EventThenPin->LinkedTo.Contains(TargetSetterExecPin));
+	TestTrue(TEXT("TargetActor setter should chain into the TestFlag setter."), TargetSetterThenPin != nullptr && TargetSetterThenPin->LinkedTo.Contains(FlagSetterExecPin));
+	TestTrue(TEXT("TestFlag getter should feed the Not call input."), FlagGetterValuePin != nullptr && FlagGetterValuePin->LinkedTo.Contains(NotInputPin));
+	TestTrue(TEXT("Not call should feed the TestFlag setter value input."), NotReturnPin != nullptr && NotReturnPin->LinkedTo.Contains(FlagSetterValuePin));
 
 	return true;
 }

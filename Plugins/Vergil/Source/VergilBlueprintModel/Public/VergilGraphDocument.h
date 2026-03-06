@@ -131,6 +131,99 @@ struct VERGILBLUEPRINTMODEL_API FVergilDispatcherDefinition
 	TArray<FVergilDispatcherParameter> Parameters;
 };
 
+UENUM(BlueprintType)
+enum class EVergilVariableContainerType : uint8
+{
+	None,
+	Array,
+	Set,
+	Map
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilVariableTypeReference
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName PinCategory = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName PinSubCategory = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString ObjectPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilVariableContainerType ContainerType = EVergilVariableContainerType::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName ValuePinCategory = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName ValuePinSubCategory = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString ValueObjectPath;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilVariableFlags
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bInstanceEditable = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bBlueprintReadOnly = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bExposeOnSpawn = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bPrivate = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bTransient = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bSaveGame = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bAdvancedDisplay = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bDeprecated = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bExposeToCinematics = false;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilVariableDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilVariableTypeReference Type;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilVariableFlags Flags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString Category;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TMap<FName, FString> Metadata;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString DefaultValue;
+};
+
 USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 {
@@ -141,6 +234,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	FString BlueprintPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilVariableDefinition> Variables;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilDispatcherDefinition> Dispatchers;

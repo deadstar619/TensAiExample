@@ -106,6 +106,42 @@ namespace
 		return false;
 	}
 
+	FBPVariableDescription* FindBlueprintMemberVariable(UBlueprint* Blueprint, const FName VariableName)
+	{
+		if (Blueprint == nullptr || VariableName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+		{
+			if (Variable.VarName == VariableName)
+			{
+				return &Variable;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FBPVariableDescription* FindBlueprintMemberVariable(const UBlueprint* Blueprint, const FName VariableName)
+	{
+		if (Blueprint == nullptr || VariableName.IsNone())
+		{
+			return nullptr;
+		}
+
+		for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+		{
+			if (Variable.VarName == VariableName)
+			{
+				return &Variable;
+			}
+		}
+
+		return nullptr;
+	}
+
 	UEdGraph* ResolveOrCreateGraph(
 		UBlueprint* Blueprint,
 		const FVergilCompilerCommand& Command,
@@ -157,7 +193,10 @@ namespace
 	bool IsBlueprintDefinitionCommand(const FVergilCompilerCommand& Command)
 	{
 		return Command.Type == EVergilCommandType::EnsureDispatcher
-			|| Command.Type == EVergilCommandType::AddDispatcherParameter;
+			|| Command.Type == EVergilCommandType::AddDispatcherParameter
+			|| Command.Type == EVergilCommandType::EnsureVariable
+			|| Command.Type == EVergilCommandType::SetVariableMetadata
+			|| Command.Type == EVergilCommandType::SetVariableDefault;
 	}
 
 	bool IsPostCompileFinalizeCommand(const FVergilCompilerCommand& Command)
@@ -765,6 +804,51 @@ namespace
 		return false;
 	}
 
+	bool BuildVariablePinTypeFromCommand(
+		const FVergilCompilerCommand& Command,
+		FEdGraphPinType& OutPinType,
+		FString& OutError)
+	{
+		if (!BuildPinTypeFromAttributes(Command, TEXT("PinCategory"), TEXT("ObjectPath"), OutPinType, OutError))
+		{
+			return false;
+		}
+
+		const FString ContainerType = GetCommandAttribute(Command, TEXT("ContainerType")).ToLower();
+		if (ContainerType.IsEmpty() || ContainerType == TEXT("none"))
+		{
+			return true;
+		}
+
+		if (ContainerType == TEXT("array"))
+		{
+			OutPinType.ContainerType = EPinContainerType::Array;
+			return true;
+		}
+
+		if (ContainerType == TEXT("set"))
+		{
+			OutPinType.ContainerType = EPinContainerType::Set;
+			return true;
+		}
+
+		if (ContainerType == TEXT("map"))
+		{
+			FEdGraphPinType ValuePinType;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), ValuePinType, OutError))
+			{
+				return false;
+			}
+
+			OutPinType.ContainerType = EPinContainerType::Map;
+			OutPinType.PinValueType = FEdGraphTerminalType::FromPinType(ValuePinType);
+			return true;
+		}
+
+		OutError = FString::Printf(TEXT("Unsupported container type '%s'."), *ContainerType);
+		return false;
+	}
+
 	bool ExecuteEnsureDispatcher(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
 	{
 		if (Blueprint == nullptr || Command.SecondaryName.IsNone())
@@ -929,6 +1013,189 @@ namespace
 			return false;
 		}
 
+		return true;
+	}
+
+	bool ExecuteEnsureVariable(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidEnsureVariableCommand"),
+				TEXT("Variable creation requires a target blueprint and variable name."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Blueprint->BlueprintType == BPTYPE_MacroLibrary)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableNotSupportedOnMacroLibrary"),
+				TEXT("Member variables cannot be added to macro libraries."),
+				Command.NodeId));
+			return false;
+		}
+
+		FEdGraphPinType VariableType;
+		FString VariableTypeError;
+		if (!BuildVariablePinTypeFromCommand(Command, VariableType, VariableTypeError))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableTypeInvalid"),
+				VariableTypeError,
+				Command.NodeId));
+			return false;
+		}
+
+		Blueprint->Modify();
+
+		const FName VariableName = Command.SecondaryName;
+		const FBPVariableDescription* ExistingVariable = FindBlueprintMemberVariable(Blueprint, VariableName);
+		if (ExistingVariable == nullptr)
+		{
+			if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, VariableName, VariableType, Command.StringValue))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("AddVariableFailed"),
+					FString::Printf(TEXT("Unable to add variable '%s'."), *VariableName.ToString()),
+					Command.NodeId));
+				return false;
+			}
+		}
+		else if (!(ExistingVariable->VarType == VariableType))
+		{
+			FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, VariableName, VariableType);
+		}
+
+		bool bInstanceEditable = false;
+		TryParseBoolAttribute(Command, TEXT("bInstanceEditable"), bInstanceEditable);
+		FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, VariableName, !bInstanceEditable);
+
+		bool bBlueprintReadOnly = false;
+		TryParseBoolAttribute(Command, TEXT("bBlueprintReadOnly"), bBlueprintReadOnly);
+		FBlueprintEditorUtils::SetBlueprintPropertyReadOnlyFlag(Blueprint, VariableName, bBlueprintReadOnly);
+
+		bool bExposeToCinematics = false;
+		TryParseBoolAttribute(Command, TEXT("bExposeToCinematics"), bExposeToCinematics);
+		FBlueprintEditorUtils::SetInterpFlag(Blueprint, VariableName, bExposeToCinematics);
+
+		bool bTransient = false;
+		TryParseBoolAttribute(Command, TEXT("bTransient"), bTransient);
+		FBlueprintEditorUtils::SetVariableTransientFlag(Blueprint, VariableName, bTransient);
+
+		bool bSaveGame = false;
+		TryParseBoolAttribute(Command, TEXT("bSaveGame"), bSaveGame);
+		FBlueprintEditorUtils::SetVariableSaveGameFlag(Blueprint, VariableName, bSaveGame);
+
+		bool bAdvancedDisplay = false;
+		TryParseBoolAttribute(Command, TEXT("bAdvancedDisplay"), bAdvancedDisplay);
+		FBlueprintEditorUtils::SetVariableAdvancedDisplayFlag(Blueprint, VariableName, bAdvancedDisplay);
+
+		bool bDeprecated = false;
+		TryParseBoolAttribute(Command, TEXT("bDeprecated"), bDeprecated);
+		FBlueprintEditorUtils::SetVariableDeprecatedFlag(Blueprint, VariableName, bDeprecated);
+
+		bool bExposeOnSpawn = false;
+		TryParseBoolAttribute(Command, TEXT("bExposeOnSpawn"), bExposeOnSpawn);
+		if (bExposeOnSpawn)
+		{
+			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, VariableName, nullptr, FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+		}
+		else
+		{
+			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, VariableName, nullptr, FBlueprintMetadata::MD_ExposeOnSpawn);
+		}
+
+		bool bPrivate = false;
+		TryParseBoolAttribute(Command, TEXT("bPrivate"), bPrivate);
+		if (bPrivate)
+		{
+			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, VariableName, nullptr, FBlueprintMetadata::MD_Private, TEXT("true"));
+		}
+		else
+		{
+			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, VariableName, nullptr, FBlueprintMetadata::MD_Private);
+		}
+
+		FBlueprintEditorUtils::SetBlueprintVariableCategory(
+			Blueprint,
+			VariableName,
+			nullptr,
+			FText::FromString(GetCommandAttribute(Command, TEXT("Category"))),
+			true);
+
+		return true;
+	}
+
+	bool ExecuteSetVariableMetadata(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone() || Command.Name.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidSetVariableMetadataCommand"),
+				TEXT("Variable metadata commands require a target blueprint, variable name, and metadata key."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!HasBlueprintMemberVariable(Blueprint, Command.SecondaryName))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableMetadataTargetMissing"),
+				FString::Printf(TEXT("Unable to resolve variable '%s' for metadata key '%s'."), *Command.SecondaryName.ToString(), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Command.StringValue.IsEmpty())
+		{
+			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, Command.SecondaryName, nullptr, Command.Name);
+		}
+		else
+		{
+			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, Command.SecondaryName, nullptr, Command.Name, Command.StringValue);
+		}
+
+		return true;
+	}
+
+	bool ExecuteSetVariableDefault(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.SecondaryName.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidSetVariableDefaultCommand"),
+				TEXT("Variable default commands require a target blueprint and variable name."),
+				Command.NodeId));
+			return false;
+		}
+
+		FBPVariableDescription* const Variable = FindBlueprintMemberVariable(Blueprint, Command.SecondaryName);
+		if (Variable == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableDefaultTargetMissing"),
+				FString::Printf(TEXT("Unable to resolve variable '%s' while applying a default value."), *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (Variable->DefaultValue == Command.StringValue)
+		{
+			return true;
+		}
+
+		Blueprint->Modify();
+		Variable->DefaultValue = Command.StringValue;
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 		return true;
 	}
 
@@ -2187,6 +2454,21 @@ bool FVergilCommandExecutor::Execute(
 
 		case EVergilCommandType::AddDispatcherParameter:
 			bCommandSucceeded = ExecuteAddDispatcherParameter(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::EnsureVariable:
+			bCommandSucceeded = ExecuteEnsureVariable(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::SetVariableMetadata:
+			bCommandSucceeded = ExecuteSetVariableMetadata(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::SetVariableDefault:
+			bCommandSucceeded = ExecuteSetVariableDefault(Blueprint, Command, Diagnostics);
 			bOutChanged = bCommandSucceeded;
 			break;
 
