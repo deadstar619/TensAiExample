@@ -283,6 +283,23 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("DispatcherParameterObjectPathMissing");
 	}));
 
+	FVergilGraphDocument InvalidBlueprintMetadataDocument;
+	InvalidBlueprintMetadataDocument.SchemaVersion = Vergil::SchemaVersion;
+	InvalidBlueprintMetadataDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidBlueprintMetadata");
+	InvalidBlueprintMetadataDocument.Metadata.Add(NAME_None, TEXT("Broken"));
+	InvalidBlueprintMetadataDocument.Metadata.Add(TEXT("UnsupportedKey"), TEXT("Value"));
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Unsupported Blueprint metadata definitions should fail structural validation."), InvalidBlueprintMetadataDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Blueprint metadata validation reports empty metadata keys."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("BlueprintMetadataKeyMissing");
+	}));
+	TestTrue(TEXT("Blueprint metadata validation reports unsupported metadata keys."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("BlueprintMetadataKeyUnsupported");
+	}));
+
 	FVergilGraphDocument InvalidDocument;
 	InvalidDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidVariables");
@@ -640,9 +657,36 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilBlueprintMetadataModelTest,
+	"Vergil.Scaffold.BlueprintMetadataModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilFunctionDefinitionModelTest,
 	"Vergil.Scaffold.FunctionDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilBlueprintMetadataModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = Vergil::SchemaVersion;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_BlueprintMetadataModel");
+	Document.Metadata.Add(TEXT("BlueprintDisplayName"), TEXT("Vergil Asset"));
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Blueprint-level metadata test."));
+	Document.Metadata.Add(TEXT("BlueprintCategory"), TEXT("Vergil|Scaffold"));
+	Document.Metadata.Add(TEXT("HideCategories"), TEXT("Rendering, Actor"));
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid Blueprint metadata definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid Blueprint metadata definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored Blueprint metadata entries."), Document.Metadata.Num(), 4);
+	TestEqual(TEXT("Blueprint display name metadata should retain its authored value."), Document.Metadata.FindRef(TEXT("BlueprintDisplayName")), FString(TEXT("Vergil Asset")));
+	TestEqual(TEXT("Blueprint description metadata should retain its authored value."), Document.Metadata.FindRef(TEXT("BlueprintDescription")), FString(TEXT("Blueprint-level metadata test.")));
+	TestEqual(TEXT("Blueprint category metadata should retain its authored value."), Document.Metadata.FindRef(TEXT("BlueprintCategory")), FString(TEXT("Vergil|Scaffold")));
+	TestEqual(TEXT("Hide categories metadata should retain its authored value."), Document.Metadata.FindRef(TEXT("HideCategories")), FString(TEXT("Rendering, Actor")));
+
+	return true;
+}
 
 bool FVergilFunctionDefinitionModelTest::RunTest(const FString& Parameters)
 {
@@ -910,6 +954,7 @@ bool FVergilSchemaMigrationHelpersTest::RunTest(const FString& Parameters)
 	FVergilGraphDocument LegacyDocument;
 	LegacyDocument.SchemaVersion = LegacySchemaVersion;
 	LegacyDocument.BlueprintPath = TEXT("/Game/Tests/BP_LegacySchemaDocument");
+	LegacyDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Migrated metadata"));
 
 	FVergilVariableDefinition LegacyVariable;
 	LegacyVariable.Name = TEXT("LegacyFlag");
@@ -927,6 +972,7 @@ bool FVergilSchemaMigrationHelpersTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Migrated document should report the current schema version."), MigratedDocument.SchemaVersion, Vergil::SchemaVersion);
 	TestEqual(TEXT("Migration should preserve authored variables."), MigratedDocument.Variables.Num(), 1);
 	TestEqual(TEXT("Migration should preserve authored class defaults."), MigratedDocument.ClassDefaults.FindRef(TEXT("Replicates")), FString(TEXT("True")));
+	TestEqual(TEXT("Migration should preserve authored Blueprint metadata."), MigratedDocument.Metadata.FindRef(TEXT("BlueprintDescription")), FString(TEXT("Migrated metadata")));
 	TestTrue(TEXT("Migration should emit an informational applied diagnostic."), MigrationDiagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Code == TEXT("SchemaMigrationApplied") && Diagnostic.Severity == EVergilDiagnosticSeverity::Info;
@@ -988,6 +1034,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilBlueprintMetadataPlanningTest,
+	"Vergil.Scaffold.BlueprintMetadataPlanning",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilFunctionDefinitionPlanningTest,
 	"Vergil.Scaffold.FunctionDefinitionPlanning",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1025,6 +1076,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilVariableAuthoringExecutionTest,
 	"Vergil.Scaffold.VariableAuthoringExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilBlueprintMetadataAuthoringExecutionTest,
+	"Vergil.Scaffold.BlueprintMetadataAuthoringExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -1477,6 +1533,44 @@ bool FVergilFunctionDefinitionPlanningTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilBlueprintMetadataPlanningTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_BlueprintMetadataPlanning");
+	Document.Metadata.Add(TEXT("HideCategories"), TEXT("Rendering, Actor"));
+	Document.Metadata.Add(TEXT("BlueprintDisplayName"), TEXT("Vergil Metadata Blueprint"));
+	Document.Metadata.Add(TEXT("BlueprintCategory"), TEXT("Vergil|Planning"));
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Blueprint metadata planning test."));
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document = Document;
+	Request.TargetGraphName = TEXT("EventGraph");
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+
+	TestTrue(TEXT("Blueprint metadata planning should succeed."), Result.bSucceeded);
+	TestEqual(TEXT("Blueprint metadata planning should emit metadata commands plus the target graph ensure."), Result.Commands.Num(), 5);
+	if (!Result.bSucceeded || Result.Commands.Num() != 5)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("First metadata command should target BlueprintCategory after deterministic key sorting."), Result.Commands[0].Type, EVergilCommandType::SetBlueprintMetadata);
+	TestEqual(TEXT("First metadata command should target BlueprintCategory."), Result.Commands[0].Name, FName(TEXT("BlueprintCategory")));
+	TestEqual(TEXT("First metadata command should preserve the authored category value."), Result.Commands[0].StringValue, FString(TEXT("Vergil|Planning")));
+	TestEqual(TEXT("Second metadata command should target BlueprintDescription."), Result.Commands[1].Name, FName(TEXT("BlueprintDescription")));
+	TestEqual(TEXT("Second metadata command should preserve the authored description."), Result.Commands[1].StringValue, FString(TEXT("Blueprint metadata planning test.")));
+	TestEqual(TEXT("Third metadata command should target BlueprintDisplayName."), Result.Commands[2].Name, FName(TEXT("BlueprintDisplayName")));
+	TestEqual(TEXT("Third metadata command should preserve the authored display name."), Result.Commands[2].StringValue, FString(TEXT("Vergil Metadata Blueprint")));
+	TestEqual(TEXT("Fourth metadata command should target HideCategories."), Result.Commands[3].Name, FName(TEXT("HideCategories")));
+	TestEqual(TEXT("Fourth metadata command should preserve the authored hide-categories value."), Result.Commands[3].StringValue, FString(TEXT("Rendering, Actor")));
+	TestEqual(TEXT("Event graph ensure should still be emitted after blueprint metadata commands."), Result.Commands[4].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
 bool FVergilMacroDefinitionPlanningTest::RunTest(const FString& Parameters)
 {
 	FVergilMacroDefinition Macro;
@@ -1534,6 +1628,55 @@ bool FVergilMacroDefinitionPlanningTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Data output should retain its type metadata."), EnsureMacroGraph.Attributes.FindRef(TEXT("Output_1_PinCategory")), FString(TEXT("float")));
 
 	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[1].Type, EVergilCommandType::EnsureGraph);
+
+	return true;
+}
+
+bool FVergilBlueprintMetadataAuthoringExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilBlueprintMetadataAuthoring");
+	Document.Metadata.Add(TEXT("BlueprintDisplayName"), TEXT("Vergil Metadata Asset"));
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Blueprint metadata authoring test."));
+	Document.Metadata.Add(TEXT("BlueprintCategory"), TEXT("Vergil|Automation"));
+	Document.Metadata.Add(TEXT("HideCategories"), TEXT("Rendering, Actor;Actor\nInput"));
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Blueprint metadata authoring should succeed."), Result.bSucceeded);
+	TestTrue(TEXT("Blueprint metadata authoring should apply commands."), Result.bApplied);
+	TestEqual(TEXT("Blueprint metadata authoring should execute metadata commands plus the target graph ensure."), Result.ExecutedCommandCount, 5);
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Blueprint display name should match the authored metadata."), Blueprint->BlueprintDisplayName, FString(TEXT("Vergil Metadata Asset")));
+	TestEqual(TEXT("Blueprint description should match the authored metadata."), Blueprint->BlueprintDescription, FString(TEXT("Blueprint metadata authoring test.")));
+	TestEqual(TEXT("Blueprint category should match the authored metadata."), Blueprint->BlueprintCategory, FString(TEXT("Vergil|Automation")));
+	TestEqual(TEXT("HideCategories should dedupe and sort the authored categories."), Blueprint->HideCategories.Num(), 3);
+	if (Blueprint->HideCategories.Num() != 3)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("First hide category should sort lexically."), Blueprint->HideCategories[0], FString(TEXT("Actor")));
+	TestEqual(TEXT("Second hide category should sort lexically."), Blueprint->HideCategories[1], FString(TEXT("Input")));
+	TestEqual(TEXT("Third hide category should sort lexically."), Blueprint->HideCategories[2], FString(TEXT("Rendering")));
 
 	return true;
 }
@@ -2659,6 +2802,12 @@ bool FVergilExplicitCommandSurfaceExecutionTest::RunTest(const FString& Paramete
 
 	TArray<FVergilCompilerCommand> Commands;
 
+	FVergilCompilerCommand SetBlueprintDescription;
+	SetBlueprintDescription.Type = EVergilCommandType::SetBlueprintMetadata;
+	SetBlueprintDescription.Name = TEXT("BlueprintDescription");
+	SetBlueprintDescription.StringValue = TEXT("Explicit command metadata surface.");
+	Commands.Add(SetBlueprintDescription);
+
 	FVergilCompilerCommand EnsureFunctionGraph;
 	EnsureFunctionGraph.Type = EVergilCommandType::EnsureFunctionGraph;
 	EnsureFunctionGraph.GraphName = OldFunctionName;
@@ -2763,6 +2912,7 @@ bool FVergilExplicitCommandSurfaceExecutionTest::RunTest(const FString& Paramete
 		return false;
 	}
 
+	TestEqual(TEXT("Explicit blueprint metadata commands should update the Blueprint description."), Blueprint->BlueprintDescription, FString(TEXT("Explicit command metadata surface.")));
 	TestNull(TEXT("Old function graph name should be gone after rename."), FindBlueprintGraphByName(Blueprint, OldFunctionName));
 	TestNotNull(TEXT("Renamed function graph should exist."), FindBlueprintGraphByName(Blueprint, RenamedFunctionName));
 	TestNull(TEXT("Old macro graph name should be gone after rename."), FindBlueprintGraphByName(Blueprint, OldMacroName));
@@ -3044,6 +3194,37 @@ bool FVergilCommandPlanValidationTest::RunTest(const FString& Parameters)
 		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
 		TestNotNull(TEXT("Event graph should still exist on transient blueprints."), EventGraph);
 		TestNull(TEXT("Preflight failure should not create the deferred comment node."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, CommentNodeId) : nullptr);
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for blueprint metadata validation coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		const FString OriginalBlueprintDescription = Blueprint->BlueprintDescription;
+
+		FVergilCompilerCommand SetSupportedBlueprintMetadata;
+		SetSupportedBlueprintMetadata.Type = EVergilCommandType::SetBlueprintMetadata;
+		SetSupportedBlueprintMetadata.Name = TEXT("BlueprintDescription");
+		SetSupportedBlueprintMetadata.StringValue = TEXT("Should never apply");
+
+		FVergilCompilerCommand SetUnsupportedBlueprintMetadata;
+		SetUnsupportedBlueprintMetadata.Type = EVergilCommandType::SetBlueprintMetadata;
+		SetUnsupportedBlueprintMetadata.Name = TEXT("UnsupportedKey");
+		SetUnsupportedBlueprintMetadata.StringValue = TEXT("Also should never apply");
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(
+			Blueprint,
+			{ SetSupportedBlueprintMetadata, SetUnsupportedBlueprintMetadata });
+
+		TestFalse(TEXT("Unsupported blueprint metadata commands should fail execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported blueprint metadata commands should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Unsupported blueprint metadata commands should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Unsupported blueprint metadata keys should emit a preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("BlueprintMetadataKeyUnsupported")));
+		TestEqual(TEXT("Blueprint metadata preflight failure should preserve the original Blueprint description."), Blueprint->BlueprintDescription, OriginalBlueprintDescription);
 	}
 
 	{

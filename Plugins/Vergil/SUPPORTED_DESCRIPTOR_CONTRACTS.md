@@ -4,8 +4,9 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Interfaces`, `ClassDefaults`, `ConstructionScriptNodes`, `ConstructionScriptEdges`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Metadata`, `Variables`, `Functions`, `Dispatchers`, `Macros`, `Components`, `Interfaces`, `ClassDefaults`, `ConstructionScriptNodes`, `ConstructionScriptEdges`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
+- `Metadata` currently supports Blueprint-level keys `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`. The primary graph surface still uses top-level `Nodes` and `Edges`, while `ConstructionScriptNodes` and `ConstructionScriptEdges` are the dedicated document surface for `UserConstructionScript`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
 - `Functions` now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function-body authoring is still separate future work.
@@ -14,8 +15,8 @@ This document describes the current scaffold contracts implemented in code today
 - `Interfaces` now lower into Blueprint interface application for authored interface class paths.
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
-- The current schema version is `2`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`.
-- Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
+- The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`.
+- Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
 
@@ -23,6 +24,7 @@ This document describes the current scaffold contracts implemented in code today
 
 - `SchemaVersion` must be greater than zero.
 - Older document schemas can be upgraded explicitly when a supported forward migration path exists. A newer document schema than the compiler schema still emits a warning, and downgrades are not attempted.
+- Blueprint metadata entries must use non-empty supported keys.
 - Every variable must have a unique non-empty name and cannot conflict with a dispatcher name.
 - Every variable must declare a supported type category.
 - Variable metadata entries must use non-empty keys.
@@ -53,8 +55,15 @@ This document describes the current scaffold contracts implemented in code today
 - `Vergil::CanMigrateSchemaVersion(SourceSchemaVersion, TargetSchemaVersion)` reports whether a forward-only migration path exists.
 - `Vergil::MigrateDocumentSchema(...)` copies the source document, applies each supported forward migration step in order, and updates `SchemaVersion` on the migrated copy.
 - `Vergil::MigrateDocumentToCurrentSchema(...)` is the convenience helper for upgrading to the current scaffold schema version.
-- The current `1 -> 2` migration is additive: it advances the schema stamp while preserving authored document fields because the expanded whole-asset model remains backward-compatible with schema `1`.
+- The current `1 -> 2` and `2 -> 3` migrations are additive: they advance the schema stamp while preserving authored document fields because the expanded whole-asset model remains backward-compatible with older document revisions.
 - Dedicated compiler-pipeline orchestration for migration is still future work under `VGR-3001`; `VGR-1009` only adds the model-level helpers and diagnostics.
+
+## Blueprint metadata contracts
+
+- Blueprint metadata is authored from `Metadata` on the document.
+- Supported keys are `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories`.
+- The planner lowers supported document metadata into deterministic `SetBlueprintMetadata` commands before graph-authoring commands for the requested target graph.
+- `HideCategories` is authored as a single string on the document and, during direct command execution, accepts comma, semicolon, or newline separators before normalizing to unique sorted category entries on the Blueprint.
 
 ## Variable definition contracts
 
@@ -133,6 +142,7 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Explicit command plan contracts
 
+- `SetBlueprintMetadata` is supported through direct command-plan execution and currently accepts `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories` through `Name` plus `StringValue`.
 - `EnsureVariable`, `SetVariableMetadata`, and `SetVariableDefault` are supported through direct command-plan execution and remain the current end-to-end path for document-authored variable definitions.
 - `EnsureFunctionGraph` creates or resolves a Blueprint function graph. Use `GraphName` as the preferred graph identifier; `SecondaryName` is also accepted when `GraphName` is left at its default value.
 - `EnsureFunctionGraph` also synchronizes function purity, access flags, and signature pins when its attributes include `bPure`, `AccessSpecifier`, `InputCount`, or `OutputCount` plus the indexed `Input_<n>_*` / `Output_<n>_*` type metadata emitted by the compiler.
@@ -149,7 +159,7 @@ This document describes the current scaffold contracts implemented in code today
 - Malformed command plans fail during preflight with diagnostics and execute zero commands.
 - Deterministic command ordering currently normalizes at the execution-phase boundary: blueprint definition commands first, then graph structure, then `ConnectPins`, then `FinalizeNode`, then explicit `CompileBlueprint`, then post-compile `SetClassDefault`.
 - `SetNodeMetadata`, `ConnectPins`, and `FinalizeNode` currently require their target node or pin ids to come from earlier `AddNode` commands in the same plan.
-- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, component hierarchy definitions into `EnsureComponent` / `AttachComponent` / template-and-transform `SetComponentProperty` commands, implemented interfaces into `EnsureInterface`, and class defaults into post-compile `SetClassDefault` commands.
+- These explicit commands are the current command-surface support for `VGR-2001`. The document compiler now lowers `Metadata` into `SetBlueprintMetadata`, `Functions` into `EnsureFunctionGraph`, `Macros` into `EnsureMacroGraph`, component hierarchy definitions into `EnsureComponent` / `AttachComponent` / template-and-transform `SetComponentProperty` commands, implemented interfaces into `EnsureInterface`, and class defaults into post-compile `SetClassDefault` commands.
 
 ## Dispatcher contracts
 

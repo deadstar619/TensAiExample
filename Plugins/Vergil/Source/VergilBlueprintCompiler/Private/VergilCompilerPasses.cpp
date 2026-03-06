@@ -261,6 +261,30 @@ namespace
 		}
 	}
 
+	void AddBlueprintMetadataCommands(TArray<FVergilCompilerCommand>& Commands, const TMap<FName, FString>& Metadata)
+	{
+		TArray<FName> MetadataKeys;
+		Metadata.GetKeys(MetadataKeys);
+		MetadataKeys.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		for (const FName MetadataKey : MetadataKeys)
+		{
+			if (MetadataKey.IsNone())
+			{
+				continue;
+			}
+
+			FVergilCompilerCommand MetadataCommand;
+			MetadataCommand.Type = EVergilCommandType::SetBlueprintMetadata;
+			MetadataCommand.Name = MetadataKey;
+			MetadataCommand.StringValue = Metadata.FindRef(MetadataKey);
+			Commands.Add(MetadataCommand);
+		}
+	}
+
 	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompileRequest& Request)
 	{
 		return Request.TargetGraphName == ConstructionScriptGraphName
@@ -1356,6 +1380,8 @@ FName FVergilCommandPlanningPass::GetPassName() const
 bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVergilCompilerContext& Context, FVergilCompileResult& Result) const
 {
 	EnsureGenericFallbackHandler();
+
+	AddBlueprintMetadataCommands(Result.Commands, Request.Document.Metadata);
 
 	for (const FVergilVariableDefinition& Variable : Request.Document.Variables)
 	{

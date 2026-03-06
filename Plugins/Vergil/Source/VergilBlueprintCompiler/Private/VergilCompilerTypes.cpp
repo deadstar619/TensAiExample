@@ -15,6 +15,7 @@ namespace
 		{
 		case EVergilCommandType::EnsureDispatcher:
 		case EVergilCommandType::AddDispatcherParameter:
+		case EVergilCommandType::SetBlueprintMetadata:
 		case EVergilCommandType::EnsureVariable:
 		case EVergilCommandType::SetVariableMetadata:
 		case EVergilCommandType::SetVariableDefault:

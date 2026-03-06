@@ -22,6 +22,7 @@ namespace
 		switch (SourceSchemaVersion)
 		{
 		case 1:
+		case 2:
 			return true;
 
 		default:
@@ -44,9 +45,23 @@ namespace
 			static_cast<void>(InOutDocument);
 			return true;
 
+		case 2:
+			// Schema 3 adds Blueprint-level metadata as another additive/default-empty document
+			// surface, so forward migration only needs to advance the schema stamp.
+			static_cast<void>(InOutDocument);
+			return true;
+
 		default:
 			return false;
 		}
+	}
+
+	bool IsSupportedBlueprintMetadataKey(const FName MetadataKey)
+	{
+		return MetadataKey == TEXT("BlueprintDisplayName")
+			|| MetadataKey == TEXT("BlueprintDescription")
+			|| MetadataKey == TEXT("BlueprintCategory")
+			|| MetadataKey == TEXT("HideCategories");
 	}
 
 	bool IsSupportedTypeCategory(const FName PinCategory)
@@ -454,6 +469,30 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 	{
 		bIsValid = false;
 		AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("InvalidSchemaVersion"), TEXT("SchemaVersion must be greater than zero."));
+	}
+
+	for (const TPair<FName, FString>& MetadataEntry : Metadata)
+	{
+		if (MetadataEntry.Key.IsNone())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("BlueprintMetadataKeyMissing"),
+				TEXT("Blueprint metadata entries must use a non-empty key."));
+			continue;
+		}
+
+		if (!IsSupportedBlueprintMetadataKey(MetadataEntry.Key))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("BlueprintMetadataKeyUnsupported"),
+				FString::Printf(TEXT("Blueprint metadata key '%s' is not currently supported."), *MetadataEntry.Key.ToString()));
+		}
 	}
 
 	TSet<FGuid> NodeIds;

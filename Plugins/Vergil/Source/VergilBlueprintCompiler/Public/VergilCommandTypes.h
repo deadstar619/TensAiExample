@@ -8,6 +8,7 @@ enum class EVergilCommandType : uint8
 {
 	EnsureDispatcher,
 	AddDispatcherParameter,
+	SetBlueprintMetadata,
 	EnsureVariable,
 	SetVariableMetadata,
 	SetVariableDefault,

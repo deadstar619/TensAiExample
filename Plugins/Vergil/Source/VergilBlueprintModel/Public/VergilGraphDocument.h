@@ -364,6 +364,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 	FString BlueprintPath;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TMap<FName, FString> Metadata;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilVariableDefinition> Variables;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")

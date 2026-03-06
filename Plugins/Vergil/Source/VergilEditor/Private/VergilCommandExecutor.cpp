@@ -457,6 +457,7 @@ namespace
 	{
 		return Command.Type == EVergilCommandType::EnsureDispatcher
 			|| Command.Type == EVergilCommandType::AddDispatcherParameter
+			|| Command.Type == EVergilCommandType::SetBlueprintMetadata
 			|| Command.Type == EVergilCommandType::EnsureVariable
 			|| Command.Type == EVergilCommandType::SetVariableMetadata
 			|| Command.Type == EVergilCommandType::SetVariableDefault
@@ -482,6 +483,48 @@ namespace
 	bool IsExplicitCompileCommand(const FVergilCompilerCommand& Command)
 	{
 		return Command.Type == EVergilCommandType::CompileBlueprint;
+	}
+
+	bool IsSupportedBlueprintMetadataKey(const FName MetadataKey)
+	{
+		return MetadataKey == TEXT("BlueprintDisplayName")
+			|| MetadataKey == TEXT("BlueprintDescription")
+			|| MetadataKey == TEXT("BlueprintCategory")
+			|| MetadataKey == TEXT("HideCategories");
+	}
+
+	void ParseBlueprintHideCategories(const FString& InValue, TArray<FString>& OutCategories)
+	{
+		OutCategories.Reset();
+
+		const FString TrimmedValue = InValue.TrimStartAndEnd();
+		if (TrimmedValue.IsEmpty())
+		{
+			return;
+		}
+
+		FString DelimitedValue = TrimmedValue;
+		DelimitedValue.ReplaceInline(TEXT(";"), TEXT(","));
+		DelimitedValue.ReplaceInline(TEXT("\r\n"), TEXT(","));
+		DelimitedValue.ReplaceInline(TEXT("\n"), TEXT(","));
+
+		TArray<FString> RawCategories;
+		DelimitedValue.ParseIntoArray(RawCategories, TEXT(","), true);
+		if (RawCategories.Num() == 0)
+		{
+			RawCategories.Add(DelimitedValue);
+		}
+
+		for (const FString& RawCategory : RawCategories)
+		{
+			const FString Category = RawCategory.TrimStartAndEnd();
+			if (!Category.IsEmpty())
+			{
+				OutCategories.AddUnique(Category);
+			}
+		}
+
+		OutCategories.Sort();
 	}
 
 	bool IsExecConnectionCommand(const FVergilCompilerCommand& Command, const FVergilExecutionState& State)
@@ -2036,6 +2079,62 @@ namespace
 		}
 
 		return true;
+	}
+
+	bool ExecuteSetBlueprintMetadata(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Blueprint == nullptr || Command.Name.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidSetBlueprintMetadataCommand"),
+				TEXT("Blueprint metadata commands require a target blueprint and metadata key."),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!IsSupportedBlueprintMetadataKey(Command.Name))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("BlueprintMetadataKeyUnsupported"),
+				FString::Printf(TEXT("Blueprint metadata key '%s' is not currently supported."), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		Blueprint->Modify();
+
+		if (Command.Name == TEXT("BlueprintDisplayName"))
+		{
+			Blueprint->BlueprintDisplayName = Command.StringValue;
+			return true;
+		}
+
+		if (Command.Name == TEXT("BlueprintDescription"))
+		{
+			Blueprint->BlueprintDescription = Command.StringValue;
+			return true;
+		}
+
+		if (Command.Name == TEXT("BlueprintCategory"))
+		{
+			Blueprint->BlueprintCategory = Command.StringValue;
+			return true;
+		}
+
+		if (Command.Name == TEXT("HideCategories"))
+		{
+			ParseBlueprintHideCategories(Command.StringValue, Blueprint->HideCategories);
+			return true;
+		}
+
+		Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("BlueprintMetadataKeyUnsupported"),
+			FString::Printf(TEXT("Blueprint metadata key '%s' is not currently supported."), *Command.Name.ToString()),
+			Command.NodeId));
+		return false;
 	}
 
 	bool ExecuteEnsureVariable(UBlueprint* Blueprint, const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
@@ -4135,6 +4234,17 @@ namespace
 				ValidateOptionalBoolAttribute(Command, TEXT("bIsArray"), TEXT("DispatcherParameterArrayFlagInvalid"));
 				break;
 
+			case EVergilCommandType::SetBlueprintMetadata:
+				if (Command.Name.IsNone())
+				{
+					AddValidationError(TEXT("InvalidSetBlueprintMetadataCommand"), TEXT("Blueprint metadata commands require a metadata key in Name."), Command.NodeId);
+				}
+				else if (!IsSupportedBlueprintMetadataKey(Command.Name))
+				{
+					AddValidationError(TEXT("BlueprintMetadataKeyUnsupported"), FString::Printf(TEXT("Blueprint metadata key '%s' is not currently supported."), *Command.Name.ToString()), Command.NodeId);
+				}
+				break;
+
 			case EVergilCommandType::EnsureVariable:
 				if (Command.SecondaryName.IsNone())
 				{
@@ -4906,6 +5016,11 @@ bool FVergilCommandExecutor::Execute(
 
 		case EVergilCommandType::AddDispatcherParameter:
 			bCommandSucceeded = ExecuteAddDispatcherParameter(Blueprint, Command, Diagnostics);
+			bOutChanged = bCommandSucceeded;
+			break;
+
+		case EVergilCommandType::SetBlueprintMetadata:
+			bCommandSucceeded = ExecuteSetBlueprintMetadata(Blueprint, Command, Diagnostics);
 			bOutChanged = bCommandSucceeded;
 			break;
 

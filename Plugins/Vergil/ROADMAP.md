@@ -70,7 +70,7 @@ Goal:
 
 Tickets:
 
-- `VGR-1001` Add Blueprint-level metadata
+- [x] `VGR-1001` Add Blueprint-level metadata
 - [x] `VGR-1002` Add variable definitions with type, flags, metadata, and defaults
 - [x] `VGR-1003` Add function definitions with purity, access, inputs, and outputs
 - [x] `VGR-1004` Add macro graph definitions
@@ -81,6 +81,13 @@ Tickets:
 - [x] `VGR-1009` Add schema migration helpers
 - [x] `VGR-1010` Extend structural validation for all new model types
 
+Session note for `VGR-1001` (2026-03-06):
+
+- `FVergilGraphDocument` now carries a top-level `Metadata` map for Blueprint-level authoring, currently supporting `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories`.
+- The planner lowers supported document metadata into deterministic `SetBlueprintMetadata` commands, and the editor executor applies the same command surface directly to `UBlueprint`.
+- `Vergil::SchemaVersion` is now `3`, and the additive `2 -> 3` migration preserves authored document fields while enabling the new metadata surface.
+- `Vergil.Scaffold.BlueprintMetadataModel`, `Vergil.Scaffold.BlueprintMetadataPlanning`, and `Vergil.Scaffold.BlueprintMetadataAuthoringExecution` now cover model retention, deterministic planning, and end-to-end execution, with explicit-command and preflight-validation coverage extended alongside them.
+
 Session note for `VGR-1008` (2026-03-06):
 
 - `FVergilGraphDocument` now carries dedicated `ConstructionScriptNodes` and `ConstructionScriptEdges` surfaces with structural validation coverage and explicit planning support when `TargetGraphName` is `UserConstructionScript`.
@@ -88,7 +95,7 @@ Session note for `VGR-1008` (2026-03-06):
 
 Session note for `VGR-1009` (2026-03-06):
 
-- `Vergil::SchemaVersion` is now `2`, and the model module exposes `CanMigrateSchemaVersion(...)`, `MigrateDocumentSchema(...)`, and `MigrateDocumentToCurrentSchema(...)` as explicit forward-migration helpers.
+- Under `VGR-1009`, `Vergil::SchemaVersion` advanced to `2`, and the model module exposed `CanMigrateSchemaVersion(...)`, `MigrateDocumentSchema(...)`, and `MigrateDocumentToCurrentSchema(...)` as explicit forward-migration helpers.
 - The current `1 -> 2` step is additive and preserves authored document fields while advancing the schema stamp, which keeps the whole-asset document surface backward-compatible with schema `1`.
 - `Vergil.Scaffold.SchemaMigrationHelpers` now covers successful forward migration, same-version no-op migration, downgrade rejection, and missing-path diagnostics. Dedicated compiler-pass orchestration remains future work under `VGR-3001`.
 
@@ -350,13 +357,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1001`
-2. `VGR-2004`
-3. `VGR-3001`
-4. `VGR-4009`
-5. `VGR-8005`
+1. `VGR-2004`
+2. `VGR-3001`
+3. `VGR-4009`
+4. `VGR-8005`
+5. `VGR-9007`
 
-This moves Vergil from explicit command coverage toward document-driven asset authoring.
+This keeps pressure on command-surface hardening and migration/documentation work now that the canonical asset model surface is broader.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:
