@@ -1936,12 +1936,12 @@ bool FVergilClassDefaultDefinitionPlanningTest::RunTest(const FString& Parameter
 		return false;
 	}
 
-	TestEqual(TEXT("Planner should lower class defaults into SetClassDefault."), Result.Commands[0].Type, EVergilCommandType::SetClassDefault);
-	TestEqual(TEXT("Class default lowering should sort keys deterministically."), Result.Commands[0].Name, FName(TEXT("InitialLifeSpan")));
-	TestEqual(TEXT("InitialLifeSpan should preserve the authored value."), Result.Commands[0].StringValue, FString(TEXT("2.5")));
-	TestEqual(TEXT("Second class default command should target Replicates."), Result.Commands[1].Name, FName(TEXT("Replicates")));
-	TestEqual(TEXT("Second class default command should preserve the authored value."), Result.Commands[1].StringValue, FString(TEXT("True")));
-	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[2].Type, EVergilCommandType::EnsureGraph);
+	TestEqual(TEXT("Deterministic command ordering should emit the target graph ensure before post-compile defaults."), Result.Commands[0].Type, EVergilCommandType::EnsureGraph);
+	TestEqual(TEXT("Planner should lower class defaults into SetClassDefault."), Result.Commands[1].Type, EVergilCommandType::SetClassDefault);
+	TestEqual(TEXT("Class default lowering should sort keys deterministically."), Result.Commands[1].Name, FName(TEXT("InitialLifeSpan")));
+	TestEqual(TEXT("InitialLifeSpan should preserve the authored value."), Result.Commands[1].StringValue, FString(TEXT("2.5")));
+	TestEqual(TEXT("Second class default command should target Replicates."), Result.Commands[2].Name, FName(TEXT("Replicates")));
+	TestEqual(TEXT("Second class default command should preserve the authored value."), Result.Commands[2].StringValue, FString(TEXT("True")));
 
 	return true;
 }
@@ -2816,6 +2816,73 @@ bool FVergilExplicitCommandSurfaceExecutionTest::RunTest(const FString& Paramete
 			&& RenamedVariableProperty->GetPropertyValue_InContainer(GeneratedClass->GetDefaultObject()));
 
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCommandPlanOrderingTest,
+	"Vergil.Scaffold.CommandPlanOrdering",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilCommandPlanOrderingTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FName VariableName(TEXT("DeterministicFlag"));
+
+	FVergilCompilerCommand SetClassDefault;
+	SetClassDefault.Type = EVergilCommandType::SetClassDefault;
+	SetClassDefault.Name = VariableName;
+	SetClassDefault.StringValue = TEXT("True");
+
+	FVergilCompilerCommand CompileBlueprint;
+	CompileBlueprint.Type = EVergilCommandType::CompileBlueprint;
+
+	FVergilCompilerCommand EnsureVariable;
+	EnsureVariable.Type = EVergilCommandType::EnsureVariable;
+	EnsureVariable.SecondaryName = VariableName;
+	EnsureVariable.Attributes.Add(TEXT("PinCategory"), TEXT("bool"));
+
+	const TArray<FVergilCompilerCommand> Commands = { SetClassDefault, CompileBlueprint, EnsureVariable };
+	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, Commands);
+
+	TestTrue(TEXT("Phase-normalized command plan should apply cleanly."), Result.bSucceeded);
+	TestTrue(TEXT("Phase-normalized command plan should mutate the blueprint."), Result.bApplied);
+	TestEqual(TEXT("Every normalized command should execute exactly once."), Result.ExecutedCommandCount, Commands.Num());
+	TestEqual(TEXT("Returned command plan should preserve command count."), Result.Commands.Num(), Commands.Num());
+	if (!Result.bSucceeded || !Result.bApplied || Result.Commands.Num() != Commands.Num())
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Blueprint-definition commands should be normalized first."), Result.Commands[0].Type, EVergilCommandType::EnsureVariable);
+	TestEqual(TEXT("Explicit compile commands should normalize before post-compile defaults."), Result.Commands[1].Type, EVergilCommandType::CompileBlueprint);
+	TestEqual(TEXT("Class default commands should normalize last."), Result.Commands[2].Type, EVergilCommandType::SetClassDefault);
+
+	UClass* const GeneratedClass = Blueprint->GeneratedClass.Get();
+	TestNotNull(TEXT("Generated class should exist after normalized command execution."), GeneratedClass);
+	FBoolProperty* const VariableProperty = GeneratedClass != nullptr
+		? FindFProperty<FBoolProperty>(GeneratedClass, VariableName)
+		: nullptr;
+	TestNotNull(TEXT("Normalized command execution should create the authored bool variable."), VariableProperty);
+	TestTrue(
+		TEXT("Normalized command execution should apply the authored class default after compile."),
+		VariableProperty != nullptr
+			&& GeneratedClass != nullptr
+			&& VariableProperty->GetPropertyValue_InContainer(GeneratedClass->GetDefaultObject()));
+
+	return VariableProperty != nullptr && GeneratedClass != nullptr;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

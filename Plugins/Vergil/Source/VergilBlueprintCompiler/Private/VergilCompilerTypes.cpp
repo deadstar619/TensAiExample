@@ -1,11 +1,63 @@
 #include "VergilCompilerTypes.h"
 
+#include "Algo/StableSort.h"
+
 namespace
 {
 	const TCHAR* LexBoolString(const bool bValue)
 	{
 		return bValue ? TEXT("true") : TEXT("false");
 	}
+
+	int32 GetDeterministicCommandPhase(const FVergilCompilerCommand& Command)
+	{
+		switch (Command.Type)
+		{
+		case EVergilCommandType::EnsureDispatcher:
+		case EVergilCommandType::AddDispatcherParameter:
+		case EVergilCommandType::EnsureVariable:
+		case EVergilCommandType::SetVariableMetadata:
+		case EVergilCommandType::SetVariableDefault:
+		case EVergilCommandType::EnsureFunctionGraph:
+		case EVergilCommandType::EnsureMacroGraph:
+		case EVergilCommandType::EnsureComponent:
+		case EVergilCommandType::AttachComponent:
+		case EVergilCommandType::SetComponentProperty:
+		case EVergilCommandType::EnsureInterface:
+		case EVergilCommandType::RenameMember:
+			return 0;
+
+		case EVergilCommandType::EnsureGraph:
+		case EVergilCommandType::AddNode:
+		case EVergilCommandType::SetNodeMetadata:
+		case EVergilCommandType::RemoveNode:
+		case EVergilCommandType::MoveNode:
+			return 1;
+
+		case EVergilCommandType::ConnectPins:
+			return 2;
+
+		case EVergilCommandType::FinalizeNode:
+			return 3;
+
+		case EVergilCommandType::CompileBlueprint:
+			return 4;
+
+		case EVergilCommandType::SetClassDefault:
+			return 5;
+
+		default:
+			return 6;
+		}
+	}
+}
+
+void Vergil::NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands)
+{
+	Algo::StableSort(Commands, [](const FVergilCompilerCommand& A, const FVergilCompilerCommand& B)
+	{
+		return GetDeterministicCommandPhase(A) < GetDeterministicCommandPhase(B);
+	});
 }
 
 int32 FVergilDiagnosticSummary::GetTotalCount() const

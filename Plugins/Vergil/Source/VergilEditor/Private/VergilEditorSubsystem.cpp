@@ -83,9 +83,10 @@ FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blue
 {
 	FVergilCompileResult Result;
 	Result.Commands = Commands;
+	Vergil::NormalizeCommandPlan(Result.Commands);
 
 	const FVergilCommandExecutor Executor;
-	Result.bApplied = Executor.Execute(Blueprint, Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
+	Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
 	RefreshCompileResultState(Result);
 	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 	return Result;

@@ -4874,7 +4874,10 @@ bool FVergilCommandExecutor::Execute(
 		*OutExecutedCommandCount = 0;
 	}
 
-	if (!ValidateCommandPlan(Blueprint, Commands, Diagnostics))
+	TArray<FVergilCompilerCommand> OrderedCommands = Commands;
+	Vergil::NormalizeCommandPlan(OrderedCommands);
+
+	if (!ValidateCommandPlan(Blueprint, OrderedCommands, Diagnostics))
 	{
 		return false;
 	}
@@ -5017,7 +5020,7 @@ bool FVergilCommandExecutor::Execute(
 		return bCommandSucceeded;
 	};
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (!IsBlueprintDefinitionCommand(Command))
 		{
@@ -5035,7 +5038,7 @@ bool FVergilCommandExecutor::Execute(
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 	}
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (IsBlueprintDefinitionCommand(Command)
 			|| IsPostBlueprintCompileCommand(Command)
@@ -5051,9 +5054,9 @@ bool FVergilCommandExecutor::Execute(
 		bExecutedGraphStructuralChange |= bCommandChanged;
 	}
 
-	RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+	RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (Command.Type != EVergilCommandType::ConnectPins || IsExecConnectionCommand(Command, State))
 		{
@@ -5065,9 +5068,9 @@ bool FVergilCommandExecutor::Execute(
 		bExecutedGraphStructuralChange |= bCommandChanged;
 	}
 
-	RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+	RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (Command.Type != EVergilCommandType::ConnectPins || !IsExecConnectionCommand(Command, State))
 		{
@@ -5083,10 +5086,10 @@ bool FVergilCommandExecutor::Execute(
 	{
 		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
-		RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 	}
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (!IsPostCompileFinalizeCommand(Command))
 		{
@@ -5103,10 +5106,10 @@ bool FVergilCommandExecutor::Execute(
 		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
-		RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 
 		bool bReappliedAnyConnection = false;
-		for (const FVergilCompilerCommand& Command : Commands)
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
 		{
 			if (Command.Type != EVergilCommandType::ConnectPins || IsExecConnectionCommand(Command, State))
 			{
@@ -5118,9 +5121,9 @@ bool FVergilCommandExecutor::Execute(
 			bReappliedAnyConnection |= bCommandChanged;
 		}
 
-		RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 
-		for (const FVergilCompilerCommand& Command : Commands)
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
 		{
 			if (Command.Type != EVergilCommandType::ConnectPins || !IsExecConnectionCommand(Command, State))
 			{
@@ -5138,7 +5141,7 @@ bool FVergilCommandExecutor::Execute(
 		}
 	}
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (!IsExplicitCompileCommand(Command))
 		{
@@ -5152,10 +5155,10 @@ bool FVergilCommandExecutor::Execute(
 
 	if (bExecutedExplicitCompile)
 	{
-		RefreshRegisteredPins(Blueprint, Commands, State, Diagnostics);
+		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 	}
 
-	for (const FVergilCompilerCommand& Command : Commands)
+	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
 		if (!IsPostBlueprintCompileCommand(Command))
 		{

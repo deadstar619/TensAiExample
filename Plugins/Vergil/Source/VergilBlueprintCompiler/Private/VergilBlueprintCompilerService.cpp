@@ -41,6 +41,8 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		}
 	}
 
+	Vergil::NormalizeCommandPlan(Result.Commands);
+
 	Result.bSucceeded = !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;

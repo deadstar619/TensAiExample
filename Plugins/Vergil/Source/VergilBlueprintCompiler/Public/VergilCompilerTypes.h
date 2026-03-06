@@ -172,6 +172,7 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary
 
 namespace Vergil
 {
+	VERGILBLUEPRINTCOMPILER_API void NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands);
 	VERGILBLUEPRINTCOMPILER_API FVergilDiagnosticSummary SummarizeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics);
 	VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary SummarizeCompileResult(const FVergilCompileResult& Result);
 	VERGILBLUEPRINTCOMPILER_API FVergilExecutionSummary SummarizeApplyResult(const FVergilCompileResult& Result);
