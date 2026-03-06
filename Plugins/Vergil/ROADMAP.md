@@ -97,7 +97,7 @@ Session note for `VGR-1009` (2026-03-06):
 
 - Under `VGR-1009`, `Vergil::SchemaVersion` advanced to `2`, and the model module exposed `CanMigrateSchemaVersion(...)`, `MigrateDocumentSchema(...)`, and `MigrateDocumentToCurrentSchema(...)` as explicit forward-migration helpers.
 - The current `1 -> 2` step is additive and preserves authored document fields while advancing the schema stamp, which keeps the whole-asset document surface backward-compatible with schema `1`.
-- `Vergil.Scaffold.SchemaMigrationHelpers` now covers successful forward migration, same-version no-op migration, downgrade rejection, and missing-path diagnostics. Dedicated compiler-pass orchestration remains future work under `VGR-3001`.
+- `Vergil.Scaffold.SchemaMigrationHelpers` now covers successful forward migration, same-version no-op migration, downgrade rejection, and missing-path diagnostics. Compiler-pass orchestration is now complete under `VGR-3001`.
 
 Session note for `VGR-1010` (2026-03-06):
 
@@ -165,7 +165,7 @@ Goal:
 
 Tickets:
 
-- `VGR-3001` Add schema migration pass
+- [x] `VGR-3001` Add schema migration pass
 - `VGR-3002` Add semantic validation pass
 - `VGR-3003` Add symbol resolution pass
 - `VGR-3004` Add type resolution and wildcard resolution pass
@@ -181,6 +181,12 @@ Acceptance criteria:
 - failures identify pass, node, and cause
 - wildcard-heavy nodes resolve without heuristics
 - dry-run and apply produce identical command plans
+
+Session note for `VGR-3001` (2026-03-06):
+
+- `FVergilSchemaMigrationPass` now runs first in `FVergilBlueprintCompilerService::Compile(...)`, upgrades supported legacy documents into a compiler working copy, and feeds that migrated view into structural validation plus command planning.
+- `FVergilCompilerContext` now carries the active document view so later passes consume the migrated copy instead of the raw request payload when migration happens.
+- `Vergil.Scaffold.CompilerSchemaMigrationPass` now verifies legacy-schema compile requests emit `SchemaMigrationApplied`, avoid future-schema warnings after migration, and still plan authored commands deterministically.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -364,13 +370,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3001`
+1. `VGR-3002`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
-5. `VGR-3002`
+5. `VGR-3003`
 
-This keeps pressure on migration hardening, roundtrip validation, and inspection/documentation work now that the command surface is easier to inspect and replay.
+This keeps pressure on semantic pipeline hardening, remaining asset authoring, and release/documentation work now that schema migration is part of the compile path.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

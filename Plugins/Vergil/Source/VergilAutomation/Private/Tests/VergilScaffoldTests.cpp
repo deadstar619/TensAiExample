@@ -1015,6 +1015,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.CompilerRequiresBlueprint",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCompilerSchemaMigrationPassTest,
+	"Vergil.Scaffold.CompilerSchemaMigrationPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1025,6 +1030,72 @@ bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("Compile should fail without a target blueprint."), Result.bSucceeded);
 	TestTrue(TEXT("Compile should report diagnostics."), Result.Diagnostics.Num() > 0);
+	return true;
+}
+
+bool FVergilCompilerSchemaMigrationPassTest::RunTest(const FString& Parameters)
+{
+	const int32 LegacySchemaVersion = Vergil::SchemaVersion - 1;
+	TestTrue(TEXT("The scaffold should retain at least one older schema for compiler migration coverage."), LegacySchemaVersion > 0);
+	if (LegacySchemaVersion <= 0)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Compiler migration coverage requires a transient Blueprint."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphDocument LegacyDocument;
+	LegacyDocument.SchemaVersion = LegacySchemaVersion;
+	LegacyDocument.BlueprintPath = TEXT("/Game/Tests/BP_CompilerSchemaMigration");
+	LegacyDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Compiler migration pass coverage."));
+
+	FVergilVariableDefinition LegacyVariable;
+	LegacyVariable.Name = TEXT("MigratedFlag");
+	LegacyVariable.Type.PinCategory = TEXT("bool");
+	LegacyVariable.DefaultValue = TEXT("true");
+	LegacyDocument.Variables.Add(LegacyVariable);
+	LegacyDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+
+	FVergilCompileRequest LegacyRequest;
+	LegacyRequest.TargetBlueprint = Blueprint;
+	LegacyRequest.Document = LegacyDocument;
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult LegacyResult = CompilerService.Compile(LegacyRequest);
+
+	TestTrue(TEXT("Compile should succeed for a legacy document when a forward migration path exists."), LegacyResult.bSucceeded);
+	TestTrue(TEXT("Compile should emit a migration-applied diagnostic for legacy documents."), LegacyResult.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationApplied") && Diagnostic.Severity == EVergilDiagnosticSeverity::Info;
+	}));
+	TestFalse(TEXT("Compile should not emit future-schema warnings for migrated legacy documents."), LegacyResult.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaVersionFuture");
+	}));
+	TestTrue(TEXT("Compile should still plan the authored legacy variable after migration."), LegacyResult.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::EnsureVariable && Command.SecondaryName == TEXT("MigratedFlag");
+	}));
+	TestTrue(TEXT("Compile should still plan the authored legacy class default after migration."), LegacyResult.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::SetClassDefault && Command.Name == TEXT("Replicates") && Command.StringValue == TEXT("True");
+	}));
+
+	FVergilCompileRequest CurrentRequest = LegacyRequest;
+	CurrentRequest.Document.SchemaVersion = Vergil::SchemaVersion;
+
+	const FVergilCompileResult CurrentResult = CompilerService.Compile(CurrentRequest);
+	TestTrue(TEXT("Compile should succeed for a current-schema document."), CurrentResult.bSucceeded);
+	TestFalse(TEXT("Compile should not emit migration diagnostics for a current-schema document."), CurrentResult.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationApplied");
+	}));
+
 	return true;
 }
 

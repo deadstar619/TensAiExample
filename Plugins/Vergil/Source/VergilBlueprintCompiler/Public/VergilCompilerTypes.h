@@ -15,11 +15,13 @@ public:
 	FVergilCompilerContext(
 		UBlueprint* InBlueprint,
 		UEdGraph* InGraph,
+		const FVergilGraphDocument* InDocument,
 		TArray<FVergilDiagnostic>* InDiagnostics,
 		TArray<FVergilCompilerCommand>* InCommands,
 		const FName InGraphName)
 		: Blueprint(InBlueprint)
 		, Graph(InGraph)
+		, Document(InDocument)
 		, Diagnostics(InDiagnostics)
 		, Commands(InCommands)
 		, GraphName(InGraphName)
@@ -46,6 +48,24 @@ public:
 		return Graph;
 	}
 
+	const FVergilGraphDocument& GetDocument() const
+	{
+		check(Document != nullptr);
+		return *Document;
+	}
+
+	void SetWorkingDocument(const FVergilGraphDocument& InDocument)
+	{
+		WorkingDocument = InDocument;
+		Document = &WorkingDocument;
+	}
+
+	void SetWorkingDocument(FVergilGraphDocument&& InDocument)
+	{
+		WorkingDocument = MoveTemp(InDocument);
+		Document = &WorkingDocument;
+	}
+
 	FName GetGraphName() const
 	{
 		return GraphName;
@@ -64,6 +84,8 @@ public:
 private:
 	UBlueprint* Blueprint = nullptr;
 	UEdGraph* Graph = nullptr;
+	const FVergilGraphDocument* Document = nullptr;
+	FVergilGraphDocument WorkingDocument;
 	TArray<FVergilDiagnostic>* Diagnostics = nullptr;
 	TArray<FVergilCompilerCommand>* Commands = nullptr;
 	FName GraphName = TEXT("EventGraph");

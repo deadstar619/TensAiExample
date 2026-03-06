@@ -285,18 +285,20 @@ namespace
 		}
 	}
 
-	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompileRequest& Request)
+	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompilerContext& Context)
 	{
-		return Request.TargetGraphName == ConstructionScriptGraphName
-			? Request.Document.ConstructionScriptNodes
-			: Request.Document.Nodes;
+		const FVergilGraphDocument& Document = Context.GetDocument();
+		return Context.GetGraphName() == ConstructionScriptGraphName
+			? Document.ConstructionScriptNodes
+			: Document.Nodes;
 	}
 
-	const TArray<FVergilGraphEdge>& GetTargetGraphEdges(const FVergilCompileRequest& Request)
+	const TArray<FVergilGraphEdge>& GetTargetGraphEdges(const FVergilCompilerContext& Context)
 	{
-		return Request.TargetGraphName == ConstructionScriptGraphName
-			? Request.Document.ConstructionScriptEdges
-			: Request.Document.Edges;
+		const FVergilGraphDocument& Document = Context.GetDocument();
+		return Context.GetGraphName() == ConstructionScriptGraphName
+			? Document.ConstructionScriptEdges
+			: Document.Edges;
 	}
 
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
@@ -1358,14 +1360,46 @@ namespace
 	}
 }
 
+FName FVergilSchemaMigrationPass::GetPassName() const
+{
+	return TEXT("SchemaMigration");
+}
+
+bool FVergilSchemaMigrationPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	const FVergilGraphDocument& SourceDocument = Context.GetDocument();
+	if (SourceDocument.SchemaVersion >= Vergil::SchemaVersion)
+	{
+		return true;
+	}
+
+	FVergilGraphDocument MigratedDocument;
+	if (!Vergil::MigrateDocumentToCurrentSchema(SourceDocument, MigratedDocument, &Result.Diagnostics))
+	{
+		return false;
+	}
+
+	Context.SetWorkingDocument(MoveTemp(MigratedDocument));
+	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
 FName FVergilStructuralValidationPass::GetPassName() const
 {
 	return TEXT("StructuralValidation");
 }
 
-bool FVergilStructuralValidationPass::Run(const FVergilCompileRequest& Request, FVergilCompilerContext& Context, FVergilCompileResult& Result) const
+bool FVergilStructuralValidationPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
 {
-	Request.Document.IsStructurallyValid(&Result.Diagnostics);
+	Context.GetDocument().IsStructurallyValid(&Result.Diagnostics);
 	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
@@ -1381,9 +1415,11 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 {
 	EnsureGenericFallbackHandler();
 
-	AddBlueprintMetadataCommands(Result.Commands, Request.Document.Metadata);
+	const FVergilGraphDocument& Document = Context.GetDocument();
 
-	for (const FVergilVariableDefinition& Variable : Request.Document.Variables)
+	AddBlueprintMetadataCommands(Result.Commands, Document.Metadata);
+
+	for (const FVergilVariableDefinition& Variable : Document.Variables)
 	{
 		FVergilCompilerCommand EnsureVariableCommand;
 		EnsureVariableCommand.Type = EVergilCommandType::EnsureVariable;
@@ -1418,7 +1454,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(DefaultCommand);
 	}
 
-	for (const FVergilFunctionDefinition& Function : Request.Document.Functions)
+	for (const FVergilFunctionDefinition& Function : Document.Functions)
 	{
 		FVergilCompilerCommand EnsureFunctionGraphCommand;
 		EnsureFunctionGraphCommand.Type = EVergilCommandType::EnsureFunctionGraph;
@@ -1428,7 +1464,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(EnsureFunctionGraphCommand);
 	}
 
-	for (const FVergilMacroDefinition& Macro : Request.Document.Macros)
+	for (const FVergilMacroDefinition& Macro : Document.Macros)
 	{
 		FVergilCompilerCommand EnsureMacroGraphCommand;
 		EnsureMacroGraphCommand.Type = EVergilCommandType::EnsureMacroGraph;
@@ -1438,7 +1474,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(EnsureMacroGraphCommand);
 	}
 
-	for (const FVergilDispatcherDefinition& Dispatcher : Request.Document.Dispatchers)
+	for (const FVergilDispatcherDefinition& Dispatcher : Document.Dispatchers)
 	{
 		FVergilCompilerCommand EnsureDispatcherCommand;
 		EnsureDispatcherCommand.Type = EVergilCommandType::EnsureDispatcher;
@@ -1468,7 +1504,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		}
 	}
 
-	for (const FVergilComponentDefinition& Component : Request.Document.Components)
+	for (const FVergilComponentDefinition& Component : Document.Components)
 	{
 		FVergilCompilerCommand EnsureComponentCommand;
 		EnsureComponentCommand.Type = EVergilCommandType::EnsureComponent;
@@ -1477,7 +1513,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(EnsureComponentCommand);
 	}
 
-	for (const FVergilComponentDefinition& Component : Request.Document.Components)
+	for (const FVergilComponentDefinition& Component : Document.Components)
 	{
 		if (!Component.ParentComponentName.IsNone())
 		{
@@ -1493,7 +1529,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		AddComponentTransformCommands(Result.Commands, Component);
 	}
 
-	for (const FVergilInterfaceDefinition& Interface : Request.Document.Interfaces)
+	for (const FVergilInterfaceDefinition& Interface : Document.Interfaces)
 	{
 		FVergilCompilerCommand EnsureInterfaceCommand;
 		EnsureInterfaceCommand.Type = EVergilCommandType::EnsureInterface;
@@ -1501,16 +1537,16 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 		Result.Commands.Add(EnsureInterfaceCommand);
 	}
 
-	AddClassDefaultCommands(Result.Commands, Request.Document.ClassDefaults);
+	AddClassDefaultCommands(Result.Commands, Document.ClassDefaults);
 
 	FVergilCompilerCommand EnsureGraphCommand;
 	EnsureGraphCommand.Type = EVergilCommandType::EnsureGraph;
 	EnsureGraphCommand.GraphName = Context.GetGraphName();
-	EnsureGraphCommand.Name = Request.TargetGraphName;
+	EnsureGraphCommand.Name = Context.GetGraphName();
 	Result.Commands.Add(EnsureGraphCommand);
 
-	const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Request);
-	const TArray<FVergilGraphEdge>& TargetEdges = GetTargetGraphEdges(Request);
+	const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Context);
+	const TArray<FVergilGraphEdge>& TargetEdges = GetTargetGraphEdges(Context);
 
 	for (const FVergilGraphNode& Node : TargetNodes)
 	{

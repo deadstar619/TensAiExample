@@ -15,7 +15,7 @@ This document describes the current scaffold contracts implemented in code today
 - `Interfaces` now lower into Blueprint interface application for authored interface class paths.
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
-- The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`.
+- The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -24,7 +24,7 @@ This document describes the current scaffold contracts implemented in code today
 ## Structural validation rules
 
 - `SchemaVersion` must be greater than zero.
-- Older document schemas can be upgraded explicitly when a supported forward migration path exists. A newer document schema than the compiler schema still emits a warning, and downgrades are not attempted.
+- Older document schemas can be upgraded explicitly when a supported forward migration path exists, and the compiler now attempts that upgrade automatically before later passes run. A newer document schema than the compiler schema still emits a warning, and downgrades are not attempted.
 - Blueprint metadata entries must use non-empty supported keys.
 - Every variable must have a unique non-empty name and cannot conflict with a dispatcher name.
 - Every variable must declare a supported type category.
@@ -57,7 +57,8 @@ This document describes the current scaffold contracts implemented in code today
 - `Vergil::MigrateDocumentSchema(...)` copies the source document, applies each supported forward migration step in order, and updates `SchemaVersion` on the migrated copy.
 - `Vergil::MigrateDocumentToCurrentSchema(...)` is the convenience helper for upgrading to the current scaffold schema version.
 - The current `1 -> 2` and `2 -> 3` migrations are additive: they advance the schema stamp while preserving authored document fields because the expanded whole-asset model remains backward-compatible with older document revisions.
-- Dedicated compiler-pipeline orchestration for migration is still future work under `VGR-3001`; `VGR-1009` only adds the model-level helpers and diagnostics.
+- `FVergilSchemaMigrationPass` now runs first in the compiler pipeline, upgrades older documents into a working document copy, and feeds that migrated view into structural validation plus command planning.
+- Current-schema documents are left unchanged, and newer-than-compiler schemas still flow through unchanged so structural validation can emit the existing future-schema warning without attempting a downgrade.
 
 ## Blueprint metadata contracts
 

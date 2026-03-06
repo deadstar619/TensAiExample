@@ -22,12 +22,14 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	FVergilCompilerContext Context(
 		Request.TargetBlueprint,
 		nullptr,
+		&Request.Document,
 		&Result.Diagnostics,
 		&Result.Commands,
 		Request.TargetGraphName);
 
 	const TArray<TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>> Passes =
 	{
+		MakeShared<FVergilSchemaMigrationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilStructuralValidationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
 	};
