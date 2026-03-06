@@ -74,14 +74,29 @@ public:
 		LoweredNodeCommands.Reset();
 	}
 
+	void ResetPostCompileFinalizeCommands()
+	{
+		PostCompileFinalizeCommands.Reset();
+	}
+
 	void AddCommand(const FVergilCompilerCommand& Command)
 	{
 		LoweredNodeCommands.Add(Command);
 	}
 
+	void AddPostCompileFinalizeCommand(const FVergilCompilerCommand& Command)
+	{
+		PostCompileFinalizeCommands.Add(Command);
+	}
+
 	const TArray<FVergilCompilerCommand>& GetLoweredNodeCommands() const
 	{
 		return LoweredNodeCommands;
+	}
+
+	const TArray<FVergilCompilerCommand>& GetPostCompileFinalizeCommands() const
+	{
+		return PostCompileFinalizeCommands;
 	}
 
 private:
@@ -91,6 +106,7 @@ private:
 	FVergilGraphDocument WorkingDocument;
 	TArray<FVergilDiagnostic>* Diagnostics = nullptr;
 	TArray<FVergilCompilerCommand> LoweredNodeCommands;
+	TArray<FVergilCompilerCommand> PostCompileFinalizeCommands;
 	FName GraphName = TEXT("EventGraph");
 };
 

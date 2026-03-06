@@ -171,7 +171,7 @@ Tickets:
 - [x] `VGR-3004` Add type resolution and wildcard resolution pass
 - [x] `VGR-3005` Add node lowering pass
 - [x] `VGR-3006` Add connection legality validation pass
-- `VGR-3007` Add post-compile finalize pass
+- [x] `VGR-3007` Add post-compile finalize pass
 - `VGR-3008` Split layout/comment work into explicit post-passes
 - `VGR-3009` Add compile statistics and richer result metadata
 - `VGR-3010` Guarantee dry-run and apply share the same planning path
@@ -210,13 +210,19 @@ Session note for `VGR-3005` (2026-03-06):
 
 - `FVergilNodeLoweringPass` now runs after type resolution and before final command planning, so handler-driven node lowering executes once against the normalized compiler working document instead of being interleaved with document-definition planning.
 - `FVergilCompilerContext` now buffers lowered node commands separately, and `FVergilCommandPlanningPass` now only assembles the final deterministic plan from document-level commands, ensured graph setup, lowered nodes, edges, and later finalize phases.
-- `K2.CreateDelegate.*` finalization now lowers during the node pass, node metadata commands now emit in deterministic key order, and `Vergil.Scaffold.NodeLoweringPass` covers both successful create-delegate lowering and explicit zero-command pass failures for handler errors.
+- Node metadata commands now emit in deterministic key order, and `Vergil.Scaffold.NodeLoweringPass` covers successful create-delegate node lowering plus explicit zero-command pass failures for handler errors. `VGR-3007` later split create-delegate finalization into its own finalize pass.
 
 Session note for `VGR-3006` (2026-03-06):
 
 - `FVergilConnectionLegalityPass` now runs after node lowering and before final command planning, validating target-graph edges against lowered node pins instead of raw authored pin ids alone.
 - The connection pass currently rejects lowered-pin drift, source/target direction mistakes, exec/data mismatches, graph mismatches, and multiply-driven input pins before any `ConnectPins` commands are assembled.
 - `Vergil.Scaffold.ConnectionLegalityPass` now covers a successful legal edge plus explicit zero-command failures for wrong source direction, exec/data mixing, multiply-driven target pins, and custom handlers that drop planned pins during lowering.
+
+Session note for `VGR-3007` (2026-03-06):
+
+- `FVergilPostCompileFinalizePass` now runs after connection legality and before final command planning, so deferred `FinalizeNode` work is emitted from its own compiler stage instead of being bundled into node lowering.
+- `FVergilCompilerContext` now buffers post-compile finalize commands separately from lowered node commands, and `FVergilCommandPlanningPass` assembles the final deterministic plan from document-level commands, lowered nodes, edges, and that finalize buffer.
+- `K2.CreateDelegate.*` finalization now lowers through the dedicated finalize pass, and `Vergil.Scaffold.PostCompileFinalizePass` covers deterministic `FinalizeNode` emission for valid create-delegate nodes.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -400,13 +406,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3007`
+1. `VGR-3008`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
 5. `VGR-3010`
 
-This keeps pressure on the remaining finalize/dry-run pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, and compile-time connection legality stages.
+This keeps pressure on the remaining post-pass and dry-run pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has migration, semantic validation, symbol resolution, type resolution, dedicated node lowering, compile-time connection legality, and a dedicated post-compile finalize stage.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

@@ -2908,7 +2908,7 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilGenericNodeHandler, ESPMode::ThreadSafe>());
 	}
 
-	bool AddNodeFinalizeCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	bool AddPostCompileFinalizeCommand(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
 	{
 		if (!Node.Descriptor.ToString().StartsWith(TEXT("K2.CreateDelegate.")))
 		{
@@ -2921,7 +2921,7 @@ namespace
 			Context.AddDiagnostic(
 				EVergilDiagnosticSeverity::Error,
 				TEXT("MissingCreateDelegateFinalizeFunction"),
-				TEXT("Node lowering pass requires a descriptor suffix naming the selected CreateDelegate function."),
+				TEXT("Post-compile finalize pass requires a descriptor suffix naming the selected CreateDelegate function."),
 				Node.Id);
 			return false;
 		}
@@ -2933,7 +2933,7 @@ namespace
 		FinalizeCommand.Name = TEXT("Vergil.K2.CreateDelegate");
 		FinalizeCommand.SecondaryName = *FunctionName;
 		FinalizeCommand.Attributes = Node.Metadata;
-		Context.AddCommand(FinalizeCommand);
+		Context.AddPostCompileFinalizeCommand(FinalizeCommand);
 		return true;
 	}
 
@@ -2965,7 +2965,30 @@ namespace
 			return false;
 		}
 
-		return AddNodeFinalizeCommands(Node, Context);
+		return true;
+	}
+
+	bool BuildPostCompileFinalizeCommands(FVergilCompilerContext& Context)
+	{
+		Context.ResetPostCompileFinalizeCommands();
+
+		bool bIsValid = true;
+		for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
+		{
+			if (!AddPostCompileFinalizeCommand(Node, Context))
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("PostCompileFinalizeFailed"),
+					FString::Printf(
+						TEXT("Post-compile finalize pass failed for node '%s'."),
+						*Node.Descriptor.ToString()),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
 	}
 
 	bool ValidateConnectionLegality(FVergilCompilerContext& Context)
@@ -3356,6 +3379,7 @@ bool FVergilNodeLoweringPass::Run(
 {
 	EnsureGenericFallbackHandler();
 	Context.ResetLoweredNodeCommands();
+	Context.ResetPostCompileFinalizeCommands();
 
 	bool bIsValid = true;
 	for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
@@ -3363,6 +3387,23 @@ bool FVergilNodeLoweringPass::Run(
 		bIsValid &= LowerNode(Node, Context);
 	}
 
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilPostCompileFinalizePass::GetPassName() const
+{
+	return TEXT("PostCompileFinalize");
+}
+
+bool FVergilPostCompileFinalizePass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	const bool bIsValid = BuildPostCompileFinalizeCommands(Context);
 	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
@@ -3540,6 +3581,11 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& /*Request*/, F
 		ConnectCommand.TargetNodeId = Edge.TargetNodeId;
 		ConnectCommand.TargetPinId = Edge.TargetPinId;
 		Result.Commands.Add(ConnectCommand);
+	}
+
+	for (const FVergilCompilerCommand& FinalizeCommand : Context.GetPostCompileFinalizeCommands())
+	{
+		Result.Commands.Add(FinalizeCommand);
 	}
 
 	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)

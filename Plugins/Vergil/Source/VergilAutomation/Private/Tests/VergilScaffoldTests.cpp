@@ -1086,6 +1086,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ConnectionLegalityPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilPostCompileFinalizePassTest,
+	"Vergil.Scaffold.PostCompileFinalizePass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1906,15 +1911,6 @@ bool FVergilNodeLoweringPassTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("CreateDelegate should lower through the dedicated handler descriptor."), LoweredCreateDelegateNode->Name, FName(TEXT("Vergil.K2.CreateDelegate")));
 			TestEqual(TEXT("CreateDelegate should preserve the resolved function name."), LoweredCreateDelegateNode->SecondaryName, FName(TEXT("HandleSignal")));
 		}
-
-		const FVergilCompilerCommand* const FinalizeCreateDelegateNode = FindNodeCommand(Result.Commands, EVergilCommandType::FinalizeNode, CreateDelegateNode.Id);
-		TestNotNull(TEXT("Node lowering should emit the CreateDelegate finalize command before planning assembles the final plan."), FinalizeCreateDelegateNode);
-		if (FinalizeCreateDelegateNode != nullptr)
-		{
-			TestEqual(TEXT("CreateDelegate finalization should target the dedicated finalize payload."), FinalizeCreateDelegateNode->Name, FName(TEXT("Vergil.K2.CreateDelegate")));
-			TestEqual(TEXT("CreateDelegate finalization should preserve the selected function name."), FinalizeCreateDelegateNode->SecondaryName, FName(TEXT("HandleSignal")));
-			TestEqual(TEXT("CreateDelegate finalization should preserve normalized metadata for later execution."), FinalizeCreateDelegateNode->Attributes.FindRef(TEXT("Title")), FString(TEXT("Create Handler Delegate")));
-		}
 	}
 
 	{
@@ -1941,6 +1937,63 @@ bool FVergilNodeLoweringPassTest::RunTest(const FString& Parameters)
 	}
 
 	return true;
+}
+
+bool FVergilPostCompileFinalizePassTest::RunTest(const FString& Parameters)
+{
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const EVergilCommandType Type, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([Type, NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == Type && Command.NodeId == NodeId;
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+
+	FVergilGraphNode HandlerNode;
+	HandlerNode.Id = FGuid::NewGuid();
+	HandlerNode.Kind = EVergilNodeKind::Custom;
+	HandlerNode.Descriptor = TEXT("K2.CustomEvent.HandleSignal");
+	HandlerNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphNode CreateDelegateNode;
+	CreateDelegateNode.Id = FGuid::NewGuid();
+	CreateDelegateNode.Kind = EVergilNodeKind::Custom;
+	CreateDelegateNode.Descriptor = TEXT("K2.CreateDelegate.HandleSignal");
+	CreateDelegateNode.Position = FVector2D(320.0f, 0.0f);
+	CreateDelegateNode.Metadata.Add(TEXT("Title"), TEXT("Create Handler Delegate"));
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = MakeTestBlueprint();
+	Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_PostCompileFinalize_CreateDelegate");
+	Request.Document.Nodes = { HandlerNode, CreateDelegateNode };
+
+	const FVergilCompileResult Result = CompilerService.Compile(Request);
+	TestTrue(TEXT("Post-compile finalize coverage should compile a valid CreateDelegate node."), Result.bSucceeded);
+
+	const FVergilCompilerCommand* const FinalizeCreateDelegateNode = FindNodeCommand(Result.Commands, EVergilCommandType::FinalizeNode, CreateDelegateNode.Id);
+	TestNotNull(TEXT("The dedicated post-compile finalize pass should emit a FinalizeNode command for CreateDelegate."), FinalizeCreateDelegateNode);
+	if (FinalizeCreateDelegateNode == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("CreateDelegate finalization should target the dedicated finalize payload."), FinalizeCreateDelegateNode->Name, FName(TEXT("Vergil.K2.CreateDelegate")));
+	TestEqual(TEXT("CreateDelegate finalization should preserve the selected function name."), FinalizeCreateDelegateNode->SecondaryName, FName(TEXT("HandleSignal")));
+	TestEqual(TEXT("CreateDelegate finalization should preserve normalized metadata for later execution."), FinalizeCreateDelegateNode->Attributes.FindRef(TEXT("Title")), FString(TEXT("Create Handler Delegate")));
+
+	const int32 FinalizeCommandIndex = Result.Commands.IndexOfByPredicate([CreateDelegateNode](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::FinalizeNode && Command.NodeId == CreateDelegateNode.Id;
+	});
+	const int32 AddNodeCommandIndex = Result.Commands.IndexOfByPredicate([CreateDelegateNode](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::AddNode && Command.NodeId == CreateDelegateNode.Id;
+	});
+
+	TestTrue(TEXT("Post-compile finalize commands should appear after graph-structure AddNode commands in the final normalized plan."), AddNodeCommandIndex >= 0 && FinalizeCommandIndex > AddNodeCommandIndex);
+	return AddNodeCommandIndex >= 0 && FinalizeCommandIndex > AddNodeCommandIndex;
 }
 
 bool FVergilConnectionLegalityPassTest::RunTest(const FString& Parameters)

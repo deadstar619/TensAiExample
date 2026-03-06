@@ -35,6 +35,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		MakeShared<FVergilTypeResolutionPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilNodeLoweringPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilConnectionLegalityPass, ESPMode::ThreadSafe>(),
+		MakeShared<FVergilPostCompileFinalizePass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
 	};
 
