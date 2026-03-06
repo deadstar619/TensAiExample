@@ -16,6 +16,7 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, and then command planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -59,6 +60,14 @@ This document describes the current scaffold contracts implemented in code today
 - The current `1 -> 2` and `2 -> 3` migrations are additive: they advance the schema stamp while preserving authored document fields because the expanded whole-asset model remains backward-compatible with older document revisions.
 - `FVergilSchemaMigrationPass` now runs first in the compiler pipeline, upgrades older documents into a working document copy, and feeds that migrated view into structural validation plus command planning.
 - Current-schema documents are left unchanged, and newer-than-compiler schemas still flow through unchanged so structural validation can emit the existing future-schema warning without attempting a downgrade.
+
+## Semantic validation contracts
+
+- `FVergilSemanticValidationPass` now runs after structural validation and before command planning.
+- The canonical graph-surface compile targets are currently `EventGraph` and `UserConstructionScript`; other `FVergilCompileRequest.TargetGraphName` values are rejected during semantic validation.
+- Known descriptor families now validate their expected authored shape before planning. This includes descriptor suffixes for `K2.Event.*`, `K2.CustomEvent.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, delegate helper descriptors, and required metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.FormatText`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
+- `K2.Event.*` descriptors now validate against node kind `Event`, `K2.Call.*` against kind `Call`, `K2.VarGet.*` against kind `VariableGet`, and `K2.VarSet.*` against kind `VariableSet`, which prevents those authored nodes from silently falling through to generic planning.
+- When compiling `UserConstructionScript`, the only supported authored `K2.Event.*` descriptor is `K2.Event.UserConstructionScript`.
 
 ## Blueprint metadata contracts
 

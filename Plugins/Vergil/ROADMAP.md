@@ -166,7 +166,7 @@ Goal:
 Tickets:
 
 - [x] `VGR-3001` Add schema migration pass
-- `VGR-3002` Add semantic validation pass
+- [x] `VGR-3002` Add semantic validation pass
 - `VGR-3003` Add symbol resolution pass
 - `VGR-3004` Add type resolution and wildcard resolution pass
 - `VGR-3005` Add node lowering pass
@@ -187,6 +187,12 @@ Session note for `VGR-3001` (2026-03-06):
 - `FVergilSchemaMigrationPass` now runs first in `FVergilBlueprintCompilerService::Compile(...)`, upgrades supported legacy documents into a compiler working copy, and feeds that migrated view into structural validation plus command planning.
 - `FVergilCompilerContext` now carries the active document view so later passes consume the migrated copy instead of the raw request payload when migration happens.
 - `Vergil.Scaffold.CompilerSchemaMigrationPass` now verifies legacy-schema compile requests emit `SchemaMigrationApplied`, avoid future-schema warnings after migration, and still plan authored commands deterministically.
+
+Session note for `VGR-3002` (2026-03-06):
+
+- `FVergilSemanticValidationPass` now runs after structural validation and before command planning, which turns known descriptor-shape failures into explicit compiler-phase diagnostics instead of late planning failures.
+- The semantic pass currently rejects unsupported compile target graphs, descriptor/kind mismatches for authored event/call/variable nodes, missing required metadata on known K2 descriptors, and invalid `K2.Event.*` usage on the `UserConstructionScript` surface.
+- `Vergil.Scaffold.SemanticValidationPass` now covers unsupported target graphs, descriptor/kind mismatches, missing required node metadata, and construction-script event restrictions with zero planned commands on failure.
 
 ## Milestone 4: Blueprint Asset Authoring
 Goal:
@@ -370,13 +376,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-3002`
+1. `VGR-3003`
 2. `VGR-4009`
 3. `VGR-8005`
 4. `VGR-9007`
-5. `VGR-3003`
+5. `VGR-3004`
 
-This keeps pressure on semantic pipeline hardening, remaining asset authoring, and release/documentation work now that schema migration is part of the compile path.
+This keeps pressure on symbol/type pipeline hardening, remaining asset authoring, and release/documentation work now that the compiler has both migration and semantic validation stages.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

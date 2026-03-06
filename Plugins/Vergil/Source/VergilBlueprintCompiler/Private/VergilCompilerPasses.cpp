@@ -8,6 +8,7 @@
 
 namespace
 {
+	const FName EventGraphName(TEXT("EventGraph"));
 	const FName ConstructionScriptGraphName(TEXT("UserConstructionScript"));
 
 	void CopyPlannedPins(const FVergilGraphNode& Node, FVergilCompilerCommand& Command)
@@ -33,6 +34,348 @@ namespace
 		}
 
 		return DescriptorString.RightChop(Prefix.Len());
+	}
+
+	bool IsSupportedCompileTargetGraph(const FName GraphName)
+	{
+		return GraphName == EventGraphName || GraphName == ConstructionScriptGraphName;
+	}
+
+	void AddSemanticValidationDiagnostic(
+		FVergilCompilerContext& Context,
+		const FName Code,
+		const FString& Message,
+		const FGuid& SourceId)
+	{
+		Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, Code, Message, SourceId);
+	}
+
+	bool HasRequiredMetadataValue(
+		const FVergilGraphNode& Node,
+		const FName MetadataKey,
+		FVergilCompilerContext& Context,
+		const FName Code,
+		const FString& Message,
+		const bool bTreatWhitespaceAsEmpty = true)
+	{
+		const FString Value = Node.Metadata.FindRef(MetadataKey);
+		const FString ValueToValidate = bTreatWhitespaceAsEmpty ? Value.TrimStartAndEnd() : Value;
+		if (!ValueToValidate.IsEmpty())
+		{
+			return true;
+		}
+
+		AddSemanticValidationDiagnostic(Context, Code, Message, Node.Id);
+		return false;
+	}
+
+	bool ValidateNodeSemanticRequirements(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	{
+		const FString DescriptorString = Node.Descriptor.ToString();
+		bool bIsValid = true;
+
+		auto AddNodeDiagnostic = [&](const FName Code, const FString& Message)
+		{
+			AddSemanticValidationDiagnostic(Context, Code, Message, Node.Id);
+			bIsValid = false;
+		};
+
+		if (DescriptorString.StartsWith(TEXT("K2.Event.")))
+		{
+			if (Node.Kind != EVergilNodeKind::Event)
+			{
+				AddNodeDiagnostic(
+					TEXT("EventNodeKindInvalid"),
+					FString::Printf(TEXT("Descriptor '%s' requires node kind Event."), *DescriptorString));
+			}
+
+			const FString EventName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Event."));
+			if (EventName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingEventName"), TEXT("Event nodes require a descriptor suffix naming the bound function."));
+			}
+			else if (Context.GetGraphName() == ConstructionScriptGraphName)
+			{
+				if (EventName != ConstructionScriptGraphName.ToString())
+				{
+					AddNodeDiagnostic(
+						TEXT("ConstructionScriptEventInvalid"),
+						TEXT("Construction-script graphs only support K2.Event.UserConstructionScript as their authored event entry."));
+				}
+			}
+			else if (EventName == ConstructionScriptGraphName.ToString())
+			{
+				AddNodeDiagnostic(
+					TEXT("ConstructionScriptEventGraphMismatch"),
+					TEXT("K2.Event.UserConstructionScript is only valid when compiling the UserConstructionScript graph."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.CustomEvent.")))
+		{
+			const FString EventName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CustomEvent."));
+			if (EventName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingCustomEventName"), TEXT("Custom event nodes require a descriptor suffix naming the event."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.Call.")))
+		{
+			if (Node.Kind != EVergilNodeKind::Call)
+			{
+				AddNodeDiagnostic(
+					TEXT("CallNodeKindInvalid"),
+					FString::Printf(TEXT("Descriptor '%s' requires node kind Call."), *DescriptorString));
+			}
+
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Call."));
+			if (FunctionName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingFunctionName"), TEXT("Call nodes require a descriptor suffix naming the function."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.VarGet.")))
+		{
+			if (Node.Kind != EVergilNodeKind::VariableGet)
+			{
+				AddNodeDiagnostic(
+					TEXT("VariableGetNodeKindInvalid"),
+					FString::Printf(TEXT("Descriptor '%s' requires node kind VariableGet."), *DescriptorString));
+			}
+
+			const FString VariableName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarGet."));
+			if (VariableName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingVariableName"), TEXT("Variable get nodes require a descriptor suffix naming the variable."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.VarSet.")))
+		{
+			if (Node.Kind != EVergilNodeKind::VariableSet)
+			{
+				AddNodeDiagnostic(
+					TEXT("VariableSetNodeKindInvalid"),
+					FString::Printf(TEXT("Descriptor '%s' requires node kind VariableSet."), *DescriptorString));
+			}
+
+			const FString VariableName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarSet."));
+			if (VariableName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingVariableName"), TEXT("Variable set nodes require a descriptor suffix naming the variable."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.BindDelegate.")))
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.BindDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingBindDelegateMetadata"), TEXT("Bind delegate nodes require a descriptor suffix naming the property."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.RemoveDelegate.")))
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.RemoveDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingRemoveDelegateMetadata"), TEXT("Remove delegate nodes require a descriptor suffix naming the property."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.ClearDelegate.")))
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.ClearDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingClearDelegateMetadata"), TEXT("Clear delegate nodes require a descriptor suffix naming the property."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.CallDelegate.")))
+		{
+			const FString PropertyName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CallDelegate."));
+			if (PropertyName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingCallDelegateMetadata"), TEXT("Call delegate nodes require a descriptor suffix naming the property."));
+			}
+
+			return bIsValid;
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.CreateDelegate.")))
+		{
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CreateDelegate."));
+			if (FunctionName.IsEmpty())
+			{
+				AddNodeDiagnostic(TEXT("MissingCreateDelegateFunction"), TEXT("CreateDelegate nodes require a descriptor suffix naming the selected function."));
+			}
+
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.Cast"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("TargetClassPath"),
+				Context,
+				TEXT("MissingTargetClassPath"),
+				TEXT("Cast nodes require metadata TargetClassPath naming the target class."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.Select"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("IndexPinCategory"),
+				Context,
+				TEXT("MissingSelectIndexCategory"),
+				TEXT("Select nodes require metadata IndexPinCategory."));
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ValuePinCategory"),
+				Context,
+				TEXT("MissingSelectValueCategory"),
+				TEXT("Select nodes require metadata ValuePinCategory."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.SwitchEnum"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("EnumPath"),
+				Context,
+				TEXT("MissingSwitchEnumPath"),
+				TEXT("Switch enum nodes require metadata EnumPath."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.FormatText"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("FormatPattern"),
+				Context,
+				TEXT("MissingFormatPattern"),
+				TEXT("Format text nodes require metadata FormatPattern."),
+				false);
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeStruct"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("StructPath"),
+				Context,
+				TEXT("MissingMakeStructPath"),
+				TEXT("Make struct nodes require metadata StructPath."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.BreakStruct"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("StructPath"),
+				Context,
+				TEXT("MissingBreakStructPath"),
+				TEXT("Break struct nodes require metadata StructPath."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeArray"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ValuePinCategory"),
+				Context,
+				TEXT("MissingMakeArrayValueCategory"),
+				TEXT("Make array nodes require metadata ValuePinCategory."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeSet"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ValuePinCategory"),
+				Context,
+				TEXT("MissingMakeSetValueCategory"),
+				TEXT("Make set nodes require metadata ValuePinCategory."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.MakeMap"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("KeyPinCategory"),
+				Context,
+				TEXT("MissingMakeMapKeyCategory"),
+				TEXT("Make map nodes require metadata KeyPinCategory."));
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ValuePinCategory"),
+				Context,
+				TEXT("MissingMakeMapValueCategory"),
+				TEXT("Make map nodes require metadata ValuePinCategory."));
+			return bIsValid;
+		}
+
+		switch (Node.Kind)
+		{
+		case EVergilNodeKind::Event:
+			AddNodeDiagnostic(
+				TEXT("EventNodeDescriptorInvalid"),
+				FString::Printf(TEXT("Event nodes must use descriptor K2.Event.<FunctionName>; found '%s'."), *DescriptorString));
+			break;
+
+		case EVergilNodeKind::Call:
+			AddNodeDiagnostic(
+				TEXT("CallNodeDescriptorInvalid"),
+				FString::Printf(TEXT("Call nodes must use descriptor K2.Call.<FunctionName>; found '%s'."), *DescriptorString));
+			break;
+
+		case EVergilNodeKind::VariableGet:
+			AddNodeDiagnostic(
+				TEXT("VariableGetDescriptorInvalid"),
+				FString::Printf(TEXT("Variable get nodes must use descriptor K2.VarGet.<VariableName>; found '%s'."), *DescriptorString));
+			break;
+
+		case EVergilNodeKind::VariableSet:
+			AddNodeDiagnostic(
+				TEXT("VariableSetDescriptorInvalid"),
+				FString::Printf(TEXT("Variable set nodes must use descriptor K2.VarSet.<VariableName>; found '%s'."), *DescriptorString));
+			break;
+
+		default:
+			break;
+		}
+
+		return bIsValid;
 	}
 
 	FString GetVariableContainerTypeString(const EVergilVariableContainerType ContainerType)
@@ -1401,6 +1744,42 @@ bool FVergilStructuralValidationPass::Run(
 {
 	Context.GetDocument().IsStructurallyValid(&Result.Diagnostics);
 	return !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilSemanticValidationPass::GetPassName() const
+{
+	return TEXT("SemanticValidation");
+}
+
+bool FVergilSemanticValidationPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	EnsureGenericFallbackHandler();
+
+	bool bIsValid = true;
+	if (!IsSupportedCompileTargetGraph(Context.GetGraphName()))
+	{
+		AddSemanticValidationDiagnostic(
+			Context,
+			TEXT("UnsupportedCompileTargetGraph"),
+			FString::Printf(
+				TEXT("Compile target graph '%s' is not supported by the current scaffold. Use EventGraph or UserConstructionScript."),
+				*Context.GetGraphName().ToString()),
+			FGuid());
+		bIsValid = false;
+	}
+
+	for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
+	{
+		bIsValid &= ValidateNodeSemanticRequirements(Node, Context);
+	}
+
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
 	});

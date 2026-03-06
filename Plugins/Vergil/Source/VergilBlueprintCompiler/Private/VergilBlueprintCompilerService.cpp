@@ -31,6 +31,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	{
 		MakeShared<FVergilSchemaMigrationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilStructuralValidationPass, ESPMode::ThreadSafe>(),
+		MakeShared<FVergilSemanticValidationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
 	};
 
@@ -38,7 +39,25 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	{
 		if (!Pass->Run(Request, Context, Result))
 		{
-			UE_LOG(LogVergil, Warning, TEXT("Vergil compiler pass '%s' failed."), *Pass->GetPassName().ToString());
+			const bool bHasErrorDiagnostics = Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+			{
+				return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+			});
+
+			if (bHasErrorDiagnostics)
+			{
+				UE_LOG(
+					LogVergil,
+					Log,
+					TEXT("Vergil compiler pass '%s' stopped after reporting %d error diagnostics."),
+					*Pass->GetPassName().ToString(),
+					Result.Diagnostics.Num());
+			}
+			else
+			{
+				UE_LOG(LogVergil, Warning, TEXT("Vergil compiler pass '%s' failed."), *Pass->GetPassName().ToString());
+			}
+
 			break;
 		}
 	}
@@ -52,7 +71,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 
 	if (!Result.bSucceeded)
 	{
-		UE_LOG(LogVergil, Warning, TEXT("Vergil compile request failed with %d diagnostics."), Result.Diagnostics.Num());
+		UE_LOG(LogVergil, Log, TEXT("Vergil compile request failed with %d diagnostics."), Result.Diagnostics.Num());
 	}
 
 	return Result;

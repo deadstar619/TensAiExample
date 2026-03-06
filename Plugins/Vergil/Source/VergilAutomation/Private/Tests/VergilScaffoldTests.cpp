@@ -1020,6 +1020,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.CompilerSchemaMigrationPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSemanticValidationPassTest,
+	"Vergil.Scaffold.SemanticValidationPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1095,6 +1100,85 @@ bool FVergilCompilerSchemaMigrationPassTest::RunTest(const FString& Parameters)
 	{
 		return Diagnostic.Code == TEXT("SchemaMigrationApplied");
 	}));
+
+	return true;
+}
+
+bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+
+	{
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.TargetGraphName = TEXT("UnsupportedGraph");
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_UnsupportedGraph");
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Unsupported compile target graphs should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Unsupported compile target graphs should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Unsupported compile target graphs should report an explicit diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedCompileTargetGraph")));
+	}
+
+	{
+		FVergilGraphNode MismatchedCallNode;
+		MismatchedCallNode.Id = FGuid::NewGuid();
+		MismatchedCallNode.Kind = EVergilNodeKind::Custom;
+		MismatchedCallNode.Descriptor = TEXT("K2.Call.PrintString");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_CallKindMismatch");
+		Request.Document.Nodes.Add(MismatchedCallNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Descriptor/kind mismatches should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Descriptor/kind mismatches should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Descriptor/kind mismatches should report the call-kind diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("CallNodeKindInvalid")));
+	}
+
+	{
+		FVergilGraphNode CastNode;
+		CastNode.Id = FGuid::NewGuid();
+		CastNode.Kind = EVergilNodeKind::Custom;
+		CastNode.Descriptor = TEXT("K2.Cast");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_CastMetadata");
+		Request.Document.Nodes.Add(CastNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Missing required node metadata should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Missing required node metadata should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing required node metadata should report the existing cast diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("MissingTargetClassPath")));
+	}
+
+	{
+		FVergilGraphNode InvalidConstructionEvent;
+		InvalidConstructionEvent.Id = FGuid::NewGuid();
+		InvalidConstructionEvent.Kind = EVergilNodeKind::Event;
+		InvalidConstructionEvent.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.TargetGraphName = TEXT("UserConstructionScript");
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_ConstructionScriptEvent");
+		Request.Document.ConstructionScriptNodes.Add(InvalidConstructionEvent);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Construction-script graphs should reject non-construction event descriptors."), Result.bSucceeded);
+		TestEqual(TEXT("Construction-script semantic failures should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Construction-script semantic failures should report an explicit event diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptEventInvalid")));
+	}
 
 	return true;
 }
