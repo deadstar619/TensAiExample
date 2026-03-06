@@ -152,7 +152,7 @@ Tickets:
 - [x] `VGR-4002` Implement function graph creation/update
 - [x] `VGR-4003` Implement macro graph creation/update
 - [x] `VGR-4004` Implement component hierarchy authoring
-- `VGR-4005` Implement component template property setting
+- [x] `VGR-4005` Implement component template property setting
 - [x] `VGR-4006` Implement interface application
 - `VGR-4007` Implement class default writing
 - `VGR-4008` Implement construction script authoring
@@ -172,7 +172,14 @@ Session note for `VGR-4003` (2026-03-06):
 Session note for `VGR-4004` (2026-03-06):
 
 - Current branch now lowers document-authored `Components` into explicit `EnsureComponent`, `AttachComponent`, and relative-transform `SetComponentProperty` commands. This covers component creation, parent attachment, attach sockets, and relative location/rotation/scale updates through `CompileDocument`.
-- New `Vergil.Scaffold.ComponentDefinitionPlanning` plus `Vergil.Scaffold.ComponentAuthoringExecution` coverage was added alongside the existing explicit-command component test. Component template-property lowering remains intentionally deferred to `VGR-4005`.
+- New `Vergil.Scaffold.ComponentDefinitionPlanning` plus `Vergil.Scaffold.ComponentAuthoringExecution` coverage was added alongside the existing explicit-command component test. Component template-property lowering landed separately under `VGR-4005`.
+- `mcp__tensai__build_project` succeeded in `Development`, and the documented headless runner now re-verifies `Vergil.Scaffold.*` cleanly in this workspace.
+
+Session note for `VGR-4005` (2026-03-06):
+
+- Current branch now lowers document-authored component `TemplateProperties` into deterministic `SetComponentProperty` commands with lexical property-key ordering.
+- `CompileDocument(..., bApplyCommands=true)` now applies component template-property values end-to-end on Blueprint component templates, and structured `RelativeTransform` fields still lower after template-property commands so the dedicated transform fields remain authoritative on overlap.
+- `Vergil.Scaffold.ComponentDefinitionPlanning` and `Vergil.Scaffold.ComponentAuthoringExecution` now cover template-property lowering, deterministic ordering, and create/update execution.
 - `mcp__tensai__build_project` succeeded in `Development`, and the documented headless runner now re-verifies `Vergil.Scaffold.*` cleanly in this workspace.
 
 Session note for `VGR-4006` (2026-03-06):
@@ -304,13 +311,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-4005`
-2. `VGR-1007`
-3. `VGR-4007`
-4. `VGR-1008`
-5. `VGR-4008`
-6. `VGR-1009`
-7. `VGR-2002`
+1. `VGR-1007`
+2. `VGR-4007`
+3. `VGR-1008`
+4. `VGR-4008`
+5. `VGR-1009`
+6. `VGR-2002`
+7. `VGR-1001`
 
 This moves Vergil from explicit command coverage toward document-driven asset authoring.
 

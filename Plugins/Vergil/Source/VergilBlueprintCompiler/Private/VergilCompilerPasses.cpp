@@ -210,6 +210,31 @@ namespace
 		}
 	}
 
+	void AddComponentTemplatePropertyCommands(TArray<FVergilCompilerCommand>& Commands, const FVergilComponentDefinition& Component)
+	{
+		TArray<FName> PropertyNames;
+		Component.TemplateProperties.GetKeys(PropertyNames);
+		PropertyNames.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		for (const FName PropertyName : PropertyNames)
+		{
+			if (PropertyName.IsNone())
+			{
+				continue;
+			}
+
+			FVergilCompilerCommand PropertyCommand;
+			PropertyCommand.Type = EVergilCommandType::SetComponentProperty;
+			PropertyCommand.SecondaryName = Component.Name;
+			PropertyCommand.Name = PropertyName;
+			PropertyCommand.StringValue = Component.TemplateProperties.FindRef(PropertyName);
+			Commands.Add(PropertyCommand);
+		}
+	}
+
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -1398,6 +1423,7 @@ bool FVergilCommandPlanningPass::Run(const FVergilCompileRequest& Request, FVerg
 			Result.Commands.Add(AttachComponentCommand);
 		}
 
+		AddComponentTemplatePropertyCommands(Result.Commands, Component);
 		AddComponentTransformCommands(Result.Commands, Component);
 	}
 

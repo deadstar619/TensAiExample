@@ -1531,7 +1531,8 @@ bool FVergilComponentDefinitionPlanningTest::RunTest(const FString& Parameters)
 	VisualComponent.AttachSocketName = TEXT("GripSocket");
 	VisualComponent.RelativeTransform.bHasRelativeScale = true;
 	VisualComponent.RelativeTransform.RelativeScale3D = FVector(1.0f, 1.5f, 1.0f);
-	VisualComponent.TemplateProperties.Add(TEXT("CollisionProfileName"), TEXT("NoCollision"));
+	VisualComponent.TemplateProperties.Add(TEXT("HiddenInGame"), TEXT("True"));
+	VisualComponent.TemplateProperties.Add(TEXT("CastShadow"), TEXT("False"));
 
 	FVergilGraphDocument Document;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_ComponentPlanning");
@@ -1546,8 +1547,8 @@ bool FVergilComponentDefinitionPlanningTest::RunTest(const FString& Parameters)
 	const FVergilCompileResult Result = CompilerService.Compile(Request);
 
 	TestTrue(TEXT("Component definition planning should succeed."), Result.bSucceeded);
-	TestEqual(TEXT("Component definition planning should emit component commands plus the target graph ensure."), Result.Commands.Num(), 9);
-	if (!Result.bSucceeded || Result.Commands.Num() != 9)
+	TestEqual(TEXT("Component definition planning should emit component commands plus the target graph ensure."), Result.Commands.Num(), 11);
+	if (!Result.bSucceeded || Result.Commands.Num() != 11)
 	{
 		return false;
 	}
@@ -1563,13 +1564,13 @@ bool FVergilComponentDefinitionPlanningTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Pivot relative rotation should lower into a component property command."), Result.Commands[5].Name, FName(TEXT("RelativeRotation")));
 	TestEqual(TEXT("Visual should lower into an attach command."), Result.Commands[6].Type, EVergilCommandType::AttachComponent);
 	TestEqual(TEXT("Visual attach should retain the authored socket."), Result.Commands[6].StringValue, FString(TEXT("GripSocket")));
-	TestEqual(TEXT("Visual relative scale should lower into a component property command."), Result.Commands[7].Name, FName(TEXT("RelativeScale3D")));
-	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[8].Type, EVergilCommandType::EnsureGraph);
-	TestFalse(TEXT("Template properties should remain out of scope for VGR-4004 lowering."), Result.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
-	{
-		return Command.Type == EVergilCommandType::SetComponentProperty
-			&& Command.Name == TEXT("CollisionProfileName");
-	}));
+	TestEqual(TEXT("Template properties should lower into component property commands."), Result.Commands[7].Type, EVergilCommandType::SetComponentProperty);
+	TestEqual(TEXT("Template property lowering should sort keys deterministically."), Result.Commands[7].Name, FName(TEXT("CastShadow")));
+	TestEqual(TEXT("CastShadow command should preserve the authored value."), Result.Commands[7].StringValue, FString(TEXT("False")));
+	TestEqual(TEXT("Second template property command should target HiddenInGame."), Result.Commands[8].Name, FName(TEXT("HiddenInGame")));
+	TestEqual(TEXT("Second template property command should preserve the authored value."), Result.Commands[8].StringValue, FString(TEXT("True")));
+	TestEqual(TEXT("Visual relative scale should lower into a component property command after template properties."), Result.Commands[9].Name, FName(TEXT("RelativeScale3D")));
+	TestEqual(TEXT("Event graph ensure should still be emitted for the compile target."), Result.Commands[10].Type, EVergilCommandType::EnsureGraph);
 
 	return true;
 }
@@ -1640,6 +1641,8 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 	VisualComponent.ComponentClassPath = UStaticMeshComponent::StaticClass()->GetClassPathName().ToString();
 	VisualComponent.ParentComponentName = RootComponent.Name;
 	VisualComponent.AttachSocketName = TEXT("HolsterSocket");
+	VisualComponent.TemplateProperties.Add(TEXT("HiddenInGame"), TEXT("True"));
+	VisualComponent.TemplateProperties.Add(TEXT("CastShadow"), TEXT("False"));
 
 	FVergilGraphDocument InitialDocument;
 	InitialDocument.BlueprintPath = TEXT("/Temp/BP_VergilComponentAuthoring");
@@ -1672,12 +1675,28 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 
 	USceneComponent* RootTemplate = Cast<USceneComponent>(RootNode->ComponentTemplate);
 	USceneComponent* PivotTemplate = Cast<USceneComponent>(PivotNode->ComponentTemplate);
+	UStaticMeshComponent* VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
 	TestNotNull(TEXT("Root component template should be a scene component."), RootTemplate);
 	TestNotNull(TEXT("Pivot component template should be a scene component."), PivotTemplate);
+	TestNotNull(TEXT("Visual component template should be a static mesh component."), VisualTemplate);
 	TestTrue(TEXT("Root component should retain its authored relative location."), RootTemplate != nullptr
 		&& RootTemplate->GetRelativeLocation().Equals(FVector(10.0f, 20.0f, 30.0f), KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Pivot component should retain its authored relative rotation."), PivotTemplate != nullptr
 		&& PivotTemplate->GetRelativeRotation().Equals(FRotator(0.0f, 45.0f, 0.0f), KINDA_SMALL_NUMBER));
+	FBoolProperty* HiddenInGameProperty = VisualTemplate != nullptr
+		? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("bHiddenInGame"))
+		: nullptr;
+	FBoolProperty* CastShadowProperty = VisualTemplate != nullptr
+		? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("CastShadow"))
+		: nullptr;
+	TestNotNull(TEXT("Visual component should expose bHiddenInGame."), HiddenInGameProperty);
+	TestNotNull(TEXT("Visual component should expose CastShadow."), CastShadowProperty);
+	TestTrue(TEXT("Visual component should retain its authored HiddenInGame template property."), HiddenInGameProperty != nullptr
+		&& VisualTemplate != nullptr
+		&& HiddenInGameProperty->GetPropertyValue_InContainer(VisualTemplate));
+	TestTrue(TEXT("Visual component should retain its authored CastShadow template property."), CastShadowProperty != nullptr
+		&& VisualTemplate != nullptr
+		&& !CastShadowProperty->GetPropertyValue_InContainer(VisualTemplate));
 
 	FVergilComponentDefinition UpdatedRootComponent = RootComponent;
 	UpdatedRootComponent.RelativeTransform.RelativeLocation = FVector(40.0f, 0.0f, 10.0f);
@@ -1692,6 +1711,8 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 	UpdatedVisualComponent.RelativeTransform.RelativeLocation = FVector(15.0f, 5.0f, 0.0f);
 	UpdatedVisualComponent.RelativeTransform.bHasRelativeScale = true;
 	UpdatedVisualComponent.RelativeTransform.RelativeScale3D = FVector(1.0f, 1.5f, 1.0f);
+	UpdatedVisualComponent.TemplateProperties.Add(TEXT("HiddenInGame"), TEXT("False"));
+	UpdatedVisualComponent.TemplateProperties.Add(TEXT("CastShadow"), TEXT("True"));
 
 	FVergilGraphDocument UpdatedDocument;
 	UpdatedDocument.BlueprintPath = InitialDocument.BlueprintPath;
@@ -1722,7 +1743,7 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 
 	RootTemplate = Cast<USceneComponent>(RootNode->ComponentTemplate);
 	PivotTemplate = Cast<USceneComponent>(PivotNode->ComponentTemplate);
-	UStaticMeshComponent* VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
+	VisualTemplate = Cast<UStaticMeshComponent>(VisualNode->ComponentTemplate);
 	TestNotNull(TEXT("Visual component template should be a static mesh component."), VisualTemplate);
 	TestTrue(TEXT("Root component should retain its updated relative location."), RootTemplate != nullptr
 		&& RootTemplate->GetRelativeLocation().Equals(FVector(40.0f, 0.0f, 10.0f), KINDA_SMALL_NUMBER));
@@ -1732,6 +1753,20 @@ bool FVergilComponentAuthoringExecutionTest::RunTest(const FString& Parameters)
 		&& VisualTemplate->GetRelativeLocation().Equals(FVector(15.0f, 5.0f, 0.0f), KINDA_SMALL_NUMBER));
 	TestTrue(TEXT("Visual component should retain its authored relative scale."), VisualTemplate != nullptr
 		&& VisualTemplate->GetRelativeScale3D().Equals(FVector(1.0f, 1.5f, 1.0f), KINDA_SMALL_NUMBER));
+	HiddenInGameProperty = VisualTemplate != nullptr
+		? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("bHiddenInGame"))
+		: nullptr;
+	CastShadowProperty = VisualTemplate != nullptr
+		? FindFProperty<FBoolProperty>(VisualTemplate->GetClass(), TEXT("CastShadow"))
+		: nullptr;
+	TestNotNull(TEXT("Updated visual component should expose bHiddenInGame."), HiddenInGameProperty);
+	TestNotNull(TEXT("Updated visual component should expose CastShadow."), CastShadowProperty);
+	TestTrue(TEXT("Visual component should update HiddenInGame through template properties."), HiddenInGameProperty != nullptr
+		&& VisualTemplate != nullptr
+		&& !HiddenInGameProperty->GetPropertyValue_InContainer(VisualTemplate));
+	TestTrue(TEXT("Visual component should update CastShadow through template properties."), CastShadowProperty != nullptr
+		&& VisualTemplate != nullptr
+		&& CastShadowProperty->GetPropertyValue_InContainer(VisualTemplate));
 
 	return true;
 }
