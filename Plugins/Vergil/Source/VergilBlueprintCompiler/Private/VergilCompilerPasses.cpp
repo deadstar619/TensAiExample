@@ -1836,6 +1836,40 @@ namespace
 			: Document.Edges;
 	}
 
+	struct FCompilerPlannedPinInfo
+	{
+		FGuid NodeId;
+		FName GraphName = EventGraphName;
+		FName Name = NAME_None;
+		bool bIsInput = true;
+		bool bIsExec = false;
+	};
+
+	FName ResolveCompilerCommandGraphName(const FVergilCompilerCommand& Command)
+	{
+		return Command.GraphName.IsNone() ? EventGraphName : Command.GraphName;
+	}
+
+	FString DescribeGraphNode(const FVergilGraphNode* Node)
+	{
+		if (Node == nullptr)
+		{
+			return TEXT("<unknown-node>");
+		}
+
+		return Node->Descriptor.IsNone() ? Node->Id.ToString() : Node->Descriptor.ToString();
+	}
+
+	FString DescribePlannedPin(const FCompilerPlannedPinInfo* PinInfo, const FGuid& PinId)
+	{
+		if (PinInfo == nullptr)
+		{
+			return PinId.ToString();
+		}
+
+		return PinInfo->Name.IsNone() ? PinId.ToString() : PinInfo->Name.ToString();
+	}
+
 	class FVergilCommentNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -2933,6 +2967,236 @@ namespace
 
 		return AddNodeFinalizeCommands(Node, Context);
 	}
+
+	bool ValidateConnectionLegality(FVergilCompilerContext& Context)
+	{
+		const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Context);
+		const TArray<FVergilGraphEdge>& TargetEdges = GetTargetGraphEdges(Context);
+
+		TMap<FGuid, const FVergilGraphNode*> AuthoredNodesById;
+		AuthoredNodesById.Reserve(TargetNodes.Num());
+		for (const FVergilGraphNode& Node : TargetNodes)
+		{
+			AuthoredNodesById.Add(Node.Id, &Node);
+		}
+
+		TMap<FGuid, const FVergilCompilerCommand*> LoweredNodesById;
+		TMap<FGuid, FCompilerPlannedPinInfo> LoweredPinsById;
+		for (const FVergilCompilerCommand& Command : Context.GetLoweredNodeCommands())
+		{
+			if (Command.Type != EVergilCommandType::AddNode || !Command.NodeId.IsValid())
+			{
+				continue;
+			}
+
+			LoweredNodesById.Add(Command.NodeId, &Command);
+
+			const FName GraphName = ResolveCompilerCommandGraphName(Command);
+			for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+			{
+				if (!PlannedPin.PinId.IsValid())
+				{
+					continue;
+				}
+
+				FCompilerPlannedPinInfo PinInfo;
+				PinInfo.NodeId = Command.NodeId;
+				PinInfo.GraphName = GraphName;
+				PinInfo.Name = PlannedPin.Name;
+				PinInfo.bIsInput = PlannedPin.bIsInput;
+				PinInfo.bIsExec = PlannedPin.bIsExec;
+				LoweredPinsById.Add(PlannedPin.PinId, PinInfo);
+			}
+		}
+
+		bool bIsValid = true;
+		TMap<FGuid, FGuid> FirstIncomingEdgeByTargetPin;
+		auto AddConnectionDiagnostic = [&](const FName Code, const FString& Message, const FGuid& SourceId)
+		{
+			bIsValid = false;
+			Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, Code, Message, SourceId);
+		};
+
+		for (const FVergilGraphEdge& Edge : TargetEdges)
+		{
+			const FVergilGraphNode* const SourceNode = AuthoredNodesById.FindRef(Edge.SourceNodeId);
+			const FVergilGraphNode* const TargetNode = AuthoredNodesById.FindRef(Edge.TargetNodeId);
+			const FString SourceNodeLabel = DescribeGraphNode(SourceNode);
+			const FString TargetNodeLabel = DescribeGraphNode(TargetNode);
+
+			const bool bHasLoweredSourceNode = LoweredNodesById.Contains(Edge.SourceNodeId);
+			if (!bHasLoweredSourceNode)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionSourceNodeNotLowered"),
+					FString::Printf(
+						TEXT("Connection legality pass could not find a lowered AddNode command for source node '%s'."),
+						*SourceNodeLabel),
+					Edge.SourceNodeId);
+			}
+
+			const bool bHasLoweredTargetNode = LoweredNodesById.Contains(Edge.TargetNodeId);
+			if (!bHasLoweredTargetNode)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetNodeNotLowered"),
+					FString::Printf(
+						TEXT("Connection legality pass could not find a lowered AddNode command for target node '%s'."),
+						*TargetNodeLabel),
+					Edge.TargetNodeId);
+			}
+
+			const FCompilerPlannedPinInfo* const SourcePinInfo = LoweredPinsById.Find(Edge.SourcePinId);
+			if (bHasLoweredSourceNode && SourcePinInfo == nullptr)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionSourcePinNotLowered"),
+					FString::Printf(
+						TEXT("Connection legality pass could not find source pin '%s' in the lowered output for node '%s'."),
+						*Edge.SourcePinId.ToString(),
+						*SourceNodeLabel),
+					Edge.SourceNodeId);
+			}
+
+			const FCompilerPlannedPinInfo* const TargetPinInfo = LoweredPinsById.Find(Edge.TargetPinId);
+			if (bHasLoweredTargetNode && TargetPinInfo == nullptr)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetPinNotLowered"),
+					FString::Printf(
+						TEXT("Connection legality pass could not find target pin '%s' in the lowered output for node '%s'."),
+						*Edge.TargetPinId.ToString(),
+						*TargetNodeLabel),
+					Edge.TargetNodeId);
+			}
+
+			if (SourcePinInfo == nullptr || TargetPinInfo == nullptr)
+			{
+				continue;
+			}
+
+			if (SourcePinInfo->NodeId != Edge.SourceNodeId)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionSourcePinOwnerMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass resolved source pin '%s' to lowered node '%s', not declared node '%s'."),
+						*DescribePlannedPin(SourcePinInfo, Edge.SourcePinId),
+						*SourcePinInfo->NodeId.ToString(),
+						*Edge.SourceNodeId.ToString()),
+					Edge.SourceNodeId);
+			}
+
+			if (TargetPinInfo->NodeId != Edge.TargetNodeId)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetPinOwnerMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass resolved target pin '%s' to lowered node '%s', not declared node '%s'."),
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetPinInfo->NodeId.ToString(),
+						*Edge.TargetNodeId.ToString()),
+					Edge.TargetNodeId);
+			}
+
+			if (SourcePinInfo->GraphName != TargetPinInfo->GraphName)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionPinGraphMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected connection between source pin '%s' on graph '%s' and target pin '%s' on graph '%s'."),
+						*DescribePlannedPin(SourcePinInfo, Edge.SourcePinId),
+						*SourcePinInfo->GraphName.ToString(),
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetPinInfo->GraphName.ToString()),
+					Edge.SourceNodeId);
+			}
+
+			if (SourcePinInfo->GraphName != Context.GetGraphName())
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionSourceGraphMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected source pin '%s' on node '%s' because it lowers into graph '%s' instead of compile target '%s'."),
+						*DescribePlannedPin(SourcePinInfo, Edge.SourcePinId),
+						*SourceNodeLabel,
+						*SourcePinInfo->GraphName.ToString(),
+						*Context.GetGraphName().ToString()),
+					Edge.SourceNodeId);
+			}
+
+			if (TargetPinInfo->GraphName != Context.GetGraphName())
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetGraphMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected target pin '%s' on node '%s' because it lowers into graph '%s' instead of compile target '%s'."),
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetNodeLabel,
+						*TargetPinInfo->GraphName.ToString(),
+						*Context.GetGraphName().ToString()),
+					Edge.TargetNodeId);
+			}
+
+			if (SourcePinInfo->bIsInput)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionSourcePinDirectionInvalid"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected source pin '%s' on node '%s' because it is an input pin."),
+						*DescribePlannedPin(SourcePinInfo, Edge.SourcePinId),
+						*SourceNodeLabel),
+					Edge.SourceNodeId);
+			}
+
+			if (!TargetPinInfo->bIsInput)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetPinDirectionInvalid"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected target pin '%s' on node '%s' because it is an output pin."),
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetNodeLabel),
+					Edge.TargetNodeId);
+			}
+
+			if (SourcePinInfo->bIsExec != TargetPinInfo->bIsExec)
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionExecMismatch"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected source pin '%s' on node '%s' and target pin '%s' on node '%s' because exec and data pins cannot be mixed."),
+						*DescribePlannedPin(SourcePinInfo, Edge.SourcePinId),
+						*SourceNodeLabel,
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetNodeLabel),
+					Edge.SourceNodeId);
+			}
+
+			if (!TargetPinInfo->bIsInput)
+			{
+				continue;
+			}
+
+			if (const FGuid* const FirstEdgeId = FirstIncomingEdgeByTargetPin.Find(Edge.TargetPinId))
+			{
+				AddConnectionDiagnostic(
+					TEXT("ConnectionTargetPinMultiplyDriven"),
+					FString::Printf(
+						TEXT("Connection legality pass rejected target pin '%s' on node '%s' because input pins may only have one incoming edge (already driven by edge '%s')."),
+						*DescribePlannedPin(TargetPinInfo, Edge.TargetPinId),
+						*TargetNodeLabel,
+						*FirstEdgeId->ToString()),
+					Edge.TargetNodeId);
+			}
+			else
+			{
+				FirstIncomingEdgeByTargetPin.Add(Edge.TargetPinId, Edge.Id);
+			}
+		}
+
+		return bIsValid;
+	}
 }
 
 FName FVergilSchemaMigrationPass::GetPassName() const
@@ -3099,6 +3363,23 @@ bool FVergilNodeLoweringPass::Run(
 		bIsValid &= LowerNode(Node, Context);
 	}
 
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilConnectionLegalityPass::GetPassName() const
+{
+	return TEXT("ConnectionLegality");
+}
+
+bool FVergilConnectionLegalityPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	const bool bIsValid = ValidateConnectionLegality(Context);
 	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
 	{
 		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;

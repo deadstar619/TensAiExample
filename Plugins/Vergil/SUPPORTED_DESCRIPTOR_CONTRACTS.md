@@ -16,7 +16,7 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
-- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, and then command planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, and then command planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -82,12 +82,12 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Type resolution contracts
 
-- `FVergilTypeResolutionPass` now runs after symbol resolution and before node lowering plus final command planning.
+- `FVergilTypeResolutionPass` now runs after symbol resolution and before node lowering, connection legality validation, and final command planning.
 - The type pass normalizes authored type metadata across variable definitions, function signatures, macro signatures, dispatcher parameters, component class paths, interface class paths, and explicit typed-node metadata on the active graph surface.
 - Supported logical type categories remain `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` references now resolve to canonical object paths before planning, so planned commands stop depending on raw authored whitespace or alternate path spellings.
 - The type pass currently resolves explicit type metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
-- Failed type resolution stops compilation before node lowering or command planning, so invalid authored type references now return zero planned commands.
+- Failed type resolution stops compilation before node lowering, connection legality validation, or command planning, so invalid authored type references now return zero planned commands.
 
 ## Node lowering contracts
 
@@ -95,7 +95,16 @@ This document describes the current scaffold contracts implemented in code today
 - The node-lowering pass resolves handlers against the normalized working document and emits node-scoped `AddNode`, `SetNodeMetadata`, and `FinalizeNode` commands into the compiler context before the final plan is assembled.
 - `K2.CreateDelegate.*` finalization is now owned by node lowering instead of command planning, so function-name selection and normalized metadata travel with the lowered node output.
 - Comment and generic metadata-lowering commands are emitted in deterministic key order.
-- Failed node lowering stops compilation before final command planning, so handler failures now return zero planned commands.
+- Failed node lowering stops compilation before later connection legality validation or final command planning, so handler failures now return zero planned commands.
+
+## Connection legality contracts
+
+- `FVergilConnectionLegalityPass` now runs after node lowering and before final command planning.
+- The connection pass validates target-graph edges against the lowered `AddNode` output, not just raw authored node pins, so later passes only assemble connections that still exist on the lowered pin surface.
+- Source pins must lower as output pins, target pins must lower as input pins, exec pins may only connect to exec pins, and data pins may only connect to data pins.
+- Input pins may only have one incoming authored edge during compile-time legality validation.
+- Lowered source and target pins must stay on the compile target graph, and both sides of one connection must lower into the same graph.
+- Failed connection legality validation stops compilation before final command planning, so invalid authored edges now return zero planned commands.
 
 ## Blueprint metadata contracts
 

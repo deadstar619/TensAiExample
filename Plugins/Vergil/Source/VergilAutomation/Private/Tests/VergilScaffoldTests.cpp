@@ -95,6 +95,27 @@ namespace
 		}
 	};
 
+	class FTestPinDroppingNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Test.DropPins");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = TEXT("HandledWithoutPins");
+			Command.Position = Node.Position;
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
 	UBlueprint* MakeTestBlueprint()
 	{
 		const FName BlueprintName = MakeUniqueObjectName(GetTransientPackage(), UBlueprint::StaticClass(), TEXT("BP_VergilTransient"));
@@ -1060,6 +1081,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.NodeLoweringPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilConnectionLegalityPassTest,
+	"Vergil.Scaffold.ConnectionLegalityPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
 {
 	FVergilCompileRequest Request;
@@ -1910,6 +1936,259 @@ bool FVergilNodeLoweringPassTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Node lowering failures should prevent command planning from producing a partial plan."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Handler-reported lowering failures should preserve the specific node-level cause."), ContainsDiagnostic(Result.Diagnostics, TEXT("IntentionalNodeLoweringFailure"), FailingNode.Id));
 		TestTrue(TEXT("Node lowering failures should also report the dedicated pass-level diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("NodeLoweringFailed"), FailingNode.Id));
+
+		FVergilNodeRegistry::Get().Reset();
+	}
+
+	return true;
+}
+
+bool FVergilConnectionLegalityPassTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code, const FGuid& SourceId = FGuid())
+	{
+		return Diagnostics.ContainsByPredicate([Code, SourceId](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code
+				&& (!SourceId.IsValid() || Diagnostic.SourceId == SourceId);
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+
+	{
+		FVergilGraphNode SourceNode;
+		SourceNode.Id = FGuid::NewGuid();
+		SourceNode.Kind = EVergilNodeKind::Custom;
+		SourceNode.Descriptor = TEXT("Test.ConnectionSource");
+
+		FVergilGraphPin SourcePin;
+		SourcePin.Id = FGuid::NewGuid();
+		SourcePin.Name = TEXT("Value");
+		SourcePin.Direction = EVergilPinDirection::Output;
+		SourceNode.Pins.Add(SourcePin);
+
+		FVergilGraphNode TargetNode;
+		TargetNode.Id = FGuid::NewGuid();
+		TargetNode.Kind = EVergilNodeKind::Custom;
+		TargetNode.Descriptor = TEXT("Test.ConnectionTarget");
+
+		FVergilGraphPin TargetPin;
+		TargetPin.Id = FGuid::NewGuid();
+		TargetPin.Name = TEXT("Input");
+		TargetPin.Direction = EVergilPinDirection::Input;
+		TargetNode.Pins.Add(TargetPin);
+
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNode.Id;
+		Edge.SourcePinId = SourcePin.Id;
+		Edge.TargetNodeId = TargetNode.Id;
+		Edge.TargetPinId = TargetPin.Id;
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_Valid");
+		Request.Document.Nodes = { SourceNode, TargetNode };
+		Request.Document.Edges.Add(Edge);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("Legal connections should survive the connection-legality pass."), Result.bSucceeded);
+		TestEqual(TEXT("Legal generic connections should still lower into ensure, two AddNode commands, and one ConnectPins command."), Result.Commands.Num(), 4);
+		if (Result.Commands.Num() == 4)
+		{
+			TestEqual(TEXT("Legal connections should still plan the ConnectPins command last after normalization."), Result.Commands.Last().Type, EVergilCommandType::ConnectPins);
+		}
+	}
+
+	{
+		FVergilGraphNode SourceNode;
+		SourceNode.Id = FGuid::NewGuid();
+		SourceNode.Kind = EVergilNodeKind::Custom;
+		SourceNode.Descriptor = TEXT("Test.BadSourceDirection");
+
+		FVergilGraphPin SourcePin;
+		SourcePin.Id = FGuid::NewGuid();
+		SourcePin.Name = TEXT("InputPin");
+		SourcePin.Direction = EVergilPinDirection::Input;
+		SourceNode.Pins.Add(SourcePin);
+
+		FVergilGraphNode TargetNode;
+		TargetNode.Id = FGuid::NewGuid();
+		TargetNode.Kind = EVergilNodeKind::Custom;
+		TargetNode.Descriptor = TEXT("Test.TargetDirection");
+
+		FVergilGraphPin TargetPin;
+		TargetPin.Id = FGuid::NewGuid();
+		TargetPin.Name = TEXT("Input");
+		TargetPin.Direction = EVergilPinDirection::Input;
+		TargetNode.Pins.Add(TargetPin);
+
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNode.Id;
+		Edge.SourcePinId = SourcePin.Id;
+		Edge.TargetNodeId = TargetNode.Id;
+		Edge.TargetPinId = TargetPin.Id;
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_SourceDirection");
+		Request.Document.Nodes = { SourceNode, TargetNode };
+		Request.Document.Edges.Add(Edge);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Input pins should not be allowed to drive outgoing connections."), Result.bSucceeded);
+		TestEqual(TEXT("Connection-legality failures should stop command planning before any commands are returned."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Wrong source pin direction should report ConnectionSourcePinDirectionInvalid."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConnectionSourcePinDirectionInvalid"), SourceNode.Id));
+	}
+
+	{
+		FVergilGraphNode SourceNode;
+		SourceNode.Id = FGuid::NewGuid();
+		SourceNode.Kind = EVergilNodeKind::Custom;
+		SourceNode.Descriptor = TEXT("Test.ExecMismatchSource");
+
+		FVergilGraphPin SourcePin;
+		SourcePin.Id = FGuid::NewGuid();
+		SourcePin.Name = TEXT("Value");
+		SourcePin.Direction = EVergilPinDirection::Output;
+		SourceNode.Pins.Add(SourcePin);
+
+		FVergilGraphNode TargetNode;
+		TargetNode.Id = FGuid::NewGuid();
+		TargetNode.Kind = EVergilNodeKind::Custom;
+		TargetNode.Descriptor = TEXT("Test.ExecMismatchTarget");
+
+		FVergilGraphPin TargetPin;
+		TargetPin.Id = FGuid::NewGuid();
+		TargetPin.Name = TEXT("Execute");
+		TargetPin.Direction = EVergilPinDirection::Input;
+		TargetPin.bIsExec = true;
+		TargetNode.Pins.Add(TargetPin);
+
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNode.Id;
+		Edge.SourcePinId = SourcePin.Id;
+		Edge.TargetNodeId = TargetNode.Id;
+		Edge.TargetPinId = TargetPin.Id;
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_ExecMismatch");
+		Request.Document.Nodes = { SourceNode, TargetNode };
+		Request.Document.Edges.Add(Edge);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Exec pins should not connect to data pins."), Result.bSucceeded);
+		TestEqual(TEXT("Exec/data mismatches should stop command planning before any commands are returned."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Exec/data mismatches should report ConnectionExecMismatch."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConnectionExecMismatch"), SourceNode.Id));
+	}
+
+	{
+		FVergilGraphNode SourceNodeA;
+		SourceNodeA.Id = FGuid::NewGuid();
+		SourceNodeA.Kind = EVergilNodeKind::Custom;
+		SourceNodeA.Descriptor = TEXT("Test.MultipleDriverA");
+
+		FVergilGraphPin SourcePinA;
+		SourcePinA.Id = FGuid::NewGuid();
+		SourcePinA.Name = TEXT("ValueA");
+		SourcePinA.Direction = EVergilPinDirection::Output;
+		SourceNodeA.Pins.Add(SourcePinA);
+
+		FVergilGraphNode SourceNodeB;
+		SourceNodeB.Id = FGuid::NewGuid();
+		SourceNodeB.Kind = EVergilNodeKind::Custom;
+		SourceNodeB.Descriptor = TEXT("Test.MultipleDriverB");
+
+		FVergilGraphPin SourcePinB;
+		SourcePinB.Id = FGuid::NewGuid();
+		SourcePinB.Name = TEXT("ValueB");
+		SourcePinB.Direction = EVergilPinDirection::Output;
+		SourceNodeB.Pins.Add(SourcePinB);
+
+		FVergilGraphNode TargetNode;
+		TargetNode.Id = FGuid::NewGuid();
+		TargetNode.Kind = EVergilNodeKind::Custom;
+		TargetNode.Descriptor = TEXT("Test.MultipleDriverTarget");
+
+		FVergilGraphPin TargetPin;
+		TargetPin.Id = FGuid::NewGuid();
+		TargetPin.Name = TEXT("Input");
+		TargetPin.Direction = EVergilPinDirection::Input;
+		TargetNode.Pins.Add(TargetPin);
+
+		FVergilGraphEdge FirstEdge;
+		FirstEdge.Id = FGuid::NewGuid();
+		FirstEdge.SourceNodeId = SourceNodeA.Id;
+		FirstEdge.SourcePinId = SourcePinA.Id;
+		FirstEdge.TargetNodeId = TargetNode.Id;
+		FirstEdge.TargetPinId = TargetPin.Id;
+
+		FVergilGraphEdge SecondEdge;
+		SecondEdge.Id = FGuid::NewGuid();
+		SecondEdge.SourceNodeId = SourceNodeB.Id;
+		SecondEdge.SourcePinId = SourcePinB.Id;
+		SecondEdge.TargetNodeId = TargetNode.Id;
+		SecondEdge.TargetPinId = TargetPin.Id;
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_MultipleDrivers");
+		Request.Document.Nodes = { SourceNodeA, SourceNodeB, TargetNode };
+		Request.Document.Edges = { FirstEdge, SecondEdge };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Input pins should reject multiple incoming connections during compile-time legality validation."), Result.bSucceeded);
+		TestEqual(TEXT("Multiple drivers should stop command planning before any commands are returned."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Multiple drivers should report ConnectionTargetPinMultiplyDriven."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConnectionTargetPinMultiplyDriven"), TargetNode.Id));
+	}
+
+	{
+		FVergilNodeRegistry::Get().Reset();
+		FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestPinDroppingNodeHandler, ESPMode::ThreadSafe>());
+
+		FVergilGraphNode SourceNode;
+		SourceNode.Id = FGuid::NewGuid();
+		SourceNode.Kind = EVergilNodeKind::Custom;
+		SourceNode.Descriptor = TEXT("Test.DropPins");
+
+		FVergilGraphPin SourcePin;
+		SourcePin.Id = FGuid::NewGuid();
+		SourcePin.Name = TEXT("Value");
+		SourcePin.Direction = EVergilPinDirection::Output;
+		SourceNode.Pins.Add(SourcePin);
+
+		FVergilGraphNode TargetNode;
+		TargetNode.Id = FGuid::NewGuid();
+		TargetNode.Kind = EVergilNodeKind::Custom;
+		TargetNode.Descriptor = TEXT("Test.DropPinsTarget");
+
+		FVergilGraphPin TargetPin;
+		TargetPin.Id = FGuid::NewGuid();
+		TargetPin.Name = TEXT("Input");
+		TargetPin.Direction = EVergilPinDirection::Input;
+		TargetNode.Pins.Add(TargetPin);
+
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNode.Id;
+		Edge.SourcePinId = SourcePin.Id;
+		Edge.TargetNodeId = TargetNode.Id;
+		Edge.TargetPinId = TargetPin.Id;
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_DroppedPins");
+		Request.Document.Nodes = { SourceNode, TargetNode };
+		Request.Document.Edges.Add(Edge);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Connection legality should validate the lowered pin surface, not just authored pin ids."), Result.bSucceeded);
+		TestEqual(TEXT("Dropped lowered pins should stop command planning before any commands are returned."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing lowered source pins should report ConnectionSourcePinNotLowered."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConnectionSourcePinNotLowered"), SourceNode.Id));
 
 		FVergilNodeRegistry::Get().Reset();
 	}
