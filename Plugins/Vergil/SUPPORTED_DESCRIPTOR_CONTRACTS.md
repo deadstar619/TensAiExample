@@ -16,7 +16,7 @@ This document describes the current scaffold contracts implemented in code today
 - `ClassDefaults` now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Construction script definitions now lower into construction-script graph authoring when `FVergilCompileRequest.TargetGraphName` is `UserConstructionScript`. `UVergilEditorSubsystem::CompileDocument` still defaults to `EventGraph`; use `CompileDocumentToGraph(..., UserConstructionScript, ...)` to author the construction script through the editor subsystem helper.
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
-- The compiler pipeline now runs schema migration, structural validation, semantic validation, and then command planning.
+- The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, and then command planning.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
@@ -68,6 +68,17 @@ This document describes the current scaffold contracts implemented in code today
 - Known descriptor families now validate their expected authored shape before planning. This includes descriptor suffixes for `K2.Event.*`, `K2.CustomEvent.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, delegate helper descriptors, and required metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.FormatText`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
 - `K2.Event.*` descriptors now validate against node kind `Event`, `K2.Call.*` against kind `Call`, `K2.VarGet.*` against kind `VariableGet`, and `K2.VarSet.*` against kind `VariableSet`, which prevents those authored nodes from silently falling through to generic planning.
 - When compiling `UserConstructionScript`, the only supported authored `K2.Event.*` descriptor is `K2.Event.UserConstructionScript`.
+
+## Symbol resolution contracts
+
+- `FVergilSymbolResolutionPass` now runs after semantic validation and before command planning.
+- The symbol pass resolves callable/member references for `K2.Event.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, `K2.BindDelegate.*`, `K2.RemoveDelegate.*`, `K2.ClearDelegate.*`, `K2.CallDelegate.*`, `K2.CreateDelegate.*`, custom-event delegate-signature metadata, and `K2.ForLoop` macro references.
+- Explicit `OwnerClassPath` and `DelegateOwnerClassPath` metadata is authoritative. If authored, the symbol pass resolves only against that owner path and fails explicitly when the owner or member cannot be found.
+- Without explicit owner metadata, variable and delegate symbols resolve in this order: document-authored members first, then existing Blueprint-local members, then inherited/native members.
+- Without explicit owner metadata, `K2.Call.*` currently resolves against the target Blueprint parent class, matching the supported scaffold execution path. Successful inherited/native resolutions are normalized back into `OwnerClassPath` on the compiler working document so planned commands become explicit.
+- `K2.CustomEvent.*` may optionally declare `DelegatePropertyName` plus `DelegateOwnerClassPath` metadata for delegate signatures. The symbol pass resolves those signatures before planning, and external-owner resolutions are normalized back into `DelegateOwnerClassPath`.
+- `K2.CreateDelegate.*` currently resolves against target-graph custom events, document-authored function definitions, and existing Blueprint or parent-class functions. Ambiguous local matches fail explicitly.
+- `K2.ForLoop` macro references now resolve during the symbol pass, and omitted `MacroBlueprintPath` / `MacroGraphName` metadata is normalized to the engine `StandardMacros` `ForLoop` default before planning.
 
 ## Blueprint metadata contracts
 
@@ -189,15 +200,15 @@ This document describes the current scaffold contracts implemented in code today
 | Descriptor contract | Expected kind | Required metadata | Notes |
 | --- | --- | --- | --- |
 | any non-empty descriptor | `Comment` | none | Comment nodes are matched by kind, not a fixed descriptor string. `CommentText` or `Title` sets the text. `CommentWidth`, `CommentHeight`, `FontSize`, `Color`, and `CommentColor` are supported. |
-| `K2.Event.<FunctionName>` | `Event` | none | Binds a standard event by function name suffix. |
-| `K2.CustomEvent.<EventName>` | any | none | Creates a custom event named by descriptor suffix. |
-| `K2.Call.<FunctionName>` | `Call` | none | Optional `OwnerClassPath` constrains function resolution. |
-| `K2.VarGet.<VariableName>` | `VariableGet` | none | Optional `OwnerClassPath` constrains property lookup. Only pure getter shapes are supported; exec pins on variable gets fail explicitly. |
-| `K2.VarSet.<VariableName>` | `VariableSet` | none | Optional `OwnerClassPath` constrains property lookup. |
+| `K2.Event.<FunctionName>` | `Event` | none | Binds a standard event by function name suffix and now resolves against the target Blueprint parent class during compilation. |
+| `K2.CustomEvent.<EventName>` | any | none | Creates a custom event named by descriptor suffix. Optional `DelegatePropertyName` and `DelegateOwnerClassPath` metadata is resolved during compilation when authored. |
+| `K2.Call.<FunctionName>` | `Call` | none | Optional `OwnerClassPath` constrains function resolution. When omitted, the current scaffold resolves against the target Blueprint parent class and normalizes that owner path into the planned command. |
+| `K2.VarGet.<VariableName>` | `VariableGet` | none | Optional `OwnerClassPath` constrains property lookup. Without it, the symbol pass resolves document-authored members first, then existing Blueprint members, then inherited members. Only pure getter shapes are supported; exec pins on variable gets fail explicitly. |
+| `K2.VarSet.<VariableName>` | `VariableSet` | none | Optional `OwnerClassPath` constrains property lookup. Without it, the symbol pass resolves document-authored members first, then existing Blueprint members, then inherited members. |
 | `K2.Self` | any | none | Creates a self node. |
 | `K2.Branch` | any | none | Standard branch node. |
 | `K2.Sequence` | any | none | Output exec pins named like `Then_0`, `Then_1`, and so on determine sequence width. |
-| `K2.ForLoop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `ForLoop` macro in `StandardMacros`. |
+| `K2.ForLoop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `ForLoop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. |
 | `K2.Delay` | any | none | Lowers to `UKismetSystemLibrary::Delay`. |
 | `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class. |
 | `K2.Reroute` | any | none | Creates a knot node. |
@@ -211,11 +222,11 @@ This document describes the current scaffold contracts implemented in code today
 | `K2.MakeArray` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. |
 | `K2.MakeSet` | any | `ValuePinCategory` | Optional `ValueObjectPath` and `NumInputs`. `NumInputs` must be at least `1`. |
 | `K2.MakeMap` | any | `KeyPinCategory`, `ValuePinCategory` | Optional `KeyObjectPath`, `ValueObjectPath`, and `NumPairs`. `NumPairs` must be at least `1`. |
-| `K2.BindDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. |
-| `K2.RemoveDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. |
-| `K2.ClearDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. |
-| `K2.CallDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. |
-| `K2.CreateDelegate.<FunctionName>` | any | none | Creates a delegate node and uses a finalize pass to assign the selected function after initial graph compilation. |
+| `K2.BindDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
+| `K2.RemoveDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
+| `K2.ClearDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
+| `K2.CallDelegate.<PropertyName>` | any | none | Optional `OwnerClassPath` constrains delegate property resolution. Without it, the symbol pass resolves document-authored dispatchers first, then existing Blueprint dispatchers, then inherited/native delegate properties. |
+| `K2.CreateDelegate.<FunctionName>` | any | none | Creates a delegate node and uses a finalize pass to assign the selected function after initial graph compilation. The selected function now resolves during compilation against target-graph custom events, document-authored functions, and existing Blueprint/parent-class functions. |
 
 ## Type metadata conventions
 

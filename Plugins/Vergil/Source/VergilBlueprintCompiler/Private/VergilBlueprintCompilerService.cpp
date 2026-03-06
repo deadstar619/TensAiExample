@@ -32,6 +32,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 		MakeShared<FVergilSchemaMigrationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilStructuralValidationPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilSemanticValidationPass, ESPMode::ThreadSafe>(),
+		MakeShared<FVergilSymbolResolutionPass, ESPMode::ThreadSafe>(),
 		MakeShared<FVergilCommandPlanningPass, ESPMode::ThreadSafe>()
 	};
 

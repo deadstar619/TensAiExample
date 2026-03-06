@@ -1,6 +1,10 @@
 #include "VergilCompilerPasses.h"
 
 #include "Algo/AnyOf.h"
+#include "EdGraph/EdGraph.h"
+#include "Engine/Blueprint.h"
+#include "UObject/UnrealType.h"
+#include "UObject/UObjectGlobals.h"
 
 #include "VergilCompilerTypes.h"
 #include "VergilDiagnostic.h"
@@ -376,6 +380,642 @@ namespace
 		}
 
 		return bIsValid;
+	}
+
+	void AddSymbolResolutionDiagnostic(
+		FVergilCompilerContext& Context,
+		const FName Code,
+		const FString& Message,
+		const FGuid& SourceId)
+	{
+		Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, Code, Message, SourceId);
+	}
+
+	UObject* ResolveObjectReference(const FString& Reference)
+	{
+		const FString TrimmedReference = Reference.TrimStartAndEnd();
+		if (TrimmedReference.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		if (UObject* DirectObject = FindObject<UObject>(nullptr, *TrimmedReference))
+		{
+			return DirectObject;
+		}
+
+		return LoadObject<UObject>(nullptr, *TrimmedReference);
+	}
+
+	UClass* ResolveClassReference(const FString& Reference)
+	{
+		const FString TrimmedReference = Reference.TrimStartAndEnd();
+		if (TrimmedReference.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		if (UClass* DirectClass = FindObject<UClass>(nullptr, *TrimmedReference))
+		{
+			return DirectClass;
+		}
+
+		if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *TrimmedReference))
+		{
+			return LoadedClass;
+		}
+
+		return LoadClass<UObject>(nullptr, *TrimmedReference);
+	}
+
+	UEdGraph* ResolveMacroGraphReference(const FString& BlueprintPath, const FName GraphName)
+	{
+		const FString TrimmedBlueprintPath = BlueprintPath.TrimStartAndEnd();
+		if (TrimmedBlueprintPath.IsEmpty() || GraphName.IsNone())
+		{
+			return nullptr;
+		}
+
+		UBlueprint* const MacroBlueprint = Cast<UBlueprint>(ResolveObjectReference(TrimmedBlueprintPath));
+		if (MacroBlueprint == nullptr)
+		{
+			return nullptr;
+		}
+
+		TArray<UEdGraph*> AllGraphs;
+		MacroBlueprint->GetAllGraphs(AllGraphs);
+		for (UEdGraph* CandidateGraph : AllGraphs)
+		{
+			if (CandidateGraph != nullptr && CandidateGraph->GetFName() == GraphName)
+			{
+				return CandidateGraph;
+			}
+		}
+
+		return nullptr;
+	}
+
+	struct FVergilDocumentSymbolTables
+	{
+		TSet<FName> VariableNames;
+		TSet<FName> FunctionNames;
+		TSet<FName> DispatcherNames;
+		TMap<FName, int32> CustomEventCounts;
+	};
+
+	bool SetNormalizedMetadataValue(TMap<FName, FString>& Metadata, const FName Key, const FString& Value)
+	{
+		const FString TrimmedValue = Value.TrimStartAndEnd();
+		if (TrimmedValue.IsEmpty())
+		{
+			return Metadata.Remove(Key) > 0;
+		}
+
+		const FString* ExistingValue = Metadata.Find(Key);
+		if (ExistingValue != nullptr && ExistingValue->TrimStartAndEnd() == TrimmedValue)
+		{
+			return false;
+		}
+
+		Metadata.Add(Key, TrimmedValue);
+		return true;
+	}
+
+	TArray<UClass*> BuildBlueprintSearchClasses(UBlueprint* Blueprint)
+	{
+		TArray<UClass*> SearchClasses;
+		if (Blueprint == nullptr)
+		{
+			return SearchClasses;
+		}
+
+		if (Blueprint->SkeletonGeneratedClass != nullptr)
+		{
+			SearchClasses.AddUnique(Blueprint->SkeletonGeneratedClass);
+		}
+		if (Blueprint->GeneratedClass != nullptr)
+		{
+			SearchClasses.AddUnique(Blueprint->GeneratedClass);
+		}
+		if (Blueprint->ParentClass != nullptr)
+		{
+			SearchClasses.AddUnique(Blueprint->ParentClass);
+		}
+
+		return SearchClasses;
+	}
+
+	bool IsBlueprintSelfClass(const UBlueprint* Blueprint, const UClass* CandidateClass)
+	{
+		return Blueprint != nullptr
+			&& CandidateClass != nullptr
+			&& (CandidateClass == Blueprint->SkeletonGeneratedClass || CandidateClass == Blueprint->GeneratedClass);
+	}
+
+	const TArray<FVergilGraphNode>& GetTargetGraphNodes(const FVergilCompilerContext& Context);
+
+	TArray<FVergilGraphNode>& GetMutableTargetGraphNodes(FVergilGraphDocument& Document, const FName GraphName)
+	{
+		return GraphName == ConstructionScriptGraphName
+			? Document.ConstructionScriptNodes
+			: Document.Nodes;
+	}
+
+	FVergilDocumentSymbolTables BuildDocumentSymbolTables(const FVergilCompilerContext& Context)
+	{
+		FVergilDocumentSymbolTables SymbolTables;
+
+		const FVergilGraphDocument& Document = Context.GetDocument();
+		for (const FVergilVariableDefinition& Variable : Document.Variables)
+		{
+			if (!Variable.Name.IsNone())
+			{
+				SymbolTables.VariableNames.Add(Variable.Name);
+			}
+		}
+
+		for (const FVergilFunctionDefinition& Function : Document.Functions)
+		{
+			if (!Function.Name.IsNone())
+			{
+				SymbolTables.FunctionNames.Add(Function.Name);
+			}
+		}
+
+		for (const FVergilDispatcherDefinition& Dispatcher : Document.Dispatchers)
+		{
+			if (!Dispatcher.Name.IsNone())
+			{
+				SymbolTables.DispatcherNames.Add(Dispatcher.Name);
+			}
+		}
+
+		for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
+		{
+			const FString CustomEventName = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CustomEvent."));
+			if (!CustomEventName.IsEmpty())
+			{
+				++SymbolTables.CustomEventCounts.FindOrAdd(*CustomEventName);
+			}
+		}
+
+		return SymbolTables;
+	}
+
+	bool ResolveEventSymbol(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	{
+		const FString EventNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Event."));
+		if (Context.GetGraphName() == ConstructionScriptGraphName && EventNameString == ConstructionScriptGraphName.ToString())
+		{
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		UClass* const ParentClass = Blueprint != nullptr ? Blueprint->ParentClass : nullptr;
+		if (ParentClass == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("EventFunctionNotFound"),
+				FString::Printf(TEXT("Unable to resolve event '%s' because the target Blueprint has no parent class."), *EventNameString),
+				Node.Id);
+			return false;
+		}
+
+		if (ParentClass->FindFunctionByName(*EventNameString) == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("EventFunctionNotFound"),
+				FString::Printf(TEXT("Unable to resolve event '%s' on parent class '%s'."), *EventNameString, *ParentClass->GetName()),
+				Node.Id);
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ResolveCallSymbol(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		const FString FunctionNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Call."));
+		const FName FunctionName(*FunctionNameString);
+		const FString ExplicitOwnerClassPath = Node.Metadata.FindRef(TEXT("OwnerClassPath")).TrimStartAndEnd();
+
+		if (!ExplicitOwnerClassPath.IsEmpty())
+		{
+			UClass* const OwnerClass = ResolveClassReference(ExplicitOwnerClassPath);
+			if (OwnerClass == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("MissingFunctionOwner"),
+					FString::Printf(TEXT("Unable to resolve owner class '%s' for function '%s'."), *ExplicitOwnerClassPath, *FunctionNameString),
+					Node.Id);
+				return false;
+			}
+
+			UFunction* const Function = OwnerClass->FindFunctionByName(FunctionName);
+			if (Function == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("FunctionNotFound"),
+					FString::Printf(TEXT("Unable to resolve function '%s' on class '%s'."), *FunctionNameString, *OwnerClass->GetName()),
+					Node.Id);
+				return false;
+			}
+
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), Function->GetOwnerClass()->GetPathName());
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		UClass* const ParentClass = Blueprint != nullptr ? Blueprint->ParentClass : nullptr;
+		if (ParentClass == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("MissingFunctionOwner"),
+				FString::Printf(TEXT("Unable to resolve a default owner class for function '%s'."), *FunctionNameString),
+				Node.Id);
+			return false;
+		}
+
+		UFunction* const Function = ParentClass->FindFunctionByName(FunctionName);
+		if (Function == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("FunctionNotFound"),
+				FString::Printf(TEXT("Unable to resolve function '%s' on parent class '%s'."), *FunctionNameString, *ParentClass->GetName()),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), Function->GetOwnerClass()->GetPathName());
+		return true;
+	}
+
+	bool ResolveVariableSymbol(
+		FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FString VariableNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarGet."));
+		const FString AlternateVariableNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarSet."));
+		const FName VariableName = !VariableNameString.IsEmpty()
+			? FName(*VariableNameString)
+			: FName(*AlternateVariableNameString);
+		const FString DisplayVariableName = !VariableNameString.IsEmpty() ? VariableNameString : AlternateVariableNameString;
+		const FString ExplicitOwnerClassPath = Node.Metadata.FindRef(TEXT("OwnerClassPath")).TrimStartAndEnd();
+
+		if (!ExplicitOwnerClassPath.IsEmpty())
+		{
+			UClass* const OwnerClass = ResolveClassReference(ExplicitOwnerClassPath);
+			if (OwnerClass == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("VariableOwnerClassNotFound"),
+					FString::Printf(TEXT("Unable to resolve variable owner class '%s'."), *ExplicitOwnerClassPath),
+					Node.Id);
+				return false;
+			}
+
+			FProperty* const Property = FindFProperty<FProperty>(OwnerClass, VariableName);
+			if (Property == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("VariablePropertyNotFound"),
+					FString::Printf(TEXT("Unable to resolve property '%s' on class '%s' for variable node."), *DisplayVariableName, *OwnerClass->GetName()),
+					Node.Id);
+				return false;
+			}
+
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), Property->GetOwnerClass()->GetPathName());
+			return true;
+		}
+
+		if (SymbolTables.VariableNames.Contains(VariableName))
+		{
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		for (UClass* const SearchClass : BuildBlueprintSearchClasses(Blueprint))
+		{
+			if (FProperty* const Property = FindFProperty<FProperty>(SearchClass, VariableName))
+			{
+				const UClass* const OwnerClass = Property->GetOwnerClass();
+				if (IsBlueprintSelfClass(Blueprint, OwnerClass))
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+				}
+				else if (OwnerClass != nullptr)
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), OwnerClass->GetPathName());
+				}
+
+				return true;
+			}
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("VariablePropertyNotFound"),
+			FString::Printf(TEXT("Unable to resolve property '%s' on the target Blueprint or parent class for variable node."), *DisplayVariableName),
+			Node.Id);
+		return false;
+	}
+
+	bool ResolveDelegateSymbol(
+		FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FString DescriptorString = Node.Descriptor.ToString();
+		FString PropertyNameString;
+		if (DescriptorString.StartsWith(TEXT("K2.BindDelegate.")))
+		{
+			PropertyNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.BindDelegate."));
+		}
+		else if (DescriptorString.StartsWith(TEXT("K2.RemoveDelegate.")))
+		{
+			PropertyNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.RemoveDelegate."));
+		}
+		else if (DescriptorString.StartsWith(TEXT("K2.ClearDelegate.")))
+		{
+			PropertyNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.ClearDelegate."));
+		}
+		else
+		{
+			PropertyNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CallDelegate."));
+		}
+
+		const FName PropertyName(*PropertyNameString);
+		const FString ExplicitOwnerClassPath = Node.Metadata.FindRef(TEXT("OwnerClassPath")).TrimStartAndEnd();
+
+		if (!ExplicitOwnerClassPath.IsEmpty())
+		{
+			UClass* const OwnerClass = ResolveClassReference(ExplicitOwnerClassPath);
+			if (OwnerClass == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("DelegateOwnerClassNotFound"),
+					FString::Printf(TEXT("Unable to resolve delegate owner class '%s'."), *ExplicitOwnerClassPath),
+					Node.Id);
+				return false;
+			}
+
+			FMulticastDelegateProperty* const DelegateProperty = FindFProperty<FMulticastDelegateProperty>(OwnerClass, PropertyName);
+			if (DelegateProperty == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("DelegatePropertyNotFound"),
+					FString::Printf(TEXT("Unable to resolve multicast delegate property '%s' on class '%s'."), *PropertyNameString, *OwnerClass->GetName()),
+					Node.Id);
+				return false;
+			}
+
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), DelegateProperty->GetOwnerClass()->GetPathName());
+			return true;
+		}
+
+		if (SymbolTables.DispatcherNames.Contains(PropertyName))
+		{
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		for (UClass* const SearchClass : BuildBlueprintSearchClasses(Blueprint))
+		{
+			if (FMulticastDelegateProperty* const DelegateProperty = FindFProperty<FMulticastDelegateProperty>(SearchClass, PropertyName))
+			{
+				const UClass* const OwnerClass = DelegateProperty->GetOwnerClass();
+				if (IsBlueprintSelfClass(Blueprint, OwnerClass))
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+				}
+				else if (OwnerClass != nullptr)
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), OwnerClass->GetPathName());
+				}
+
+				return true;
+			}
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("DelegatePropertyNotFound"),
+			FString::Printf(TEXT("Unable to resolve multicast delegate property '%s' on the target Blueprint or parent class."), *PropertyNameString),
+			Node.Id);
+		return false;
+	}
+
+	bool ResolveCustomEventDelegateSignature(
+		FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FString DelegatePropertyName = Node.Metadata.FindRef(TEXT("DelegatePropertyName")).TrimStartAndEnd();
+		if (DelegatePropertyName.IsEmpty())
+		{
+			return true;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("DelegatePropertyName"), DelegatePropertyName);
+
+		const FName PropertyName(*DelegatePropertyName);
+		const FString ExplicitOwnerClassPath = Node.Metadata.FindRef(TEXT("DelegateOwnerClassPath")).TrimStartAndEnd();
+		if (!ExplicitOwnerClassPath.IsEmpty())
+		{
+			UClass* const OwnerClass = ResolveClassReference(ExplicitOwnerClassPath);
+			if (OwnerClass == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("DelegateOwnerClassNotFound"),
+					FString::Printf(TEXT("Unable to resolve delegate owner class '%s'."), *ExplicitOwnerClassPath),
+					Node.Id);
+				return false;
+			}
+
+			FMulticastDelegateProperty* const DelegateProperty = FindFProperty<FMulticastDelegateProperty>(OwnerClass, PropertyName);
+			if (DelegateProperty == nullptr)
+			{
+				AddSymbolResolutionDiagnostic(
+					Context,
+					TEXT("DelegatePropertyNotFound"),
+					FString::Printf(TEXT("Unable to resolve multicast delegate property '%s' on class '%s'."), *DelegatePropertyName, *OwnerClass->GetName()),
+					Node.Id);
+				return false;
+			}
+
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("DelegateOwnerClassPath"), DelegateProperty->GetOwnerClass()->GetPathName());
+			return true;
+		}
+
+		if (SymbolTables.DispatcherNames.Contains(PropertyName))
+		{
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("DelegateOwnerClassPath"), FString());
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		for (UClass* const SearchClass : BuildBlueprintSearchClasses(Blueprint))
+		{
+			if (FMulticastDelegateProperty* const DelegateProperty = FindFProperty<FMulticastDelegateProperty>(SearchClass, PropertyName))
+			{
+				const UClass* const OwnerClass = DelegateProperty->GetOwnerClass();
+				if (IsBlueprintSelfClass(Blueprint, OwnerClass))
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("DelegateOwnerClassPath"), FString());
+				}
+				else if (OwnerClass != nullptr)
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("DelegateOwnerClassPath"), OwnerClass->GetPathName());
+				}
+
+				return true;
+			}
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("DelegatePropertyNotFound"),
+			FString::Printf(TEXT("Unable to resolve multicast delegate property '%s' for custom event '%s'."), *DelegatePropertyName, *GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CustomEvent."))),
+			Node.Id);
+		return false;
+	}
+
+	bool ResolveCreateDelegateSymbol(
+		const FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context)
+	{
+		const FString FunctionNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.CreateDelegate."));
+		const FName FunctionName(*FunctionNameString);
+		const int32 CustomEventCount = SymbolTables.CustomEventCounts.FindRef(FunctionName);
+		const bool bHasDocumentFunction = SymbolTables.FunctionNames.Contains(FunctionName);
+
+		if (CustomEventCount > 1 || (CustomEventCount > 0 && bHasDocumentFunction))
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("CreateDelegateFunctionAmbiguous"),
+				FString::Printf(TEXT("CreateDelegate target '%s' is ambiguous within the compiled document."), *FunctionNameString),
+				Node.Id);
+			return false;
+		}
+
+		if (CustomEventCount == 1 || bHasDocumentFunction)
+		{
+			return true;
+		}
+
+		UBlueprint* const Blueprint = Context.GetBlueprint();
+		for (UClass* const SearchClass : BuildBlueprintSearchClasses(Blueprint))
+		{
+			if (SearchClass != nullptr && SearchClass->FindFunctionByName(FunctionName) != nullptr)
+			{
+				return true;
+			}
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("CreateDelegateFunctionNotFound"),
+			FString::Printf(TEXT("Unable to resolve create-delegate target '%s' on the compiled document, Blueprint, or parent class."), *FunctionNameString),
+			Node.Id);
+		return false;
+	}
+
+	bool ResolveForLoopMacroSymbol(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		static const FString DefaultMacroBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		static const FName DefaultMacroGraphName(TEXT("ForLoop"));
+
+		FString MacroBlueprintPath = Node.Metadata.FindRef(TEXT("MacroBlueprintPath")).TrimStartAndEnd();
+		FString MacroGraphNameString = Node.Metadata.FindRef(TEXT("MacroGraphName")).TrimStartAndEnd();
+		if (MacroBlueprintPath.IsEmpty())
+		{
+			MacroBlueprintPath = DefaultMacroBlueprintPath;
+		}
+		if (MacroGraphNameString.IsEmpty())
+		{
+			MacroGraphNameString = DefaultMacroGraphName.ToString();
+		}
+
+		if (ResolveMacroGraphReference(MacroBlueprintPath, FName(*MacroGraphNameString)) == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("ForLoopMacroNotFound"),
+				FString::Printf(TEXT("Unable to resolve macro graph '%s' from '%s'."), *MacroGraphNameString, *MacroBlueprintPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("MacroBlueprintPath"), MacroBlueprintPath);
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("MacroGraphName"), MacroGraphNameString);
+		return true;
+	}
+
+	bool ResolveNodeSymbols(
+		FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FString DescriptorString = Node.Descriptor.ToString();
+		if (DescriptorString.StartsWith(TEXT("K2.Event.")))
+		{
+			return ResolveEventSymbol(Node, Context);
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.Call.")))
+		{
+			return ResolveCallSymbol(Node, Context, bOutChanged);
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.VarGet.")) || DescriptorString.StartsWith(TEXT("K2.VarSet.")))
+		{
+			return ResolveVariableSymbol(Node, SymbolTables, Context, bOutChanged);
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.BindDelegate."))
+			|| DescriptorString.StartsWith(TEXT("K2.RemoveDelegate."))
+			|| DescriptorString.StartsWith(TEXT("K2.ClearDelegate."))
+			|| DescriptorString.StartsWith(TEXT("K2.CallDelegate.")))
+		{
+			return ResolveDelegateSymbol(Node, SymbolTables, Context, bOutChanged);
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.CustomEvent.")))
+		{
+			return ResolveCustomEventDelegateSignature(Node, SymbolTables, Context, bOutChanged);
+		}
+
+		if (DescriptorString.StartsWith(TEXT("K2.CreateDelegate.")))
+		{
+			return ResolveCreateDelegateSymbol(Node, SymbolTables, Context);
+		}
+
+		if (Node.Descriptor == TEXT("K2.ForLoop"))
+		{
+			return ResolveForLoopMacroSymbol(Node, Context, bOutChanged);
+		}
+
+		return true;
 	}
 
 	FString GetVariableContainerTypeString(const EVergilVariableContainerType ContainerType)
@@ -1777,6 +2417,38 @@ bool FVergilSemanticValidationPass::Run(
 	for (const FVergilGraphNode& Node : GetTargetGraphNodes(Context))
 	{
 		bIsValid &= ValidateNodeSemanticRequirements(Node, Context);
+	}
+
+	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	});
+}
+
+FName FVergilSymbolResolutionPass::GetPassName() const
+{
+	return TEXT("SymbolResolution");
+}
+
+bool FVergilSymbolResolutionPass::Run(
+	const FVergilCompileRequest& /*Request*/,
+	FVergilCompilerContext& Context,
+	FVergilCompileResult& Result) const
+{
+	FVergilGraphDocument WorkingDocument = Context.GetDocument();
+	TArray<FVergilGraphNode>& TargetNodes = GetMutableTargetGraphNodes(WorkingDocument, Context.GetGraphName());
+	const FVergilDocumentSymbolTables SymbolTables = BuildDocumentSymbolTables(Context);
+
+	bool bIsValid = true;
+	bool bMadeChanges = false;
+	for (FVergilGraphNode& Node : TargetNodes)
+	{
+		bIsValid &= ResolveNodeSymbols(Node, SymbolTables, Context, bMadeChanges);
+	}
+
+	if (bMadeChanges)
+	{
+		Context.SetWorkingDocument(MoveTemp(WorkingDocument));
 	}
 
 	return bIsValid && !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)

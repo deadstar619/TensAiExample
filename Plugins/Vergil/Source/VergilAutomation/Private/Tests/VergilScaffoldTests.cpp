@@ -908,6 +908,7 @@ bool FVergilConstructionScriptDefinitionModelTest::RunTest(const FString& Parame
 	PrintNode.Kind = EVergilNodeKind::Call;
 	PrintNode.Descriptor = TEXT("K2.Call.PrintString");
 	PrintNode.Position = FVector2D(350.0f, 0.0f);
+	PrintNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
 
 	FVergilGraphPin PrintExecPin;
 	PrintExecPin.Id = FGuid::NewGuid();
@@ -1023,6 +1024,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilSemanticValidationPassTest,
 	"Vergil.Scaffold.SemanticValidationPass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSymbolResolutionPassTest,
+	"Vergil.Scaffold.SymbolResolutionPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilCompilerRequiresBlueprintTest::RunTest(const FString& Parameters)
@@ -1178,6 +1184,193 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Construction-script graphs should reject non-construction event descriptors."), Result.bSucceeded);
 		TestEqual(TEXT("Construction-script semantic failures should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Construction-script semantic failures should report an explicit event diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptEventInvalid")));
+	}
+
+	return true;
+}
+
+bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	const FVergilBlueprintCompilerService CompilerService;
+
+	{
+		FVergilGraphNode DestroyActorNode;
+		DestroyActorNode.Id = FGuid::NewGuid();
+		DestroyActorNode.Kind = EVergilNodeKind::Call;
+		DestroyActorNode.Descriptor = TEXT("K2.Call.K2_DestroyActor");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_NativeCall");
+		Request.Document.Nodes.Add(DestroyActorNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("Inherited native call symbols should resolve during compilation."), Result.bSucceeded);
+
+		const FVergilCompilerCommand* const PlannedCallCommand = FindNodeCommand(Result.Commands, DestroyActorNode.Id);
+		TestNotNull(TEXT("Resolved native calls should still lower into an AddNode command."), PlannedCallCommand);
+		if (PlannedCallCommand != nullptr)
+		{
+			TestEqual(TEXT("Native call resolution should normalize the owner class path into the planned command."), PlannedCallCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+	}
+
+	{
+		FVergilVariableDefinition FlagVariable;
+		FlagVariable.Name = TEXT("TestFlag");
+		FlagVariable.Type.PinCategory = TEXT("bool");
+
+		FVergilDispatcherDefinition Dispatcher;
+		Dispatcher.Name = TEXT("OnSignal");
+
+		FVergilGraphNode GetterNode;
+		GetterNode.Id = FGuid::NewGuid();
+		GetterNode.Kind = EVergilNodeKind::VariableGet;
+		GetterNode.Descriptor = TEXT("K2.VarGet.TestFlag");
+
+		FVergilGraphNode CustomEventNode;
+		CustomEventNode.Id = FGuid::NewGuid();
+		CustomEventNode.Kind = EVergilNodeKind::Custom;
+		CustomEventNode.Descriptor = TEXT("K2.CustomEvent.HandleSignal");
+		CustomEventNode.Metadata.Add(TEXT("DelegatePropertyName"), TEXT("OnSignal"));
+
+		FVergilGraphNode CallDelegateNode;
+		CallDelegateNode.Id = FGuid::NewGuid();
+		CallDelegateNode.Kind = EVergilNodeKind::Custom;
+		CallDelegateNode.Descriptor = TEXT("K2.CallDelegate.OnSignal");
+
+		FVergilGraphNode CreateDelegateNode;
+		CreateDelegateNode.Id = FGuid::NewGuid();
+		CreateDelegateNode.Kind = EVergilNodeKind::Custom;
+		CreateDelegateNode.Descriptor = TEXT("K2.CreateDelegate.HandleSignal");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_DocumentSymbols");
+		Request.Document.Variables.Add(FlagVariable);
+		Request.Document.Dispatchers.Add(Dispatcher);
+		Request.Document.Nodes = { GetterNode, CustomEventNode, CallDelegateNode, CreateDelegateNode };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("Document-authored variables, dispatchers, and custom events should resolve without explicit owner metadata."), Result.bSucceeded);
+
+		const FVergilCompilerCommand* const PlannedGetterCommand = FindNodeCommand(Result.Commands, GetterNode.Id);
+		TestNotNull(TEXT("Resolved variable getters should still lower into AddNode commands."), PlannedGetterCommand);
+		if (PlannedGetterCommand != nullptr)
+		{
+			TestTrue(TEXT("Document-authored self variables should not require an explicit owner path."), PlannedGetterCommand->StringValue.IsEmpty());
+		}
+
+		const FVergilCompilerCommand* const PlannedDelegateCommand = FindNodeCommand(Result.Commands, CallDelegateNode.Id);
+		TestNotNull(TEXT("Resolved delegate helpers should still lower into AddNode commands."), PlannedDelegateCommand);
+		if (PlannedDelegateCommand != nullptr)
+		{
+			TestTrue(TEXT("Document-authored self dispatchers should not require an explicit owner path."), PlannedDelegateCommand->StringValue.IsEmpty());
+		}
+	}
+
+	{
+		FVergilGraphNode MissingCallNode;
+		MissingCallNode.Id = FGuid::NewGuid();
+		MissingCallNode.Kind = EVergilNodeKind::Call;
+		MissingCallNode.Descriptor = TEXT("K2.Call.DoesNotExist");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_MissingCall");
+		Request.Document.Nodes.Add(MissingCallNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Missing callable symbols should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Missing callable symbols should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing callable symbols should report FunctionNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("FunctionNotFound")));
+	}
+
+	{
+		FVergilGraphNode MissingVariableNode;
+		MissingVariableNode.Id = FGuid::NewGuid();
+		MissingVariableNode.Kind = EVergilNodeKind::VariableGet;
+		MissingVariableNode.Descriptor = TEXT("K2.VarGet.DoesNotExist");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_MissingVariable");
+		Request.Document.Nodes.Add(MissingVariableNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Missing variable symbols should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Missing variable symbols should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing variable symbols should report VariablePropertyNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("VariablePropertyNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidCustomEventNode;
+		InvalidCustomEventNode.Id = FGuid::NewGuid();
+		InvalidCustomEventNode.Kind = EVergilNodeKind::Custom;
+		InvalidCustomEventNode.Descriptor = TEXT("K2.CustomEvent.HandleSignal");
+		InvalidCustomEventNode.Metadata.Add(TEXT("DelegatePropertyName"), TEXT("MissingSignal"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_MissingDelegate");
+		Request.Document.Nodes.Add(InvalidCustomEventNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Missing delegate signature symbols should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Missing delegate signature symbols should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing delegate signature symbols should report DelegatePropertyNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("DelegatePropertyNotFound")));
+	}
+
+	{
+		FVergilGraphNode MissingCreateDelegateNode;
+		MissingCreateDelegateNode.Id = FGuid::NewGuid();
+		MissingCreateDelegateNode.Kind = EVergilNodeKind::Custom;
+		MissingCreateDelegateNode.Descriptor = TEXT("K2.CreateDelegate.DoesNotExist");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_MissingCreateDelegate");
+		Request.Document.Nodes.Add(MissingCreateDelegateNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("CreateDelegate should fail when its target symbol cannot be resolved."), Result.bSucceeded);
+		TestEqual(TEXT("Missing CreateDelegate targets should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing CreateDelegate targets should report CreateDelegateFunctionNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("CreateDelegateFunctionNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidForLoopNode;
+		InvalidForLoopNode.Id = FGuid::NewGuid();
+		InvalidForLoopNode.Kind = EVergilNodeKind::Custom;
+		InvalidForLoopNode.Descriptor = TEXT("K2.ForLoop");
+		InvalidForLoopNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidForLoopNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidForLoop");
+		Request.Document.Nodes.Add(InvalidForLoopNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid macro references should report ForLoopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("ForLoopMacroNotFound")));
 	}
 
 	return true;
@@ -2417,6 +2610,7 @@ bool FVergilConstructionScriptDefinitionPlanningTest::RunTest(const FString& Par
 	PrintNode.Kind = EVergilNodeKind::Call;
 	PrintNode.Descriptor = TEXT("K2.Call.PrintString");
 	PrintNode.Position = FVector2D(350.0f, 0.0f);
+	PrintNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
 
 	FVergilGraphPin PrintExecPin;
 	PrintExecPin.Id = FGuid::NewGuid();
@@ -2831,7 +3025,7 @@ bool FVergilCommandPlanningTest::RunTest(const FString& Parameters)
 	FVergilGraphNode EventNode;
 	EventNode.Id = FGuid::NewGuid();
 	EventNode.Kind = EVergilNodeKind::Event;
-	EventNode.Descriptor = TEXT("K2.Event.BeginPlay");
+	EventNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
 	EventNode.Position = FVector2D(0.0f, 0.0f);
 	EventNode.Metadata.Add(TEXT("Title"), TEXT("BeginPlay"));
 
@@ -2845,7 +3039,7 @@ bool FVergilCommandPlanningTest::RunTest(const FString& Parameters)
 	FVergilGraphNode CallNode;
 	CallNode.Id = FGuid::NewGuid();
 	CallNode.Kind = EVergilNodeKind::Call;
-	CallNode.Descriptor = TEXT("K2.Call.PrintString");
+	CallNode.Descriptor = TEXT("K2.Call.K2_DestroyActor");
 	CallNode.Position = FVector2D(350.0f, 0.0f);
 
 	FVergilGraphPin CallExecIn;
@@ -2883,6 +3077,7 @@ bool FVergilCommandPlanningTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Last command connects pins."), Result.Commands.Last().Type, EVergilCommandType::ConnectPins);
 	TestEqual(TEXT("Handled planner emits explicit event command."), Result.Commands[1].Name, FName(TEXT("Vergil.K2.Event")));
 	TestEqual(TEXT("Handled planner emits explicit call command."), Result.Commands[2].Name, FName(TEXT("Vergil.K2.Call")));
+	TestEqual(TEXT("Symbol resolution should normalize the call owner path into the planned command."), Result.Commands[2].StringValue, AActor::StaticClass()->GetPathName());
 	TestFalse(
 		TEXT("Plain event and call planning should not emit metadata commands."),
 		Result.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
