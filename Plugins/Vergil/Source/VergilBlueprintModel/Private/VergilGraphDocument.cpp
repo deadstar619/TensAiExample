@@ -46,6 +46,9 @@ namespace
 		const FName PinCategory,
 		const FString& ObjectPath,
 		const FString& ContextLabel,
+		const FName MissingCategoryCode,
+		const FName UnsupportedCategoryCode,
+		const FName MissingObjectPathCode,
 		TArray<FVergilDiagnostic>* OutDiagnostics)
 	{
 		if (PinCategory.IsNone())
@@ -53,7 +56,7 @@ namespace
 			AddDiagnostic(
 				OutDiagnostics,
 				EVergilDiagnosticSeverity::Error,
-				TEXT("VariableTypeCategoryMissing"),
+				MissingCategoryCode,
 				FString::Printf(TEXT("%s must declare a type category."), *ContextLabel));
 			return false;
 		}
@@ -63,7 +66,7 @@ namespace
 			AddDiagnostic(
 				OutDiagnostics,
 				EVergilDiagnosticSeverity::Error,
-				TEXT("VariableTypeCategoryUnsupported"),
+				UnsupportedCategoryCode,
 				FString::Printf(TEXT("%s declares unsupported type category '%s'."), *ContextLabel, *PinCategory.ToString()));
 			return false;
 		}
@@ -73,12 +76,116 @@ namespace
 			AddDiagnostic(
 				OutDiagnostics,
 				EVergilDiagnosticSeverity::Error,
-				TEXT("VariableTypeObjectPathMissing"),
+				MissingObjectPathCode,
 				FString::Printf(TEXT("%s type category '%s' requires an object path."), *ContextLabel, *PinCategory.ToString()));
 			return false;
 		}
 
 		return true;
+	}
+
+	bool ValidateVariableTypeReference(
+		const FVergilVariableTypeReference& Type,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		bool bIsValid = ValidateTypeReference(
+			Type.PinCategory,
+			Type.ObjectPath,
+			ContextLabel,
+			TEXT("VariableTypeCategoryMissing"),
+			TEXT("VariableTypeCategoryUnsupported"),
+			TEXT("VariableTypeObjectPathMissing"),
+			OutDiagnostics);
+
+		if (Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			if (Type.ValuePinCategory.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("VariableMapValueCategoryMissing"),
+					FString::Printf(TEXT("%s map definitions must declare a value type category."), *ContextLabel));
+			}
+			else
+			{
+				bIsValid &= ValidateTypeReference(
+					Type.ValuePinCategory,
+					Type.ValueObjectPath,
+					FString::Printf(TEXT("%s value type"), *ContextLabel),
+					TEXT("VariableTypeCategoryMissing"),
+					TEXT("VariableTypeCategoryUnsupported"),
+					TEXT("VariableTypeObjectPathMissing"),
+					OutDiagnostics);
+			}
+		}
+		else if (!Type.ValuePinCategory.IsNone()
+			|| !Type.ValuePinSubCategory.IsNone()
+			|| !Type.ValueObjectPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableValueTypeUnexpected"),
+				FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel));
+		}
+
+		return bIsValid;
+	}
+
+	bool ValidateFunctionParameterTypeReference(
+		const FVergilVariableTypeReference& Type,
+		const FString& ContextLabel,
+		TArray<FVergilDiagnostic>* OutDiagnostics)
+	{
+		bool bIsValid = ValidateTypeReference(
+			Type.PinCategory,
+			Type.ObjectPath,
+			ContextLabel,
+			TEXT("FunctionParameterTypeCategoryMissing"),
+			TEXT("FunctionParameterTypeCategoryUnsupported"),
+			TEXT("FunctionParameterTypeObjectPathMissing"),
+			OutDiagnostics);
+
+		if (Type.ContainerType == EVergilVariableContainerType::Map)
+		{
+			if (Type.ValuePinCategory.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionParameterMapValueCategoryMissing"),
+					FString::Printf(TEXT("%s map definitions must declare a value type category."), *ContextLabel));
+			}
+			else
+			{
+				bIsValid &= ValidateTypeReference(
+					Type.ValuePinCategory,
+					Type.ValueObjectPath,
+					FString::Printf(TEXT("%s value type"), *ContextLabel),
+					TEXT("FunctionParameterTypeCategoryMissing"),
+					TEXT("FunctionParameterTypeCategoryUnsupported"),
+					TEXT("FunctionParameterTypeObjectPathMissing"),
+					OutDiagnostics);
+			}
+		}
+		else if (!Type.ValuePinCategory.IsNone()
+			|| !Type.ValuePinSubCategory.IsNone()
+			|| !Type.ValueObjectPath.IsEmpty())
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionParameterValueTypeUnexpected"),
+				FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *ContextLabel));
+		}
+
+		return bIsValid;
 	}
 }
 
@@ -179,39 +286,7 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 
 		VariableNames.Add(Variable.Name);
 
-		bIsValid &= ValidateTypeReference(Variable.Type.PinCategory, Variable.Type.ObjectPath, VariableLabel, OutDiagnostics);
-
-		if (Variable.Type.ContainerType == EVergilVariableContainerType::Map)
-		{
-			if (Variable.Type.ValuePinCategory.IsNone())
-			{
-				bIsValid = false;
-				AddDiagnostic(
-					OutDiagnostics,
-					EVergilDiagnosticSeverity::Error,
-					TEXT("VariableMapValueCategoryMissing"),
-					FString::Printf(TEXT("%s map definitions must declare a value type category."), *VariableLabel));
-			}
-			else
-			{
-				bIsValid &= ValidateTypeReference(
-					Variable.Type.ValuePinCategory,
-					Variable.Type.ValueObjectPath,
-					FString::Printf(TEXT("%s value type"), *VariableLabel),
-					OutDiagnostics);
-			}
-		}
-		else if (!Variable.Type.ValuePinCategory.IsNone()
-			|| !Variable.Type.ValuePinSubCategory.IsNone()
-			|| !Variable.Type.ValueObjectPath.IsEmpty())
-		{
-			bIsValid = false;
-			AddDiagnostic(
-				OutDiagnostics,
-				EVergilDiagnosticSeverity::Error,
-				TEXT("VariableValueTypeUnexpected"),
-				FString::Printf(TEXT("%s may only declare value-type fields for map containers."), *VariableLabel));
-		}
+		bIsValid &= ValidateVariableTypeReference(Variable.Type, VariableLabel, OutDiagnostics);
 
 		if (Variable.Flags.bExposeOnSpawn && !Variable.Flags.bInstanceEditable)
 		{
@@ -221,6 +296,121 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 				EVergilDiagnosticSeverity::Error,
 				TEXT("VariableExposeOnSpawnRequiresInstanceEditable"),
 				FString::Printf(TEXT("%s cannot enable ExposeOnSpawn unless it is also instance editable."), *VariableLabel));
+		}
+	}
+
+	TSet<FName> FunctionNames;
+	for (const FVergilFunctionDefinition& Function : Functions)
+	{
+		const FString FunctionLabel = Function.Name.IsNone()
+			? FString(TEXT("Function"))
+			: FString::Printf(TEXT("Function '%s'"), *Function.Name.ToString());
+
+		if (Function.Name.IsNone())
+		{
+			bIsValid = false;
+			AddDiagnostic(OutDiagnostics, EVergilDiagnosticSeverity::Error, TEXT("FunctionNameMissing"), TEXT("Every function must declare a name."));
+			continue;
+		}
+
+		if (FunctionNames.Contains(Function.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionNameDuplicate"),
+				FString::Printf(TEXT("Duplicate function name '%s'."), *Function.Name.ToString()));
+			continue;
+		}
+
+		if (VariableNames.Contains(Function.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionNameConflictsWithVariable"),
+				FString::Printf(TEXT("Function '%s' conflicts with a variable of the same name."), *Function.Name.ToString()));
+			continue;
+		}
+
+		if (DispatcherNames.Contains(Function.Name))
+		{
+			bIsValid = false;
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("FunctionNameConflictsWithDispatcher"),
+				FString::Printf(TEXT("Function '%s' conflicts with a dispatcher of the same name."), *Function.Name.ToString()));
+			continue;
+		}
+
+		FunctionNames.Add(Function.Name);
+
+		TSet<FName> SignatureNames;
+		for (const FVergilFunctionParameterDefinition& Input : Function.Inputs)
+		{
+			const FString InputLabel = Input.Name.IsNone()
+				? FString::Printf(TEXT("%s input"), *FunctionLabel)
+				: FString::Printf(TEXT("%s input '%s'"), *FunctionLabel, *Input.Name.ToString());
+
+			if (Input.Name.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionInputNameMissing"),
+					FString::Printf(TEXT("%s contains an input without a name."), *FunctionLabel));
+				continue;
+			}
+
+			if (SignatureNames.Contains(Input.Name))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionParameterNameDuplicate"),
+					FString::Printf(TEXT("%s contains duplicate signature member '%s'."), *FunctionLabel, *Input.Name.ToString()));
+				continue;
+			}
+
+			SignatureNames.Add(Input.Name);
+			bIsValid &= ValidateFunctionParameterTypeReference(Input.Type, InputLabel, OutDiagnostics);
+		}
+
+		for (const FVergilFunctionParameterDefinition& Output : Function.Outputs)
+		{
+			const FString OutputLabel = Output.Name.IsNone()
+				? FString::Printf(TEXT("%s output"), *FunctionLabel)
+				: FString::Printf(TEXT("%s output '%s'"), *FunctionLabel, *Output.Name.ToString());
+
+			if (Output.Name.IsNone())
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionOutputNameMissing"),
+					FString::Printf(TEXT("%s contains an output without a name."), *FunctionLabel));
+				continue;
+			}
+
+			if (SignatureNames.Contains(Output.Name))
+			{
+				bIsValid = false;
+				AddDiagnostic(
+					OutDiagnostics,
+					EVergilDiagnosticSeverity::Error,
+					TEXT("FunctionParameterNameDuplicate"),
+					FString::Printf(TEXT("%s contains duplicate signature member '%s'."), *FunctionLabel, *Output.Name.ToString()));
+				continue;
+			}
+
+			SignatureNames.Add(Output.Name);
+			bIsValid &= ValidateFunctionParameterTypeReference(Output.Type, OutputLabel, OutDiagnostics);
 		}
 	}
 

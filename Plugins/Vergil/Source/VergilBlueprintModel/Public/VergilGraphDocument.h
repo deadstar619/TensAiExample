@@ -224,6 +224,47 @@ struct VERGILBLUEPRINTMODEL_API FVergilVariableDefinition
 	FString DefaultValue;
 };
 
+UENUM(BlueprintType)
+enum class EVergilFunctionAccessSpecifier : uint8
+{
+	Public,
+	Protected,
+	Private
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilFunctionParameterDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilVariableTypeReference Type;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilFunctionDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName Name = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bPure = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilFunctionAccessSpecifier AccessSpecifier = EVergilFunctionAccessSpecifier::Public;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilFunctionParameterDefinition> Inputs;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilFunctionParameterDefinition> Outputs;
+};
+
 USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 {
@@ -237,6 +278,9 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilVariableDefinition> Variables;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilFunctionDefinition> Functions;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilDispatcherDefinition> Dispatchers;

@@ -4,11 +4,12 @@ This document describes the current scaffold contracts implemented in code today
 
 ## Current document scope
 
-- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Dispatchers`, `Nodes`, `Edges`, and `Tags`.
+- `FVergilGraphDocument` currently supports `SchemaVersion`, `BlueprintPath`, `Variables`, `Functions`, `Dispatchers`, `Nodes`, `Edges`, and `Tags`.
 - `BlueprintPath` is document identity only. Compile/apply still requires `FVergilCompileRequest.TargetBlueprint`.
 - `FVergilCompileRequest.TargetGraphName` selects one graph per compile. The default is `EventGraph`.
 - `Tags` are accepted by the model but currently ignored by compile/apply.
-- Asset-level authoring beyond variables and dispatchers is not implemented yet. There is no current support for Blueprint metadata, functions, macros, components, interfaces, class defaults, or construction script definitions.
+- `Functions` are currently part of the canonical model and structural validation surface only. Compile/apply does not author function graphs or signatures yet.
+- Asset-level authoring beyond variables and dispatchers is not implemented yet. There is no current compile/apply support for Blueprint metadata, functions, macros, components, interfaces, class defaults, or construction script definitions.
 
 ## Structural validation rules
 
@@ -36,6 +37,17 @@ This document describes the current scaffold contracts implemented in code today
 - `ExposeOnSpawn` is only accepted when `bInstanceEditable` is also true.
 - `Metadata` is applied as Blueprint variable metadata key/value pairs.
 - `DefaultValue` is applied through Blueprint compilation to the generated class default object. The editor-side `FBPVariableDescription.DefaultValue` string is not treated as a stable post-compile source of truth.
+
+## Function definition contracts
+
+- Functions are authored from `Functions` on the document.
+- Each function definition currently uses `Name`, `bPure`, `AccessSpecifier`, `Inputs`, and `Outputs`.
+- `AccessSpecifier` currently supports `Public`, `Protected`, and `Private`.
+- Each input/output parameter uses `Name` plus the same `Type` shape as document-authored variables.
+- Function names must be unique and cannot conflict with authored variable or dispatcher names.
+- Signature member names must be unique within a function across both inputs and outputs.
+- Function parameter types currently support the same logical categories and container rules as document-authored variables.
+- Function definitions currently participate in structural validation only. They are not yet lowered into commands or applied to Blueprint function graphs.
 
 ## Dispatcher contracts
 
@@ -92,4 +104,4 @@ This document describes the current scaffold contracts implemented in code today
 
 - The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
-- One compile request currently targets one graph plus optional variable and dispatcher definitions. There is no full-asset compile/apply path yet.
+- One compile request currently targets one graph plus optional variable and dispatcher definitions. Function definitions are modeled and validated, but they are not yet part of compile/apply execution.

@@ -72,7 +72,7 @@ Tickets:
 
 - `VGR-1001` Add Blueprint-level metadata
 - [x] `VGR-1002` Add variable definitions with type, flags, metadata, and defaults
-- `VGR-1003` Add function definitions with purity, access, inputs, and outputs
+- [x] `VGR-1003` Add function definitions with purity, access, inputs, and outputs
 - `VGR-1004` Add macro graph definitions
 - `VGR-1005` Add component definitions with parent/attach/transform/template properties
 - `VGR-1006` Add implemented interface definitions
@@ -281,13 +281,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-1003`
-2. `VGR-1005`
-3. `VGR-2001`
-4. `VGR-4001`
-5. `VGR-4002`
-6. `VGR-4004`
-7. `VGR-1010`
+1. `VGR-1005`
+2. `VGR-2001`
+3. `VGR-4001`
+4. `VGR-4002`
+5. `VGR-4004`
+6. `VGR-1010`
+7. `VGR-1001`
 
 This moves Vergil from a graph scaffold toward real asset authoring.
 

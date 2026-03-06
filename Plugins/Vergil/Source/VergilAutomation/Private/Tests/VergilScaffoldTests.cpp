@@ -204,6 +204,115 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 		return Diagnostic.Code == TEXT("VariableExposeOnSpawnRequiresInstanceEditable");
 	}));
 
+	FVergilGraphDocument InvalidFunctionDocument;
+	InvalidFunctionDocument.SchemaVersion = 1;
+	InvalidFunctionDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidFunctions");
+
+	FVergilVariableDefinition ExistingVariable;
+	ExistingVariable.Name = TEXT("SharedMember");
+	ExistingVariable.Type.PinCategory = TEXT("bool");
+	InvalidFunctionDocument.Variables.Add(ExistingVariable);
+
+	FVergilFunctionDefinition ConflictingFunction;
+	ConflictingFunction.Name = TEXT("SharedMember");
+
+	FVergilFunctionDefinition BrokenFunction;
+	BrokenFunction.Name = TEXT("ComputeState");
+
+	FVergilFunctionParameterDefinition MissingInputName;
+	MissingInputName.Type.PinCategory = TEXT("bool");
+	BrokenFunction.Inputs.Add(MissingInputName);
+
+	FVergilFunctionParameterDefinition MissingOutputType;
+	MissingOutputType.Name = TEXT("Result");
+	BrokenFunction.Outputs.Add(MissingOutputType);
+
+	FVergilFunctionParameterDefinition DuplicateOutputName;
+	DuplicateOutputName.Name = TEXT("Result");
+	DuplicateOutputName.Type.PinCategory = TEXT("int");
+	BrokenFunction.Outputs.Add(DuplicateOutputName);
+
+	FVergilFunctionDefinition DuplicateFunction;
+	DuplicateFunction.Name = TEXT("ComputeState");
+
+	InvalidFunctionDocument.Functions = { ConflictingFunction, BrokenFunction, DuplicateFunction };
+
+	Diagnostics.Reset();
+	TestFalse(TEXT("Invalid function definitions should fail structural validation."), InvalidFunctionDocument.IsStructurallyValid(&Diagnostics));
+	TestTrue(TEXT("Function validation reports variable conflicts."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("FunctionNameConflictsWithVariable");
+	}));
+	TestTrue(TEXT("Function validation reports missing input names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("FunctionInputNameMissing");
+	}));
+	TestTrue(TEXT("Function validation reports missing output types."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("FunctionParameterTypeCategoryMissing");
+	}));
+	TestTrue(TEXT("Function validation reports duplicate signature members."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("FunctionParameterNameDuplicate");
+	}));
+	TestTrue(TEXT("Function validation reports duplicate function names."), Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("FunctionNameDuplicate");
+	}));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilFunctionDefinitionModelTest,
+	"Vergil.Scaffold.FunctionDefinitionModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilFunctionDefinitionModelTest::RunTest(const FString& Parameters)
+{
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = 1;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_FunctionModel");
+
+	FVergilFunctionDefinition PureFunction;
+	PureFunction.Name = TEXT("ComputeStatus");
+	PureFunction.bPure = true;
+	PureFunction.AccessSpecifier = EVergilFunctionAccessSpecifier::Protected;
+
+	FVergilFunctionParameterDefinition TargetInput;
+	TargetInput.Name = TEXT("TargetActor");
+	TargetInput.Type.PinCategory = TEXT("object");
+	TargetInput.Type.ObjectPath = AActor::StaticClass()->GetClassPathName().ToString();
+	PureFunction.Inputs.Add(TargetInput);
+
+	FVergilFunctionParameterDefinition ThresholdInput;
+	ThresholdInput.Name = TEXT("Threshold");
+	ThresholdInput.Type.PinCategory = TEXT("float");
+	PureFunction.Inputs.Add(ThresholdInput);
+
+	FVergilFunctionParameterDefinition ResultOutput;
+	ResultOutput.Name = TEXT("bIsReady");
+	ResultOutput.Type.PinCategory = TEXT("bool");
+	PureFunction.Outputs.Add(ResultOutput);
+
+	FVergilFunctionParameterDefinition MessagesOutput;
+	MessagesOutput.Name = TEXT("Messages");
+	MessagesOutput.Type.PinCategory = TEXT("string");
+	MessagesOutput.Type.ContainerType = EVergilVariableContainerType::Array;
+	PureFunction.Outputs.Add(MessagesOutput);
+
+	Document.Functions.Add(PureFunction);
+
+	TArray<FVergilDiagnostic> Diagnostics;
+	TestTrue(TEXT("Valid function definitions should pass structural validation."), Document.IsStructurallyValid(&Diagnostics));
+	TestEqual(TEXT("Valid function definitions should not emit diagnostics."), Diagnostics.Num(), 0);
+	TestEqual(TEXT("Document should retain authored functions."), Document.Functions.Num(), 1);
+	TestEqual(TEXT("Function should retain input count."), Document.Functions[0].Inputs.Num(), 2);
+	TestEqual(TEXT("Function should retain output count."), Document.Functions[0].Outputs.Num(), 2);
+	TestTrue(TEXT("Function should retain purity."), Document.Functions[0].bPure);
+	TestEqual(TEXT("Function should retain access."), Document.Functions[0].AccessSpecifier, EVergilFunctionAccessSpecifier::Protected);
+	TestEqual(TEXT("Array outputs should retain container type."), Document.Functions[0].Outputs[1].Type.ContainerType, EVergilVariableContainerType::Array);
+
 	return true;
 }
 
