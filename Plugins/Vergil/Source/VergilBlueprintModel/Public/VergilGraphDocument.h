@@ -401,3 +401,17 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 	bool IsStructurallyValid(TArray<FVergilDiagnostic>* OutDiagnostics = nullptr) const;
 };
+
+namespace Vergil
+{
+	VERGILBLUEPRINTMODEL_API bool CanMigrateSchemaVersion(int32 SourceSchemaVersion, int32 TargetSchemaVersion = SchemaVersion);
+	VERGILBLUEPRINTMODEL_API bool MigrateDocumentSchema(
+		const FVergilGraphDocument& SourceDocument,
+		FVergilGraphDocument& OutDocument,
+		TArray<FVergilDiagnostic>* OutDiagnostics = nullptr,
+		int32 TargetSchemaVersion = SchemaVersion);
+	VERGILBLUEPRINTMODEL_API bool MigrateDocumentToCurrentSchema(
+		const FVergilGraphDocument& SourceDocument,
+		FVergilGraphDocument& OutDocument,
+		TArray<FVergilDiagnostic>* OutDiagnostics = nullptr);
+}

@@ -4,6 +4,6 @@
 
 namespace Vergil
 {
-	inline constexpr int32 SchemaVersion = 1;
+	inline constexpr int32 SchemaVersion = 2;
 	inline const FName PluginName(TEXT("Vergil"));
 }

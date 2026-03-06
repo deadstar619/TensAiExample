@@ -245,7 +245,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_Scaffold");
 
 	TArray<FVergilDiagnostic> Diagnostics;
@@ -253,7 +253,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Empty document has no diagnostics."), Diagnostics.Num(), 0);
 
 	FVergilGraphDocument InvalidDocument;
-	InvalidDocument.SchemaVersion = 1;
+	InvalidDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidVariables");
 
 	FVergilDispatcherDefinition Dispatcher;
@@ -298,7 +298,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidFunctionDocument;
-	InvalidFunctionDocument.SchemaVersion = 1;
+	InvalidFunctionDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidFunctionDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidFunctions");
 
 	FVergilVariableDefinition ExistingVariable;
@@ -354,7 +354,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidMacroDocument;
-	InvalidMacroDocument.SchemaVersion = 1;
+	InvalidMacroDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidMacroDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidMacros");
 
 	FVergilFunctionDefinition ExistingMacroFunction;
@@ -423,7 +423,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidComponentDocument;
-	InvalidComponentDocument.SchemaVersion = 1;
+	InvalidComponentDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidComponentDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidComponents");
 
 	FVergilFunctionDefinition ExistingFunction;
@@ -483,7 +483,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidInterfaceDocument;
-	InvalidInterfaceDocument.SchemaVersion = 1;
+	InvalidInterfaceDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidInterfaceDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidInterfaces");
 
 	FVergilInterfaceDefinition MissingInterface;
@@ -507,7 +507,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidClassDefaultDocument;
-	InvalidClassDefaultDocument.SchemaVersion = 1;
+	InvalidClassDefaultDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidClassDefaultDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidClassDefaults");
 	InvalidClassDefaultDocument.ClassDefaults.Add(NAME_None, TEXT("True"));
 
@@ -519,7 +519,7 @@ bool FVergilGraphDocumentValidationTest::RunTest(const FString& Parameters)
 	}));
 
 	FVergilGraphDocument InvalidConstructionScriptDocument;
-	InvalidConstructionScriptDocument.SchemaVersion = 1;
+	InvalidConstructionScriptDocument.SchemaVersion = Vergil::SchemaVersion;
 	InvalidConstructionScriptDocument.BlueprintPath = TEXT("/Game/Tests/BP_InvalidConstructionScript");
 
 	FVergilGraphNode SharedPrimaryNode;
@@ -554,7 +554,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FVergilFunctionDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_FunctionModel");
 
 	FVergilFunctionDefinition PureFunction;
@@ -607,7 +607,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FVergilMacroDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_MacroModel");
 
 	FVergilMacroDefinition Macro;
@@ -669,10 +669,15 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ConstructionScriptDefinitionModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSchemaMigrationHelpersTest,
+	"Vergil.Scaffold.SchemaMigrationHelpers",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_ComponentModel");
 
 	FVergilComponentDefinition RootComponent;
@@ -712,7 +717,7 @@ bool FVergilComponentDefinitionModelTest::RunTest(const FString& Parameters)
 bool FVergilInterfaceDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_InterfaceModel");
 
 	FVergilInterfaceDefinition Interface;
@@ -731,7 +736,7 @@ bool FVergilInterfaceDefinitionModelTest::RunTest(const FString& Parameters)
 bool FVergilClassDefaultDefinitionModelTest::RunTest(const FString& Parameters)
 {
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_ClassDefaultModel");
 	Document.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
 	Document.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("2.5"));
@@ -782,7 +787,7 @@ bool FVergilConstructionScriptDefinitionModelTest::RunTest(const FString& Parame
 	ConstructionEdge.TargetPinId = PrintExecPin.Id;
 
 	FVergilGraphDocument Document;
-	Document.SchemaVersion = 1;
+	Document.SchemaVersion = Vergil::SchemaVersion;
 	Document.BlueprintPath = TEXT("/Game/Tests/BP_ConstructionScriptModel");
 	Document.ConstructionScriptNodes = { ConstructionEventNode, PrintNode };
 	Document.ConstructionScriptEdges.Add(ConstructionEdge);
@@ -796,6 +801,72 @@ bool FVergilConstructionScriptDefinitionModelTest::RunTest(const FString& Parame
 		TEXT("Construction script should retain the authored entry descriptor."),
 		Document.ConstructionScriptNodes[0].Descriptor,
 		FName(TEXT("K2.Event.UserConstructionScript")));
+
+	return true;
+}
+
+bool FVergilSchemaMigrationHelpersTest::RunTest(const FString& Parameters)
+{
+	const int32 LegacySchemaVersion = Vergil::SchemaVersion - 1;
+	TestTrue(TEXT("The scaffold should retain at least one older schema for migration coverage."), LegacySchemaVersion > 0);
+	if (LegacySchemaVersion <= 0)
+	{
+		return false;
+	}
+
+	FVergilGraphDocument LegacyDocument;
+	LegacyDocument.SchemaVersion = LegacySchemaVersion;
+	LegacyDocument.BlueprintPath = TEXT("/Game/Tests/BP_LegacySchemaDocument");
+
+	FVergilVariableDefinition LegacyVariable;
+	LegacyVariable.Name = TEXT("LegacyFlag");
+	LegacyVariable.Type.PinCategory = TEXT("bool");
+	LegacyVariable.DefaultValue = TEXT("true");
+	LegacyDocument.Variables.Add(LegacyVariable);
+	LegacyDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+
+	TestTrue(TEXT("Forward migration path should exist from the previous schema to the current schema."), Vergil::CanMigrateSchemaVersion(LegacySchemaVersion));
+	TestFalse(TEXT("Downgrades should not report a supported schema migration path."), Vergil::CanMigrateSchemaVersion(Vergil::SchemaVersion, LegacySchemaVersion));
+
+	FVergilGraphDocument MigratedDocument;
+	TArray<FVergilDiagnostic> MigrationDiagnostics;
+	TestTrue(TEXT("Legacy document should migrate to the current schema."), Vergil::MigrateDocumentToCurrentSchema(LegacyDocument, MigratedDocument, &MigrationDiagnostics));
+	TestEqual(TEXT("Migrated document should report the current schema version."), MigratedDocument.SchemaVersion, Vergil::SchemaVersion);
+	TestEqual(TEXT("Migration should preserve authored variables."), MigratedDocument.Variables.Num(), 1);
+	TestEqual(TEXT("Migration should preserve authored class defaults."), MigratedDocument.ClassDefaults.FindRef(TEXT("Replicates")), FString(TEXT("True")));
+	TestTrue(TEXT("Migration should emit an informational applied diagnostic."), MigrationDiagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationApplied") && Diagnostic.Severity == EVergilDiagnosticSeverity::Info;
+	}));
+
+	FVergilGraphDocument CurrentDocument = MigratedDocument;
+	CurrentDocument.SchemaVersion = Vergil::SchemaVersion;
+
+	FVergilGraphDocument NoOpDocument;
+	TArray<FVergilDiagnostic> NoOpDiagnostics;
+	TestTrue(TEXT("Migrating the current schema should succeed as a no-op."), Vergil::MigrateDocumentToCurrentSchema(CurrentDocument, NoOpDocument, &NoOpDiagnostics));
+	TestEqual(TEXT("No-op migration should preserve the current schema version."), NoOpDocument.SchemaVersion, Vergil::SchemaVersion);
+	TestEqual(TEXT("No-op migration should not emit diagnostics."), NoOpDiagnostics.Num(), 0);
+
+	FVergilGraphDocument DowngradedDocument;
+	TArray<FVergilDiagnostic> DowngradeDiagnostics;
+	TestFalse(TEXT("Schema migration should reject downgrades."), Vergil::MigrateDocumentSchema(CurrentDocument, DowngradedDocument, &DowngradeDiagnostics, LegacySchemaVersion));
+	TestTrue(TEXT("Downgrade rejection should report an explicit diagnostic."), DowngradeDiagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationDowngradeUnsupported") && Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	}));
+
+	FVergilGraphDocument MissingPathDocument;
+	TArray<FVergilDiagnostic> MissingPathDiagnostics;
+	TestFalse(TEXT("Schema migration should reject missing forward paths."), Vergil::MigrateDocumentSchema(LegacyDocument, MissingPathDocument, &MissingPathDiagnostics, Vergil::SchemaVersion + 1));
+	TestTrue(TEXT("Missing forward paths should report an explicit diagnostic."), MissingPathDiagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationPathMissing") && Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+	}));
+
+	TArray<FVergilDiagnostic> StructuralDiagnostics;
+	TestTrue(TEXT("Migrated document should remain structurally valid."), MigratedDocument.IsStructurallyValid(&StructuralDiagnostics));
+	TestEqual(TEXT("Migrated document should not emit structural diagnostics."), StructuralDiagnostics.Num(), 0);
 
 	return true;
 }

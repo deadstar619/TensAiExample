@@ -17,6 +17,38 @@ namespace
 		OutDiagnostics->Add(FVergilDiagnostic::Make(Severity, Code, Message, SourceId));
 	}
 
+	bool HasSchemaMigrationStep(const int32 SourceSchemaVersion)
+	{
+		switch (SourceSchemaVersion)
+		{
+		case 1:
+			return true;
+
+		default:
+			return false;
+		}
+	}
+
+	bool ApplySchemaMigrationStep(const int32 SourceSchemaVersion, FVergilGraphDocument& InOutDocument)
+	{
+		if (!HasSchemaMigrationStep(SourceSchemaVersion))
+		{
+			return false;
+		}
+
+		switch (SourceSchemaVersion)
+		{
+		case 1:
+			// Schema 2 formalizes the expanded whole-asset document surface. Schema 1 remains
+			// structurally compatible because the added fields are all additive/default-empty.
+			static_cast<void>(InOutDocument);
+			return true;
+
+		default:
+			return false;
+		}
+	}
+
 	bool IsSupportedTypeCategory(const FName PinCategory)
 	{
 		const FString Category = PinCategory.ToString().ToLower();
@@ -1000,4 +1032,116 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 	}
 
 	return bIsValid;
+}
+
+bool Vergil::CanMigrateSchemaVersion(const int32 SourceSchemaVersion, const int32 TargetSchemaVersion)
+{
+	if (SourceSchemaVersion <= 0 || TargetSchemaVersion <= 0 || SourceSchemaVersion > TargetSchemaVersion)
+	{
+		return false;
+	}
+
+	for (int32 Version = SourceSchemaVersion; Version < TargetSchemaVersion; ++Version)
+	{
+		if (!HasSchemaMigrationStep(Version))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Vergil::MigrateDocumentSchema(
+	const FVergilGraphDocument& SourceDocument,
+	FVergilGraphDocument& OutDocument,
+	TArray<FVergilDiagnostic>* OutDiagnostics,
+	const int32 TargetSchemaVersion)
+{
+	OutDocument = SourceDocument;
+
+	if (TargetSchemaVersion <= 0)
+	{
+		AddDiagnostic(
+			OutDiagnostics,
+			EVergilDiagnosticSeverity::Error,
+			TEXT("SchemaMigrationTargetInvalid"),
+			FString::Printf(TEXT("Target schema %d must be greater than zero."), TargetSchemaVersion));
+		return false;
+	}
+
+	if (SourceDocument.SchemaVersion <= 0)
+	{
+		AddDiagnostic(
+			OutDiagnostics,
+			EVergilDiagnosticSeverity::Error,
+			TEXT("InvalidSchemaVersion"),
+			TEXT("SchemaVersion must be greater than zero."));
+		return false;
+	}
+
+	if (SourceDocument.SchemaVersion == TargetSchemaVersion)
+	{
+		return true;
+	}
+
+	if (SourceDocument.SchemaVersion > TargetSchemaVersion)
+	{
+		AddDiagnostic(
+			OutDiagnostics,
+			EVergilDiagnosticSeverity::Error,
+			TEXT("SchemaMigrationDowngradeUnsupported"),
+			FString::Printf(
+				TEXT("Schema migration only supports forward upgrades. Cannot migrate schema %d to older schema %d."),
+				SourceDocument.SchemaVersion,
+				TargetSchemaVersion));
+		return false;
+	}
+
+	if (!CanMigrateSchemaVersion(SourceDocument.SchemaVersion, TargetSchemaVersion))
+	{
+		AddDiagnostic(
+			OutDiagnostics,
+			EVergilDiagnosticSeverity::Error,
+			TEXT("SchemaMigrationPathMissing"),
+			FString::Printf(
+				TEXT("No schema migration path exists from schema %d to schema %d."),
+				SourceDocument.SchemaVersion,
+				TargetSchemaVersion));
+		return false;
+	}
+
+	for (int32 Version = SourceDocument.SchemaVersion; Version < TargetSchemaVersion; ++Version)
+	{
+		if (!ApplySchemaMigrationStep(Version, OutDocument))
+		{
+			AddDiagnostic(
+				OutDiagnostics,
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SchemaMigrationStepFailed"),
+				FString::Printf(TEXT("Schema migration step %d to %d failed."), Version, Version + 1));
+			return false;
+		}
+
+		OutDocument.SchemaVersion = Version + 1;
+	}
+
+	AddDiagnostic(
+		OutDiagnostics,
+		EVergilDiagnosticSeverity::Info,
+		TEXT("SchemaMigrationApplied"),
+		FString::Printf(
+			TEXT("Migrated document schema %d to schema %d."),
+			SourceDocument.SchemaVersion,
+			TargetSchemaVersion));
+
+	return true;
+}
+
+bool Vergil::MigrateDocumentToCurrentSchema(
+	const FVergilGraphDocument& SourceDocument,
+	FVergilGraphDocument& OutDocument,
+	TArray<FVergilDiagnostic>* OutDiagnostics)
+{
+	return MigrateDocumentSchema(SourceDocument, OutDocument, OutDiagnostics, SchemaVersion);
 }
