@@ -390,7 +390,7 @@ Tickets:
 
 - [x] `VGR-6001` Add component-related nodes
 - [x] `VGR-6002` Add interface call/message nodes
-- `VGR-6003` Add object/class/soft-reference families
+- [x] `VGR-6003` Add object/class/soft-reference families
 - `VGR-6004` Add async task node families where deterministic setup is possible
 - `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
 - `VGR-6006` Add a generic node-spawner path for arbitrary supported `UK2Node` classes
@@ -413,6 +413,12 @@ Session note for `VGR-6002` (2026-03-07):
 - `UE_5.7` deterministic support now exists for explicit Blueprint-interface invocation descriptors `K2.InterfaceCall.*` and `K2.InterfaceMessage.*`, each requiring `InterfaceClassPath` instead of overloading the generic `K2.Call.*` path with hidden interface semantics.
 - Symbol and type resolution now normalize `InterfaceClassPath` against the real interface owner class, direct command-plan preflight validates the resolved interface function surface, and editor execution now materializes the real `UK2Node_CallFunction` versus `UK2Node_Message` node classes for direct call versus message semantics.
 - `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.InterfaceInvocationExecution` test now cover the manifest, markdown contract table, normalized planning, and end-to-end editor-authoring path for this interface-invocation family.
+
+Session note for `VGR-6003` (2026-03-07):
+
+- `UE_5.7` deterministic support now exists for `K2.ClassCast`, `K2.GetClassDefaults`, `K2.LoadAsset`, `K2.LoadAssetClass`, `K2.LoadAssets`, and `K2.ConvertAsset` through explicit specialized handlers instead of relying on the generic fallback path to infer object/class/soft-reference behavior.
+- Type resolution now normalizes `TargetClassPath`, `ClassPath`, and `AssetClassPath`, rejects unsupported authored surfaces such as the dynamic `GetClassDefaults` Class pin, and validates the deterministic pin surface for class-default inspection plus the async load families. Editor execution now materializes the real `UK2Node_ClassDynamicCast`, `UK2Node_GetClassDefaults`, `UK2Node_LoadAsset*`, and `UK2Node_ConvertAsset` nodes, while preserving the native `UObject` result families required for `LoadAsset` and `LoadAssets` to compile cleanly under UE_5.7.
+- `Vergil.Scaffold.SemanticValidationPass`, `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.ObjectClassReferenceExecution` test now cover the manifest, markdown contract table, normalized planning, and end-to-end editor-authoring path for this object/class/soft-reference family.
 
 ## Milestone 7: Editor Tooling
 Goal:
@@ -571,11 +577,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-6003`
-2. `VGR-7005`
-3. `VGR-8006`
-4. `VGR-6004`
-5. `VGR-6005`
+1. `VGR-7005`
+2. `VGR-8006`
+3. `VGR-6004`
+4. `VGR-6005`
+5. `VGR-6006`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

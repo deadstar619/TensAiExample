@@ -33,6 +33,9 @@ namespace
 	const FName SpawnActorCollisionHandlingOverridePinName(TEXT("CollisionHandlingOverride"));
 	const FName SpawnActorTransformScaleMethodPinName(TEXT("TransformScaleMethod"));
 	const FName SpawnActorOwnerPinName(TEXT("Owner"));
+	const FName GetClassDefaultsClassPinName(TEXT("Class"));
+	const FName ConvertAssetInputPinName(TEXT("Input"));
+	const FName ConvertAssetOutputPinName(TEXT("Output"));
 
 	struct FVergilSupportedPinDescriptor
 	{
@@ -69,6 +72,15 @@ namespace
 		const TCHAR* DescriptorPrefix = TEXT("");
 		FName CommandName = NAME_None;
 		bool bIsMessage = false;
+	};
+
+	struct FVergilLoadAssetDescriptor
+	{
+		FName Descriptor;
+		FName CommandName;
+		FName InputPinName;
+		FName OutputPinName;
+		bool bIsArray = false;
 	};
 
 	const FVergilStandardMacroDescriptor* FindStandardMacroDescriptorByDescriptor(const FName Descriptor)
@@ -127,6 +139,26 @@ namespace
 		for (const FVergilInterfaceInvocationDescriptor& Candidate : Descriptors)
 		{
 			if (DescriptorString.StartsWith(Candidate.DescriptorPrefix))
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FVergilLoadAssetDescriptor* FindLoadAssetDescriptorByDescriptor(const FName Descriptor)
+	{
+		static const FVergilLoadAssetDescriptor Descriptors[] =
+		{
+			{ TEXT("K2.LoadAsset"), TEXT("Vergil.K2.LoadAsset"), TEXT("Asset"), TEXT("Object"), false },
+			{ TEXT("K2.LoadAssetClass"), TEXT("Vergil.K2.LoadAssetClass"), TEXT("AssetClass"), TEXT("Class"), false },
+			{ TEXT("K2.LoadAssets"), TEXT("Vergil.K2.LoadAssets"), TEXT("Assets"), TEXT("Objects"), true },
+		};
+
+		for (const FVergilLoadAssetDescriptor& Candidate : Descriptors)
+		{
+			if (Candidate.Descriptor == Descriptor)
 			{
 				return &Candidate;
 			}
@@ -425,6 +457,52 @@ namespace
 				Context,
 				TEXT("MissingTargetClassPath"),
 				TEXT("Cast nodes require metadata TargetClassPath naming the target class."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.ClassCast"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("TargetClassPath"),
+				Context,
+				TEXT("MissingClassCastTargetClassPath"),
+				TEXT("Class cast nodes require metadata TargetClassPath naming the target class."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.GetClassDefaults"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ClassPath"),
+				Context,
+				TEXT("MissingGetClassDefaultsClassPath"),
+				TEXT("GetClassDefaults nodes require metadata ClassPath naming the source class."));
+			return bIsValid;
+		}
+
+		if (const FVergilLoadAssetDescriptor* const LoadAssetDescriptor = FindLoadAssetDescriptorByDescriptor(Node.Descriptor))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("AssetClassPath"),
+				Context,
+				TEXT("MissingLoadAssetClassPath"),
+				FString::Printf(TEXT("%s nodes require metadata AssetClassPath naming the expected asset class."), *LoadAssetDescriptor->Descriptor.ToString()));
+
+			if (Context.GetGraphName() == ConstructionScriptGraphName)
+			{
+				AddNodeDiagnostic(
+					TEXT("ConstructionScriptLoadAssetUnsupported"),
+					FString::Printf(TEXT("%s is not supported when compiling UserConstructionScript because UE_5.7 async load nodes are latent."), *LoadAssetDescriptor->Descriptor.ToString()));
+			}
+
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.ConvertAsset"))
+		{
 			return bIsValid;
 		}
 
@@ -1256,6 +1334,261 @@ namespace
 		return true;
 	}
 
+	bool ResolveAndNormalizeClassMetadata(
+		FVergilGraphNode& Node,
+		const FName MetadataKey,
+		const FName NotFoundDiagnosticCode,
+		const TCHAR* ContextLabel,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged,
+		UClass*& OutClass)
+	{
+		OutClass = nullptr;
+
+		const FString ClassPath = Node.Metadata.FindRef(MetadataKey).TrimStartAndEnd();
+		FString NormalizedClassPath;
+		if (!ResolveNormalizedClassPath(ClassPath, NormalizedClassPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				NotFoundDiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve %s '%s'."), ContextLabel, *ClassPath),
+				Node.Id);
+			return false;
+		}
+
+		OutClass = ResolveClassReference(NormalizedClassPath);
+		if (OutClass == nullptr)
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				NotFoundDiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve %s '%s'."), ContextLabel, *NormalizedClassPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, MetadataKey, NormalizedClassPath);
+		return true;
+	}
+
+	bool IsUnsafeGetClassDefaultsObjectContainerProperty(const FProperty* Property)
+	{
+		if (const FArrayProperty* const ArrayProperty = CastField<FArrayProperty>(Property))
+		{
+			return ArrayProperty->Inner != nullptr
+				&& ArrayProperty->Inner->IsA(FObjectProperty::StaticClass())
+				&& !ArrayProperty->Inner->IsA(FClassProperty::StaticClass());
+		}
+
+		if (const FSetProperty* const SetProperty = CastField<FSetProperty>(Property))
+		{
+			return SetProperty->ElementProp != nullptr
+				&& SetProperty->ElementProp->IsA(FObjectProperty::StaticClass())
+				&& !SetProperty->ElementProp->IsA(FClassProperty::StaticClass());
+		}
+
+		if (const FMapProperty* const MapProperty = CastField<FMapProperty>(Property))
+		{
+			const bool bUnsafeKeyObject = MapProperty->KeyProp != nullptr
+				&& MapProperty->KeyProp->IsA(FObjectProperty::StaticClass())
+				&& !MapProperty->KeyProp->IsA(FClassProperty::StaticClass());
+			const bool bUnsafeValueObject = MapProperty->ValueProp != nullptr
+				&& MapProperty->ValueProp->IsA(FObjectProperty::StaticClass())
+				&& !MapProperty->ValueProp->IsA(FClassProperty::StaticClass());
+			return bUnsafeKeyObject || bUnsafeValueObject;
+		}
+
+		return false;
+	}
+
+	bool CanExposeGetClassDefaultsProperty(const FProperty* Property)
+	{
+		return Property != nullptr
+			&& Property->HasAllPropertyFlags(CPF_BlueprintVisible)
+			&& !Property->HasAnyPropertyFlags(CPF_Parm)
+			&& !IsUnsafeGetClassDefaultsObjectContainerProperty(Property)
+			&& FBlueprintEditorUtils::PropertyStillExists(const_cast<FProperty*>(Property));
+	}
+
+	bool ValidateGetClassDefaultsPins(
+		const FVergilGraphNode& Node,
+		const UClass* SourceClass,
+		FVergilCompilerContext& Context)
+	{
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			if (Pin.Name == GetClassDefaultsClassPinName)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("GetClassDefaultsDynamicClassPinUnsupported"),
+					TEXT("K2.GetClassDefaults currently uses ClassPath metadata as its deterministic class source; authored Class-pin connections are not supported."),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			if (Pin.Direction != EVergilPinDirection::Output || Pin.bIsExec)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("GetClassDefaultsPinUnsupported"),
+					FString::Printf(
+						TEXT("K2.GetClassDefaults pin '%s' is not part of the deterministic supported surface."),
+						*Pin.Name.ToString()),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			const FProperty* const Property = SourceClass != nullptr ? FindFProperty<FProperty>(SourceClass, Pin.Name) : nullptr;
+			if (!CanExposeGetClassDefaultsProperty(Property))
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("GetClassDefaultsPinUnsupported"),
+					FString::Printf(
+						TEXT("K2.GetClassDefaults pin '%s' is not an exposed class-default output on class '%s'."),
+						*Pin.Name.ToString(),
+						SourceClass != nullptr ? *SourceClass->GetPathName() : TEXT("<null>")),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
+	void BuildLoadAssetSupportedPins(const FVergilLoadAssetDescriptor& Descriptor, TArray<FVergilSupportedPinDescriptor>& OutPins)
+	{
+		OutPins.Reset();
+		OutPins.Add({ UEdGraphSchema_K2::PN_Execute, EVergilPinDirection::Input, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_Completed, EVergilPinDirection::Output, true });
+		OutPins.Add({ Descriptor.InputPinName, EVergilPinDirection::Input, false });
+		OutPins.Add({ Descriptor.OutputPinName, EVergilPinDirection::Output, false });
+	}
+
+	bool ValidateLoadAssetPins(
+		const FVergilGraphNode& Node,
+		const FVergilLoadAssetDescriptor& Descriptor,
+		const UClass* AssetClass,
+		FVergilCompilerContext& Context)
+	{
+		TArray<FVergilSupportedPinDescriptor> SupportedPins;
+		BuildLoadAssetSupportedPins(Descriptor, SupportedPins);
+
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			const FVergilSupportedPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&Pin](const FVergilSupportedPinDescriptor& Candidate)
+			{
+				return Candidate.Name == Pin.Name
+					&& Candidate.Direction == Pin.Direction
+					&& Candidate.bIsExec == Pin.bIsExec;
+			});
+
+			if (SupportedPin == nullptr)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("LoadAssetPinUnsupported"),
+					FString::Printf(
+						TEXT("%s pin '%s' is not part of the UE_5.7 deterministic surface for asset class '%s'."),
+						*Descriptor.Descriptor.ToString(),
+						*Pin.Name.ToString(),
+						AssetClass != nullptr ? *AssetClass->GetPathName() : TEXT("<null>")),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
+	bool ValidateConvertAssetPins(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	{
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			const bool bSupportedPin = !Pin.bIsExec
+				&& ((Pin.Direction == EVergilPinDirection::Input && Pin.Name == ConvertAssetInputPinName)
+					|| (Pin.Direction == EVergilPinDirection::Output && Pin.Name == ConvertAssetOutputPinName));
+			if (!bSupportedPin)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ConvertAssetPinUnsupported"),
+					FString::Printf(TEXT("K2.ConvertAsset pin '%s' is not part of the deterministic supported surface."), *Pin.Name.ToString()),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
+	bool ResolveAndNormalizeClassCastNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		UClass* TargetClass = nullptr;
+		return ResolveAndNormalizeClassMetadata(
+			Node,
+			TEXT("TargetClassPath"),
+			TEXT("ClassCastTargetClassNotFound"),
+			TEXT("class cast target class"),
+			Context,
+			bOutChanged,
+			TargetClass);
+	}
+
+	bool ResolveAndNormalizeGetClassDefaultsNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		UClass* SourceClass = nullptr;
+		if (!ResolveAndNormalizeClassMetadata(
+			Node,
+			TEXT("ClassPath"),
+			TEXT("GetClassDefaultsClassNotFound"),
+			TEXT("class-default source class"),
+			Context,
+			bOutChanged,
+			SourceClass))
+		{
+			return false;
+		}
+
+		return ValidateGetClassDefaultsPins(Node, SourceClass, Context);
+	}
+
+	bool ResolveAndNormalizeLoadAssetNodeType(
+		FVergilGraphNode& Node,
+		const FVergilLoadAssetDescriptor& Descriptor,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		UClass* AssetClass = nullptr;
+		if (!ResolveAndNormalizeClassMetadata(
+			Node,
+			TEXT("AssetClassPath"),
+			TEXT("LoadAssetClassNotFound"),
+			TEXT("asset class"),
+			Context,
+			bOutChanged,
+			AssetClass))
+		{
+			return false;
+		}
+
+		return ValidateLoadAssetPins(Node, Descriptor, AssetClass, Context);
+	}
+
+	bool ResolveAndNormalizeConvertAssetNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		(void)bOutChanged;
+		return ValidateConvertAssetPins(Node, Context);
+	}
+
 	void BuildAddComponentSupportedPins(const UClass* ComponentClass, TArray<FVergilSupportedPinDescriptor>& OutPins)
 	{
 		OutPins.Reset();
@@ -1803,6 +2136,26 @@ namespace
 		if (FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor) != nullptr)
 		{
 			return ResolveAndNormalizeInterfaceInvocationNodeType(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.ClassCast"))
+		{
+			return ResolveAndNormalizeClassCastNodeType(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.GetClassDefaults"))
+		{
+			return ResolveAndNormalizeGetClassDefaultsNodeType(Node, Context, bOutChanged);
+		}
+
+		if (const FVergilLoadAssetDescriptor* const LoadAssetDescriptor = FindLoadAssetDescriptorByDescriptor(Node.Descriptor))
+		{
+			return ResolveAndNormalizeLoadAssetNodeType(Node, *LoadAssetDescriptor, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.ConvertAsset"))
+		{
+			return ResolveAndNormalizeConvertAssetNodeType(Node, Context, bOutChanged);
 		}
 
 		if (Node.Descriptor == TEXT("K2.Cast"))
@@ -3611,6 +3964,150 @@ namespace
 		FVergilInterfaceInvocationDescriptor Descriptor;
 	};
 
+	class FVergilClassCastNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.ClassCast");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.ClassCast");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString TargetClassPath = Node.Metadata.FindRef(TEXT("TargetClassPath"));
+			if (TargetClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingClassCastTargetClassPath"), TEXT("Class cast nodes require metadata TargetClassPath naming the target class."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = TargetClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilGetClassDefaultsNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.GetClassDefaults");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.GetClassDefaults");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString ClassPath = Node.Metadata.FindRef(TEXT("ClassPath"));
+			if (ClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingGetClassDefaultsClassPath"), TEXT("GetClassDefaults nodes require metadata ClassPath naming the source class."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = ClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilLoadAssetNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		explicit FVergilLoadAssetNodeHandler(const FVergilLoadAssetDescriptor& InDescriptor)
+			: Descriptor(InDescriptor)
+		{
+		}
+
+		virtual FName GetDescriptor() const override
+		{
+			return Descriptor.CommandName;
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == Descriptor.Descriptor;
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString AssetClassPath = Node.Metadata.FindRef(TEXT("AssetClassPath"));
+			if (AssetClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingLoadAssetClassPath"), FString::Printf(TEXT("%s nodes require metadata AssetClassPath naming the expected asset class."), *Descriptor.Descriptor.ToString()), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = Descriptor.CommandName;
+			Command.StringValue = AssetClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+
+	private:
+		FVergilLoadAssetDescriptor Descriptor;
+	};
+
+	class FVergilConvertAssetNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.ConvertAsset");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.ConvertAsset");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
 	class FVergilVariableGetNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -4197,6 +4694,21 @@ namespace
 		{
 			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilInterfaceInvocationNodeHandler, ESPMode::ThreadSafe>(Descriptor));
 		}
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilClassCastNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilGetClassDefaultsNodeHandler, ESPMode::ThreadSafe>());
+		if (const FVergilLoadAssetDescriptor* const LoadAssetDescriptor = FindLoadAssetDescriptorByDescriptor(TEXT("K2.LoadAsset")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilLoadAssetNodeHandler, ESPMode::ThreadSafe>(*LoadAssetDescriptor));
+		}
+		if (const FVergilLoadAssetDescriptor* const LoadAssetClassDescriptor = FindLoadAssetDescriptorByDescriptor(TEXT("K2.LoadAssetClass")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilLoadAssetNodeHandler, ESPMode::ThreadSafe>(*LoadAssetClassDescriptor));
+		}
+		if (const FVergilLoadAssetDescriptor* const LoadAssetsDescriptor = FindLoadAssetDescriptorByDescriptor(TEXT("K2.LoadAssets")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilLoadAssetNodeHandler, ESPMode::ThreadSafe>(*LoadAssetsDescriptor));
+		}
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilConvertAssetNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCallNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableGetNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableSetNodeHandler, ESPMode::ThreadSafe>());

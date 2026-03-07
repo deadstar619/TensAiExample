@@ -14,7 +14,9 @@
 #include "K2Node_AddDelegate.h"
 #include "K2Node_CallDelegate.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_ClassDynamicCast.h"
 #include "K2Node_ClearDelegate.h"
+#include "K2Node_ConvertAsset.h"
 #include "K2Node_CreateDelegate.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
@@ -23,8 +25,10 @@
 #include "K2Node_FormatText.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
+#include "K2Node_GetClassDefaults.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_Knot.h"
+#include "K2Node_LoadAsset.h"
 #include "K2Node_MakeArray.h"
 #include "K2Node_MakeMap.h"
 #include "K2Node_MacroInstance.h"
@@ -554,6 +558,514 @@ bool FVergilModulesLoadTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("VergilBlueprintCompiler loads"), FModuleManager::Get().LoadModulePtr<IModuleInterface>(TEXT("VergilBlueprintCompiler")));
 	TestNotNull(TEXT("VergilEditor loads"), FModuleManager::Get().LoadModulePtr<IModuleInterface>(TEXT("VergilEditor")));
 	TestNotNull(TEXT("VergilAgent loads"), FModuleManager::Get().LoadModulePtr<IModuleInterface>(TEXT("VergilAgent")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilObjectClassReferenceExecutionTest,
+	"Vergil.Scaffold.ObjectClassReferenceExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilObjectClassReferenceExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint(AActor::StaticClass());
+	TestNotNull(TEXT("Transient actor test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType ActorObjectType;
+	ActorObjectType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	ActorObjectType.PinSubCategoryObject = AActor::StaticClass();
+	TestTrue(TEXT("SourceObject member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("SourceObject"), ActorObjectType, FString()));
+
+	FEdGraphPinType GenericObjectType;
+	GenericObjectType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	GenericObjectType.PinSubCategoryObject = UObject::StaticClass();
+	TestTrue(TEXT("ResolvedObject member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ResolvedObject"), GenericObjectType, FString()));
+
+	FEdGraphPinType SoftActorObjectArrayType;
+	SoftActorObjectArrayType.PinCategory = UEdGraphSchema_K2::PC_SoftObject;
+	SoftActorObjectArrayType.PinSubCategoryObject = AActor::StaticClass();
+	SoftActorObjectArrayType.ContainerType = EPinContainerType::Array;
+	TestTrue(TEXT("SourceAssets member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("SourceAssets"), SoftActorObjectArrayType, FString()));
+
+	FEdGraphPinType GenericObjectArrayType = GenericObjectType;
+	GenericObjectArrayType.ContainerType = EPinContainerType::Array;
+	TestTrue(TEXT("ResolvedObjects member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ResolvedObjects"), GenericObjectArrayType, FString()));
+
+	FEdGraphPinType ActorClassType;
+	ActorClassType.PinCategory = UEdGraphSchema_K2::PC_Class;
+	ActorClassType.PinSubCategoryObject = AActor::StaticClass();
+	TestTrue(TEXT("SourceClass member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("SourceClass"), ActorClassType, FString()));
+
+	FEdGraphPinType PawnClassType;
+	PawnClassType.PinCategory = UEdGraphSchema_K2::PC_Class;
+	PawnClassType.PinSubCategoryObject = APawn::StaticClass();
+	TestTrue(TEXT("ResolvedPawnClass member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ResolvedPawnClass"), PawnClassType, FString()));
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("DefaultReplicates member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("DefaultReplicates"), BoolType, TEXT("False")));
+
+	const FName PawnClassCastResultPinName = MakeCastResultPinName(APawn::StaticClass());
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode SourceObjectGetterNode;
+	SourceObjectGetterNode.Id = FGuid::NewGuid();
+	SourceObjectGetterNode.Kind = EVergilNodeKind::VariableGet;
+	SourceObjectGetterNode.Descriptor = TEXT("K2.VarGet.SourceObject");
+	FVergilGraphPin SourceObjectGetterValuePin;
+	SourceObjectGetterValuePin.Id = FGuid::NewGuid();
+	SourceObjectGetterValuePin.Name = TEXT("SourceObject");
+	SourceObjectGetterValuePin.Direction = EVergilPinDirection::Output;
+	SourceObjectGetterNode.Pins.Add(SourceObjectGetterValuePin);
+
+	FVergilGraphNode ConvertObjectNode;
+	ConvertObjectNode.Id = FGuid::NewGuid();
+	ConvertObjectNode.Kind = EVergilNodeKind::Custom;
+	ConvertObjectNode.Descriptor = TEXT("K2.ConvertAsset");
+	FVergilGraphPin ConvertObjectInputPin;
+	ConvertObjectInputPin.Id = FGuid::NewGuid();
+	ConvertObjectInputPin.Name = TEXT("Input");
+	ConvertObjectInputPin.Direction = EVergilPinDirection::Input;
+	ConvertObjectNode.Pins.Add(ConvertObjectInputPin);
+	FVergilGraphPin ConvertObjectOutputPin;
+	ConvertObjectOutputPin.Id = FGuid::NewGuid();
+	ConvertObjectOutputPin.Name = TEXT("Output");
+	ConvertObjectOutputPin.Direction = EVergilPinDirection::Output;
+	ConvertObjectNode.Pins.Add(ConvertObjectOutputPin);
+
+	FVergilGraphNode LoadAssetNode;
+	LoadAssetNode.Id = FGuid::NewGuid();
+	LoadAssetNode.Kind = EVergilNodeKind::Custom;
+	LoadAssetNode.Descriptor = TEXT("K2.LoadAsset");
+	LoadAssetNode.Metadata.Add(TEXT("AssetClassPath"), AActor::StaticClass()->GetPathName());
+	FVergilGraphPin LoadAssetExecPin;
+	LoadAssetExecPin.Id = FGuid::NewGuid();
+	LoadAssetExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	LoadAssetExecPin.Direction = EVergilPinDirection::Input;
+	LoadAssetExecPin.bIsExec = true;
+	LoadAssetNode.Pins.Add(LoadAssetExecPin);
+	FVergilGraphPin LoadAssetCompletedPin;
+	LoadAssetCompletedPin.Id = FGuid::NewGuid();
+	LoadAssetCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+	LoadAssetCompletedPin.Direction = EVergilPinDirection::Output;
+	LoadAssetCompletedPin.bIsExec = true;
+	LoadAssetNode.Pins.Add(LoadAssetCompletedPin);
+	FVergilGraphPin LoadAssetInputPin;
+	LoadAssetInputPin.Id = FGuid::NewGuid();
+	LoadAssetInputPin.Name = TEXT("Asset");
+	LoadAssetInputPin.Direction = EVergilPinDirection::Input;
+	LoadAssetNode.Pins.Add(LoadAssetInputPin);
+	FVergilGraphPin LoadAssetOutputPin;
+	LoadAssetOutputPin.Id = FGuid::NewGuid();
+	LoadAssetOutputPin.Name = TEXT("Object");
+	LoadAssetOutputPin.Direction = EVergilPinDirection::Output;
+	LoadAssetNode.Pins.Add(LoadAssetOutputPin);
+
+	FVergilGraphNode SetResolvedObjectNode;
+	SetResolvedObjectNode.Id = FGuid::NewGuid();
+	SetResolvedObjectNode.Kind = EVergilNodeKind::VariableSet;
+	SetResolvedObjectNode.Descriptor = TEXT("K2.VarSet.ResolvedObject");
+	FVergilGraphPin SetResolvedObjectExecPin;
+	SetResolvedObjectExecPin.Id = FGuid::NewGuid();
+	SetResolvedObjectExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetResolvedObjectExecPin.Direction = EVergilPinDirection::Input;
+	SetResolvedObjectExecPin.bIsExec = true;
+	SetResolvedObjectNode.Pins.Add(SetResolvedObjectExecPin);
+	FVergilGraphPin SetResolvedObjectValuePin;
+	SetResolvedObjectValuePin.Id = FGuid::NewGuid();
+	SetResolvedObjectValuePin.Name = TEXT("ResolvedObject");
+	SetResolvedObjectValuePin.Direction = EVergilPinDirection::Input;
+	SetResolvedObjectNode.Pins.Add(SetResolvedObjectValuePin);
+	FVergilGraphPin SetResolvedObjectThenPin;
+	SetResolvedObjectThenPin.Id = FGuid::NewGuid();
+	SetResolvedObjectThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetResolvedObjectThenPin.Direction = EVergilPinDirection::Output;
+	SetResolvedObjectThenPin.bIsExec = true;
+	SetResolvedObjectNode.Pins.Add(SetResolvedObjectThenPin);
+
+	FVergilGraphNode SourceAssetsGetterNode;
+	SourceAssetsGetterNode.Id = FGuid::NewGuid();
+	SourceAssetsGetterNode.Kind = EVergilNodeKind::VariableGet;
+	SourceAssetsGetterNode.Descriptor = TEXT("K2.VarGet.SourceAssets");
+	FVergilGraphPin SourceAssetsGetterValuePin;
+	SourceAssetsGetterValuePin.Id = FGuid::NewGuid();
+	SourceAssetsGetterValuePin.Name = TEXT("SourceAssets");
+	SourceAssetsGetterValuePin.Direction = EVergilPinDirection::Output;
+	SourceAssetsGetterNode.Pins.Add(SourceAssetsGetterValuePin);
+
+	FVergilGraphNode LoadAssetsNode;
+	LoadAssetsNode.Id = FGuid::NewGuid();
+	LoadAssetsNode.Kind = EVergilNodeKind::Custom;
+	LoadAssetsNode.Descriptor = TEXT("K2.LoadAssets");
+	LoadAssetsNode.Metadata.Add(TEXT("AssetClassPath"), AActor::StaticClass()->GetPathName());
+	FVergilGraphPin LoadAssetsExecPin;
+	LoadAssetsExecPin.Id = FGuid::NewGuid();
+	LoadAssetsExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	LoadAssetsExecPin.Direction = EVergilPinDirection::Input;
+	LoadAssetsExecPin.bIsExec = true;
+	LoadAssetsNode.Pins.Add(LoadAssetsExecPin);
+	FVergilGraphPin LoadAssetsCompletedPin;
+	LoadAssetsCompletedPin.Id = FGuid::NewGuid();
+	LoadAssetsCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+	LoadAssetsCompletedPin.Direction = EVergilPinDirection::Output;
+	LoadAssetsCompletedPin.bIsExec = true;
+	LoadAssetsNode.Pins.Add(LoadAssetsCompletedPin);
+	FVergilGraphPin LoadAssetsInputPin;
+	LoadAssetsInputPin.Id = FGuid::NewGuid();
+	LoadAssetsInputPin.Name = TEXT("Assets");
+	LoadAssetsInputPin.Direction = EVergilPinDirection::Input;
+	LoadAssetsNode.Pins.Add(LoadAssetsInputPin);
+	FVergilGraphPin LoadAssetsOutputPin;
+	LoadAssetsOutputPin.Id = FGuid::NewGuid();
+	LoadAssetsOutputPin.Name = TEXT("Objects");
+	LoadAssetsOutputPin.Direction = EVergilPinDirection::Output;
+	LoadAssetsNode.Pins.Add(LoadAssetsOutputPin);
+
+	FVergilGraphNode SetResolvedObjectsNode;
+	SetResolvedObjectsNode.Id = FGuid::NewGuid();
+	SetResolvedObjectsNode.Kind = EVergilNodeKind::VariableSet;
+	SetResolvedObjectsNode.Descriptor = TEXT("K2.VarSet.ResolvedObjects");
+	FVergilGraphPin SetResolvedObjectsExecPin;
+	SetResolvedObjectsExecPin.Id = FGuid::NewGuid();
+	SetResolvedObjectsExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetResolvedObjectsExecPin.Direction = EVergilPinDirection::Input;
+	SetResolvedObjectsExecPin.bIsExec = true;
+	SetResolvedObjectsNode.Pins.Add(SetResolvedObjectsExecPin);
+	FVergilGraphPin SetResolvedObjectsValuePin;
+	SetResolvedObjectsValuePin.Id = FGuid::NewGuid();
+	SetResolvedObjectsValuePin.Name = TEXT("ResolvedObjects");
+	SetResolvedObjectsValuePin.Direction = EVergilPinDirection::Input;
+	SetResolvedObjectsNode.Pins.Add(SetResolvedObjectsValuePin);
+	FVergilGraphPin SetResolvedObjectsThenPin;
+	SetResolvedObjectsThenPin.Id = FGuid::NewGuid();
+	SetResolvedObjectsThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetResolvedObjectsThenPin.Direction = EVergilPinDirection::Output;
+	SetResolvedObjectsThenPin.bIsExec = true;
+	SetResolvedObjectsNode.Pins.Add(SetResolvedObjectsThenPin);
+
+	FVergilGraphNode SourceClassGetterNode;
+	SourceClassGetterNode.Id = FGuid::NewGuid();
+	SourceClassGetterNode.Kind = EVergilNodeKind::VariableGet;
+	SourceClassGetterNode.Descriptor = TEXT("K2.VarGet.SourceClass");
+	FVergilGraphPin SourceClassGetterValuePin;
+	SourceClassGetterValuePin.Id = FGuid::NewGuid();
+	SourceClassGetterValuePin.Name = TEXT("SourceClass");
+	SourceClassGetterValuePin.Direction = EVergilPinDirection::Output;
+	SourceClassGetterNode.Pins.Add(SourceClassGetterValuePin);
+
+	FVergilGraphNode ConvertClassNode;
+	ConvertClassNode.Id = FGuid::NewGuid();
+	ConvertClassNode.Kind = EVergilNodeKind::Custom;
+	ConvertClassNode.Descriptor = TEXT("K2.ConvertAsset");
+	FVergilGraphPin ConvertClassInputPin;
+	ConvertClassInputPin.Id = FGuid::NewGuid();
+	ConvertClassInputPin.Name = TEXT("Input");
+	ConvertClassInputPin.Direction = EVergilPinDirection::Input;
+	ConvertClassNode.Pins.Add(ConvertClassInputPin);
+	FVergilGraphPin ConvertClassOutputPin;
+	ConvertClassOutputPin.Id = FGuid::NewGuid();
+	ConvertClassOutputPin.Name = TEXT("Output");
+	ConvertClassOutputPin.Direction = EVergilPinDirection::Output;
+	ConvertClassNode.Pins.Add(ConvertClassOutputPin);
+
+	FVergilGraphNode LoadAssetClassNode;
+	LoadAssetClassNode.Id = FGuid::NewGuid();
+	LoadAssetClassNode.Kind = EVergilNodeKind::Custom;
+	LoadAssetClassNode.Descriptor = TEXT("K2.LoadAssetClass");
+	LoadAssetClassNode.Metadata.Add(TEXT("AssetClassPath"), AActor::StaticClass()->GetPathName());
+	FVergilGraphPin LoadAssetClassExecPin;
+	LoadAssetClassExecPin.Id = FGuid::NewGuid();
+	LoadAssetClassExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	LoadAssetClassExecPin.Direction = EVergilPinDirection::Input;
+	LoadAssetClassExecPin.bIsExec = true;
+	LoadAssetClassNode.Pins.Add(LoadAssetClassExecPin);
+	FVergilGraphPin LoadAssetClassCompletedPin;
+	LoadAssetClassCompletedPin.Id = FGuid::NewGuid();
+	LoadAssetClassCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+	LoadAssetClassCompletedPin.Direction = EVergilPinDirection::Output;
+	LoadAssetClassCompletedPin.bIsExec = true;
+	LoadAssetClassNode.Pins.Add(LoadAssetClassCompletedPin);
+	FVergilGraphPin LoadAssetClassInputPin;
+	LoadAssetClassInputPin.Id = FGuid::NewGuid();
+	LoadAssetClassInputPin.Name = TEXT("AssetClass");
+	LoadAssetClassInputPin.Direction = EVergilPinDirection::Input;
+	LoadAssetClassNode.Pins.Add(LoadAssetClassInputPin);
+	FVergilGraphPin LoadAssetClassOutputPin;
+	LoadAssetClassOutputPin.Id = FGuid::NewGuid();
+	LoadAssetClassOutputPin.Name = TEXT("Class");
+	LoadAssetClassOutputPin.Direction = EVergilPinDirection::Output;
+	LoadAssetClassNode.Pins.Add(LoadAssetClassOutputPin);
+
+	FVergilGraphNode ClassCastNode;
+	ClassCastNode.Id = FGuid::NewGuid();
+	ClassCastNode.Kind = EVergilNodeKind::Custom;
+	ClassCastNode.Descriptor = TEXT("K2.ClassCast");
+	ClassCastNode.Metadata.Add(TEXT("TargetClassPath"), APawn::StaticClass()->GetPathName());
+	FVergilGraphPin ClassCastInputPin;
+	ClassCastInputPin.Id = FGuid::NewGuid();
+	ClassCastInputPin.Name = TEXT("Class");
+	ClassCastInputPin.Direction = EVergilPinDirection::Input;
+	ClassCastNode.Pins.Add(ClassCastInputPin);
+	FVergilGraphPin ClassCastResultPin;
+	ClassCastResultPin.Id = FGuid::NewGuid();
+	ClassCastResultPin.Name = PawnClassCastResultPinName;
+	ClassCastResultPin.Direction = EVergilPinDirection::Output;
+	ClassCastNode.Pins.Add(ClassCastResultPin);
+
+	FVergilGraphNode SetResolvedPawnClassNode;
+	SetResolvedPawnClassNode.Id = FGuid::NewGuid();
+	SetResolvedPawnClassNode.Kind = EVergilNodeKind::VariableSet;
+	SetResolvedPawnClassNode.Descriptor = TEXT("K2.VarSet.ResolvedPawnClass");
+	FVergilGraphPin SetResolvedPawnClassExecPin;
+	SetResolvedPawnClassExecPin.Id = FGuid::NewGuid();
+	SetResolvedPawnClassExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetResolvedPawnClassExecPin.Direction = EVergilPinDirection::Input;
+	SetResolvedPawnClassExecPin.bIsExec = true;
+	SetResolvedPawnClassNode.Pins.Add(SetResolvedPawnClassExecPin);
+	FVergilGraphPin SetResolvedPawnClassValuePin;
+	SetResolvedPawnClassValuePin.Id = FGuid::NewGuid();
+	SetResolvedPawnClassValuePin.Name = TEXT("ResolvedPawnClass");
+	SetResolvedPawnClassValuePin.Direction = EVergilPinDirection::Input;
+	SetResolvedPawnClassNode.Pins.Add(SetResolvedPawnClassValuePin);
+	FVergilGraphPin SetResolvedPawnClassThenPin;
+	SetResolvedPawnClassThenPin.Id = FGuid::NewGuid();
+	SetResolvedPawnClassThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetResolvedPawnClassThenPin.Direction = EVergilPinDirection::Output;
+	SetResolvedPawnClassThenPin.bIsExec = true;
+	SetResolvedPawnClassNode.Pins.Add(SetResolvedPawnClassThenPin);
+
+	FVergilGraphNode GetClassDefaultsNode;
+	GetClassDefaultsNode.Id = FGuid::NewGuid();
+	GetClassDefaultsNode.Kind = EVergilNodeKind::Custom;
+	GetClassDefaultsNode.Descriptor = TEXT("K2.GetClassDefaults");
+	GetClassDefaultsNode.Metadata.Add(TEXT("ClassPath"), AActor::StaticClass()->GetPathName());
+	FVergilGraphPin GetClassDefaultsReplicatesPin;
+	GetClassDefaultsReplicatesPin.Id = FGuid::NewGuid();
+	GetClassDefaultsReplicatesPin.Name = TEXT("bReplicates");
+	GetClassDefaultsReplicatesPin.Direction = EVergilPinDirection::Output;
+	GetClassDefaultsNode.Pins.Add(GetClassDefaultsReplicatesPin);
+
+	FVergilGraphNode SetDefaultReplicatesNode;
+	SetDefaultReplicatesNode.Id = FGuid::NewGuid();
+	SetDefaultReplicatesNode.Kind = EVergilNodeKind::VariableSet;
+	SetDefaultReplicatesNode.Descriptor = TEXT("K2.VarSet.DefaultReplicates");
+	FVergilGraphPin SetDefaultReplicatesExecPin;
+	SetDefaultReplicatesExecPin.Id = FGuid::NewGuid();
+	SetDefaultReplicatesExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetDefaultReplicatesExecPin.Direction = EVergilPinDirection::Input;
+	SetDefaultReplicatesExecPin.bIsExec = true;
+	SetDefaultReplicatesNode.Pins.Add(SetDefaultReplicatesExecPin);
+	FVergilGraphPin SetDefaultReplicatesValuePin;
+	SetDefaultReplicatesValuePin.Id = FGuid::NewGuid();
+	SetDefaultReplicatesValuePin.Name = TEXT("DefaultReplicates");
+	SetDefaultReplicatesValuePin.Direction = EVergilPinDirection::Input;
+	SetDefaultReplicatesNode.Pins.Add(SetDefaultReplicatesValuePin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilObjectClassReferenceExecution");
+	Document.Nodes = { BeginPlayNode, SourceObjectGetterNode, ConvertObjectNode, LoadAssetNode, SetResolvedObjectNode, SourceAssetsGetterNode, LoadAssetsNode, SetResolvedObjectsNode, SourceClassGetterNode, ConvertClassNode, LoadAssetClassNode, ClassCastNode, SetResolvedPawnClassNode, GetClassDefaultsNode, SetDefaultReplicatesNode };
+
+	auto AddEdge = [&Document](const FGuid SourceNodeId, const FGuid SourcePinId, const FGuid TargetNodeId, const FGuid TargetPinId)
+	{
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNodeId;
+		Edge.SourcePinId = SourcePinId;
+		Edge.TargetNodeId = TargetNodeId;
+		Edge.TargetPinId = TargetPinId;
+		Document.Edges.Add(Edge);
+	};
+
+	AddEdge(BeginPlayNode.Id, BeginPlayThenPin.Id, LoadAssetNode.Id, LoadAssetExecPin.Id);
+	AddEdge(SourceObjectGetterNode.Id, SourceObjectGetterValuePin.Id, ConvertObjectNode.Id, ConvertObjectInputPin.Id);
+	AddEdge(ConvertObjectNode.Id, ConvertObjectOutputPin.Id, LoadAssetNode.Id, LoadAssetInputPin.Id);
+	AddEdge(LoadAssetNode.Id, LoadAssetCompletedPin.Id, SetResolvedObjectNode.Id, SetResolvedObjectExecPin.Id);
+	AddEdge(LoadAssetNode.Id, LoadAssetOutputPin.Id, SetResolvedObjectNode.Id, SetResolvedObjectValuePin.Id);
+	AddEdge(SetResolvedObjectNode.Id, SetResolvedObjectThenPin.Id, LoadAssetsNode.Id, LoadAssetsExecPin.Id);
+	AddEdge(SourceAssetsGetterNode.Id, SourceAssetsGetterValuePin.Id, LoadAssetsNode.Id, LoadAssetsInputPin.Id);
+	AddEdge(LoadAssetsNode.Id, LoadAssetsCompletedPin.Id, SetResolvedObjectsNode.Id, SetResolvedObjectsExecPin.Id);
+	AddEdge(LoadAssetsNode.Id, LoadAssetsOutputPin.Id, SetResolvedObjectsNode.Id, SetResolvedObjectsValuePin.Id);
+	AddEdge(SetResolvedObjectsNode.Id, SetResolvedObjectsThenPin.Id, LoadAssetClassNode.Id, LoadAssetClassExecPin.Id);
+	AddEdge(SourceClassGetterNode.Id, SourceClassGetterValuePin.Id, ConvertClassNode.Id, ConvertClassInputPin.Id);
+	AddEdge(ConvertClassNode.Id, ConvertClassOutputPin.Id, LoadAssetClassNode.Id, LoadAssetClassInputPin.Id);
+	AddEdge(LoadAssetClassNode.Id, LoadAssetClassOutputPin.Id, ClassCastNode.Id, ClassCastInputPin.Id);
+	AddEdge(LoadAssetClassNode.Id, LoadAssetClassCompletedPin.Id, SetResolvedPawnClassNode.Id, SetResolvedPawnClassExecPin.Id);
+	AddEdge(ClassCastNode.Id, ClassCastResultPin.Id, SetResolvedPawnClassNode.Id, SetResolvedPawnClassValuePin.Id);
+	AddEdge(SetResolvedPawnClassNode.Id, SetResolvedPawnClassThenPin.Id, SetDefaultReplicatesNode.Id, SetDefaultReplicatesExecPin.Id);
+	AddEdge(GetClassDefaultsNode.Id, GetClassDefaultsReplicatesPin.Id, SetDefaultReplicatesNode.Id, SetDefaultReplicatesValuePin.Id);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+	TestTrue(TEXT("Object/class/soft-reference document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Object/class/soft-reference document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Object/class/soft-reference document should execute commands."), Result.ExecutedCommandCount > 0);
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompilerCommand* const LoadAssetCommand = FindNodeCommand(Result.Commands, LoadAssetNode.Id);
+	const FVergilCompilerCommand* const LoadAssetsCommand = FindNodeCommand(Result.Commands, LoadAssetsNode.Id);
+	const FVergilCompilerCommand* const LoadAssetClassCommand = FindNodeCommand(Result.Commands, LoadAssetClassNode.Id);
+	const FVergilCompilerCommand* const ConvertObjectCommand = FindNodeCommand(Result.Commands, ConvertObjectNode.Id);
+	const FVergilCompilerCommand* const ConvertClassCommand = FindNodeCommand(Result.Commands, ConvertClassNode.Id);
+	const FVergilCompilerCommand* const ClassCastCommand = FindNodeCommand(Result.Commands, ClassCastNode.Id);
+	const FVergilCompilerCommand* const GetClassDefaultsCommand = FindNodeCommand(Result.Commands, GetClassDefaultsNode.Id);
+	TestNotNull(TEXT("LoadAsset should lower into an AddNode command."), LoadAssetCommand);
+	TestNotNull(TEXT("LoadAssets should lower into an AddNode command."), LoadAssetsCommand);
+	TestNotNull(TEXT("LoadAssetClass should lower into an AddNode command."), LoadAssetClassCommand);
+	TestNotNull(TEXT("ConvertAsset object node should lower into an AddNode command."), ConvertObjectCommand);
+	TestNotNull(TEXT("ConvertAsset class node should lower into an AddNode command."), ConvertClassCommand);
+	TestNotNull(TEXT("ClassCast should lower into an AddNode command."), ClassCastCommand);
+	TestNotNull(TEXT("GetClassDefaults should lower into an AddNode command."), GetClassDefaultsCommand);
+	if (LoadAssetCommand == nullptr || LoadAssetsCommand == nullptr || LoadAssetClassCommand == nullptr || ConvertObjectCommand == nullptr || ConvertClassCommand == nullptr || ClassCastCommand == nullptr || GetClassDefaultsCommand == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("LoadAsset should use its dedicated command name."), LoadAssetCommand->Name, FName(TEXT("Vergil.K2.LoadAsset")));
+	TestEqual(TEXT("LoadAssets should use their dedicated command name."), LoadAssetsCommand->Name, FName(TEXT("Vergil.K2.LoadAssets")));
+	TestEqual(TEXT("LoadAssetClass should use its dedicated command name."), LoadAssetClassCommand->Name, FName(TEXT("Vergil.K2.LoadAssetClass")));
+	TestEqual(TEXT("ConvertAsset should use its dedicated command name."), ConvertObjectCommand->Name, FName(TEXT("Vergil.K2.ConvertAsset")));
+	TestEqual(TEXT("ClassCast should use its dedicated command name."), ClassCastCommand->Name, FName(TEXT("Vergil.K2.ClassCast")));
+	TestEqual(TEXT("GetClassDefaults should use its dedicated command name."), GetClassDefaultsCommand->Name, FName(TEXT("Vergil.K2.GetClassDefaults")));
+	TestEqual(TEXT("LoadAsset should retain the normalized asset class path."), LoadAssetCommand->StringValue, AActor::StaticClass()->GetPathName());
+	TestEqual(TEXT("LoadAssetClass should retain the normalized asset class path."), LoadAssetClassCommand->StringValue, AActor::StaticClass()->GetPathName());
+	TestEqual(TEXT("ClassCast should retain the normalized target class path."), ClassCastCommand->StringValue, APawn::StaticClass()->GetPathName());
+	TestEqual(TEXT("GetClassDefaults should retain the normalized source class path."), GetClassDefaultsCommand->StringValue, AActor::StaticClass()->GetPathName());
+	TestTrue(TEXT("LoadAsset planned pins should include the completed exec pin."), ContainsPlannedPin(*LoadAssetCommand, UEdGraphSchema_K2::PN_Completed, false, true));
+	TestTrue(TEXT("LoadAssets planned pins should include the Objects output pin."), ContainsPlannedPin(*LoadAssetsCommand, TEXT("Objects"), false, false));
+	TestTrue(TEXT("LoadAssetClass planned pins should include the AssetClass input pin."), ContainsPlannedPin(*LoadAssetClassCommand, TEXT("AssetClass"), true, false));
+	TestTrue(TEXT("ConvertAsset planned pins should include the Input pin."), ContainsPlannedPin(*ConvertObjectCommand, TEXT("Input"), true, false));
+	TestTrue(TEXT("GetClassDefaults planned pins should include the bReplicates output pin."), ContainsPlannedPin(*GetClassDefaultsCommand, TEXT("bReplicates"), false, false));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after object/class/soft-reference execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_VariableGet* const SourceObjectGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, SourceObjectGetterNode.Id);
+	UK2Node_ConvertAsset* const ConvertObjectGraphNode = FindGraphNodeByGuid<UK2Node_ConvertAsset>(EventGraph, ConvertObjectNode.Id);
+	UK2Node_LoadAsset* const LoadAssetGraphNode = FindGraphNodeByGuid<UK2Node_LoadAsset>(EventGraph, LoadAssetNode.Id);
+	UK2Node_VariableGet* const SourceAssetsGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, SourceAssetsGetterNode.Id);
+	UK2Node_LoadAssets* const LoadAssetsGraphNode = FindGraphNodeByGuid<UK2Node_LoadAssets>(EventGraph, LoadAssetsNode.Id);
+	UK2Node_VariableGet* const SourceClassGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, SourceClassGetterNode.Id);
+	UK2Node_ConvertAsset* const ConvertClassGraphNode = FindGraphNodeByGuid<UK2Node_ConvertAsset>(EventGraph, ConvertClassNode.Id);
+	UK2Node_LoadAssetClass* const LoadAssetClassGraphNode = FindGraphNodeByGuid<UK2Node_LoadAssetClass>(EventGraph, LoadAssetClassNode.Id);
+	UK2Node_ClassDynamicCast* const ClassCastGraphNode = FindGraphNodeByGuid<UK2Node_ClassDynamicCast>(EventGraph, ClassCastNode.Id);
+	UK2Node_GetClassDefaults* const GetClassDefaultsGraphNode = FindGraphNodeByGuid<UK2Node_GetClassDefaults>(EventGraph, GetClassDefaultsNode.Id);
+	UK2Node_VariableSet* const SetResolvedObjectGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetResolvedObjectNode.Id);
+	UK2Node_VariableSet* const SetResolvedObjectsGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetResolvedObjectsNode.Id);
+	UK2Node_VariableSet* const SetResolvedPawnClassGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetResolvedPawnClassNode.Id);
+	UK2Node_VariableSet* const SetDefaultReplicatesGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetDefaultReplicatesNode.Id);
+	if (EventGraphNode == nullptr || SourceObjectGetterGraphNode == nullptr || ConvertObjectGraphNode == nullptr || LoadAssetGraphNode == nullptr || SourceAssetsGetterGraphNode == nullptr || LoadAssetsGraphNode == nullptr || SourceClassGetterGraphNode == nullptr || ConvertClassGraphNode == nullptr || LoadAssetClassGraphNode == nullptr || ClassCastGraphNode == nullptr || GetClassDefaultsGraphNode == nullptr || SetResolvedObjectGraphNode == nullptr || SetResolvedObjectsGraphNode == nullptr || SetResolvedPawnClassGraphNode == nullptr || SetDefaultReplicatesGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SourceObjectValueGraphPin = SourceObjectGetterGraphNode->GetValuePin();
+	UEdGraphPin* const ConvertObjectInputGraphPin = ConvertObjectGraphNode->FindPin(TEXT("Input"));
+	UEdGraphPin* const ConvertObjectOutputGraphPin = ConvertObjectGraphNode->FindPin(TEXT("Output"));
+	UEdGraphPin* const LoadAssetExecGraphPin = LoadAssetGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const LoadAssetCompletedGraphPin = LoadAssetGraphNode->FindPin(UEdGraphSchema_K2::PN_Completed);
+	UEdGraphPin* const LoadAssetInputGraphPin = LoadAssetGraphNode->FindPin(TEXT("Asset"));
+	UEdGraphPin* const LoadAssetOutputGraphPin = LoadAssetGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const SourceAssetsValueGraphPin = SourceAssetsGetterGraphNode->GetValuePin();
+	UEdGraphPin* const LoadAssetsExecGraphPin = LoadAssetsGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const LoadAssetsCompletedGraphPin = LoadAssetsGraphNode->FindPin(UEdGraphSchema_K2::PN_Completed);
+	UEdGraphPin* const LoadAssetsInputGraphPin = LoadAssetsGraphNode->FindPin(TEXT("Assets"));
+	UEdGraphPin* const LoadAssetsOutputGraphPin = LoadAssetsGraphNode->FindPin(TEXT("Objects"));
+	UEdGraphPin* const SourceClassValueGraphPin = SourceClassGetterGraphNode->GetValuePin();
+	UEdGraphPin* const ConvertClassInputGraphPin = ConvertClassGraphNode->FindPin(TEXT("Input"));
+	UEdGraphPin* const ConvertClassOutputGraphPin = ConvertClassGraphNode->FindPin(TEXT("Output"));
+	UEdGraphPin* const LoadAssetClassExecGraphPin = LoadAssetClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const LoadAssetClassInputGraphPin = LoadAssetClassGraphNode->FindPin(TEXT("AssetClass"));
+	UEdGraphPin* const LoadAssetClassOutputGraphPin = LoadAssetClassGraphNode->FindPin(TEXT("Class"));
+	UEdGraphPin* const ClassCastInputGraphPin = ClassCastGraphNode->GetCastSourcePin();
+	UEdGraphPin* const ClassCastResultGraphPin = ClassCastGraphNode->GetCastResultPin();
+	UEdGraphPin* const GetClassDefaultsClassGraphPin = GetClassDefaultsGraphNode->FindClassPin();
+	UEdGraphPin* const GetClassDefaultsReplicatesGraphPin = GetClassDefaultsGraphNode->FindPin(TEXT("bReplicates"));
+	UEdGraphPin* const SetResolvedObjectExecGraphPin = SetResolvedObjectGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetResolvedObjectValueGraphPin = SetResolvedObjectGraphNode->FindPin(TEXT("ResolvedObject"));
+	UEdGraphPin* const SetResolvedObjectThenGraphPin = SetResolvedObjectGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetResolvedObjectsExecGraphPin = SetResolvedObjectsGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetResolvedObjectsValueGraphPin = SetResolvedObjectsGraphNode->FindPin(TEXT("ResolvedObjects"));
+	UEdGraphPin* const SetResolvedObjectsThenGraphPin = SetResolvedObjectsGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetResolvedPawnClassExecGraphPin = SetResolvedPawnClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetResolvedPawnClassValueGraphPin = SetResolvedPawnClassGraphNode->FindPin(TEXT("ResolvedPawnClass"));
+	UEdGraphPin* const SetResolvedPawnClassThenGraphPin = SetResolvedPawnClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetDefaultReplicatesExecGraphPin = SetDefaultReplicatesGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetDefaultReplicatesValueGraphPin = SetDefaultReplicatesGraphNode->FindPin(TEXT("DefaultReplicates"));
+
+	TestTrue(TEXT("ConvertAsset object output should resolve to a soft object AActor reference."), ConvertObjectOutputGraphPin != nullptr && ConvertObjectOutputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject && ConvertObjectOutputGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("LoadAsset input pin should resolve to a soft object AActor reference."), LoadAssetInputGraphPin != nullptr && LoadAssetInputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject && LoadAssetInputGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("LoadAsset output pin should retain the native UObject object-reference type."), LoadAssetOutputGraphPin != nullptr && LoadAssetOutputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && LoadAssetOutputGraphPin->PinType.PinSubCategoryObject.Get() == UObject::StaticClass());
+	TestTrue(TEXT("LoadAssets input pin should resolve to an array of soft object AActor references."), LoadAssetsInputGraphPin != nullptr && LoadAssetsInputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject && LoadAssetsInputGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass() && LoadAssetsInputGraphPin->PinType.ContainerType == EPinContainerType::Array);
+	TestTrue(TEXT("LoadAssets output pin should retain the native UObject array element type."), LoadAssetsOutputGraphPin != nullptr && LoadAssetsOutputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && LoadAssetsOutputGraphPin->PinType.PinSubCategoryObject.Get() == UObject::StaticClass() && LoadAssetsOutputGraphPin->PinType.ContainerType == EPinContainerType::Array);
+	TestTrue(TEXT("ConvertAsset class output should resolve to a soft class AActor reference."), ConvertClassOutputGraphPin != nullptr && ConvertClassOutputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass && ConvertClassOutputGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("LoadAssetClass output pin should resolve to an AActor class reference."), LoadAssetClassOutputGraphPin != nullptr && LoadAssetClassOutputGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class && LoadAssetClassOutputGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("ClassCast should remain pure when no exec pins are planned."), ClassCastGraphNode->IsNodePure());
+	TestTrue(TEXT("ClassCast target type should match APawn."), ClassCastGraphNode->TargetType.Get() == APawn::StaticClass());
+	TestTrue(TEXT("ClassCast result pin should resolve to an APawn class reference."), ClassCastResultGraphPin != nullptr && ClassCastResultGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class && ClassCastResultGraphPin->PinType.PinSubCategoryObject.Get() == APawn::StaticClass());
+	TestTrue(TEXT("GetClassDefaults should pin the source class to AActor."), GetClassDefaultsClassGraphPin != nullptr && GetClassDefaultsClassGraphPin->DefaultObject == AActor::StaticClass());
+	TestTrue(TEXT("GetClassDefaults should expose the bReplicates output pin."), GetClassDefaultsReplicatesGraphPin != nullptr && GetClassDefaultsReplicatesGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("BeginPlay should drive LoadAsset."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(LoadAssetExecGraphPin));
+	TestTrue(TEXT("SourceObject should feed ConvertAsset input."), SourceObjectValueGraphPin != nullptr && SourceObjectValueGraphPin->LinkedTo.Contains(ConvertObjectInputGraphPin));
+	TestTrue(TEXT("ConvertAsset object output should feed LoadAsset input."), ConvertObjectOutputGraphPin != nullptr && ConvertObjectOutputGraphPin->LinkedTo.Contains(LoadAssetInputGraphPin));
+	TestTrue(TEXT("LoadAsset Completed should drive the ResolvedObject setter."), LoadAssetCompletedGraphPin != nullptr && LoadAssetCompletedGraphPin->LinkedTo.Contains(SetResolvedObjectExecGraphPin));
+	TestTrue(TEXT("LoadAsset output should feed the ResolvedObject setter."), LoadAssetOutputGraphPin != nullptr && LoadAssetOutputGraphPin->LinkedTo.Contains(SetResolvedObjectValueGraphPin));
+	TestTrue(TEXT("ResolvedObject setter should chain into LoadAssets."), SetResolvedObjectThenGraphPin != nullptr && SetResolvedObjectThenGraphPin->LinkedTo.Contains(LoadAssetsExecGraphPin));
+	TestTrue(TEXT("SourceAssets should feed the LoadAssets input."), SourceAssetsValueGraphPin != nullptr && SourceAssetsValueGraphPin->LinkedTo.Contains(LoadAssetsInputGraphPin));
+	TestTrue(TEXT("LoadAssets Completed should drive the ResolvedObjects setter."), LoadAssetsCompletedGraphPin != nullptr && LoadAssetsCompletedGraphPin->LinkedTo.Contains(SetResolvedObjectsExecGraphPin));
+	TestTrue(TEXT("LoadAssets output should feed the ResolvedObjects setter."), LoadAssetsOutputGraphPin != nullptr && LoadAssetsOutputGraphPin->LinkedTo.Contains(SetResolvedObjectsValueGraphPin));
+	TestTrue(TEXT("ResolvedObjects setter should chain into LoadAssetClass."), SetResolvedObjectsThenGraphPin != nullptr && SetResolvedObjectsThenGraphPin->LinkedTo.Contains(LoadAssetClassExecGraphPin));
+	TestTrue(TEXT("SourceClass should feed the class ConvertAsset input."), SourceClassValueGraphPin != nullptr && SourceClassValueGraphPin->LinkedTo.Contains(ConvertClassInputGraphPin));
+	TestTrue(TEXT("ConvertAsset class output should feed LoadAssetClass input."), ConvertClassOutputGraphPin != nullptr && ConvertClassOutputGraphPin->LinkedTo.Contains(LoadAssetClassInputGraphPin));
+	TestTrue(TEXT("LoadAssetClass output should feed the ClassCast input."), LoadAssetClassOutputGraphPin != nullptr && LoadAssetClassOutputGraphPin->LinkedTo.Contains(ClassCastInputGraphPin));
+	TestTrue(TEXT("ClassCast output should feed the ResolvedPawnClass setter."), ClassCastResultGraphPin != nullptr && ClassCastResultGraphPin->LinkedTo.Contains(SetResolvedPawnClassValueGraphPin));
+	TestTrue(TEXT("ResolvedPawnClass setter should chain into the DefaultReplicates setter."), SetResolvedPawnClassThenGraphPin != nullptr && SetResolvedPawnClassThenGraphPin->LinkedTo.Contains(SetDefaultReplicatesExecGraphPin));
+	TestTrue(TEXT("GetClassDefaults bReplicates should feed the DefaultReplicates setter."), GetClassDefaultsReplicatesGraphPin != nullptr && GetClassDefaultsReplicatesGraphPin->LinkedTo.Contains(SetDefaultReplicatesValueGraphPin));
+
 	return true;
 }
 
@@ -1831,6 +2343,23 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilGraphNode LoadAssetNode;
+		LoadAssetNode.Id = FGuid::NewGuid();
+		LoadAssetNode.Kind = EVergilNodeKind::Custom;
+		LoadAssetNode.Descriptor = TEXT("K2.LoadAsset");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_LoadAssetMetadata");
+		Request.Document.Nodes.Add(LoadAssetNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("LoadAsset nodes without AssetClassPath should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Missing load-asset metadata should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing load-asset metadata should report MissingLoadAssetClassPath."), ContainsDiagnostic(Result.Diagnostics, TEXT("MissingLoadAssetClassPath")));
+	}
+
+	{
 		FVergilGraphNode UnsupportedSelectNode;
 		UnsupportedSelectNode.Id = FGuid::NewGuid();
 		UnsupportedSelectNode.Kind = EVergilNodeKind::Custom;
@@ -1886,6 +2415,25 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Construction-script graphs should reject spawn actor nodes."), Result.bSucceeded);
 		TestEqual(TEXT("Construction-script spawn actor failures should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Construction-script spawn actor failures should report the explicit diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptSpawnActorUnsupported")));
+	}
+
+	{
+		FVergilGraphNode LoadAssetNode;
+		LoadAssetNode.Id = FGuid::NewGuid();
+		LoadAssetNode.Kind = EVergilNodeKind::Custom;
+		LoadAssetNode.Descriptor = TEXT("K2.LoadAsset");
+		LoadAssetNode.Metadata.Add(TEXT("AssetClassPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.TargetGraphName = TEXT("UserConstructionScript");
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_ConstructionLoadAsset");
+		Request.Document.ConstructionScriptNodes.Add(LoadAssetNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Construction-script graphs should reject async load nodes."), Result.bSucceeded);
+		TestEqual(TEXT("Construction-script load-asset failures should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Construction-script load-asset failures should report the explicit diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptLoadAssetUnsupported")));
 	}
 
 	return true;
@@ -2378,6 +2926,157 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		CastNode.Descriptor = TEXT("K2.Cast");
 		CastNode.Metadata.Add(TEXT("TargetClassPath"), TEXT("   /Script/Engine.Actor   "));
 
+		const FName ClassCastResultPinName = MakeCastResultPinName(APawn::StaticClass());
+
+		FVergilGraphNode ClassCastNode;
+		ClassCastNode.Id = FGuid::NewGuid();
+		ClassCastNode.Kind = EVergilNodeKind::Custom;
+		ClassCastNode.Descriptor = TEXT("K2.ClassCast");
+		ClassCastNode.Metadata.Add(TEXT("TargetClassPath"), TEXT("   /Script/Engine.Pawn   "));
+
+		FVergilGraphPin ClassCastInputPin;
+		ClassCastInputPin.Id = FGuid::NewGuid();
+		ClassCastInputPin.Name = TEXT("Class");
+		ClassCastInputPin.Direction = EVergilPinDirection::Input;
+		ClassCastNode.Pins.Add(ClassCastInputPin);
+
+		FVergilGraphPin ClassCastResultPin;
+		ClassCastResultPin.Id = FGuid::NewGuid();
+		ClassCastResultPin.Name = ClassCastResultPinName;
+		ClassCastResultPin.Direction = EVergilPinDirection::Output;
+		ClassCastNode.Pins.Add(ClassCastResultPin);
+
+		FVergilGraphNode GetClassDefaultsNode;
+		GetClassDefaultsNode.Id = FGuid::NewGuid();
+		GetClassDefaultsNode.Kind = EVergilNodeKind::Custom;
+		GetClassDefaultsNode.Descriptor = TEXT("K2.GetClassDefaults");
+		GetClassDefaultsNode.Metadata.Add(TEXT("ClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphPin GetClassDefaultsReplicatesPin;
+		GetClassDefaultsReplicatesPin.Id = FGuid::NewGuid();
+		GetClassDefaultsReplicatesPin.Name = TEXT("bReplicates");
+		GetClassDefaultsReplicatesPin.Direction = EVergilPinDirection::Output;
+		GetClassDefaultsNode.Pins.Add(GetClassDefaultsReplicatesPin);
+
+		FVergilGraphPin GetClassDefaultsLifeSpanPin;
+		GetClassDefaultsLifeSpanPin.Id = FGuid::NewGuid();
+		GetClassDefaultsLifeSpanPin.Name = TEXT("InitialLifeSpan");
+		GetClassDefaultsLifeSpanPin.Direction = EVergilPinDirection::Output;
+		GetClassDefaultsNode.Pins.Add(GetClassDefaultsLifeSpanPin);
+
+		FVergilGraphNode LoadAssetNode;
+		LoadAssetNode.Id = FGuid::NewGuid();
+		LoadAssetNode.Kind = EVergilNodeKind::Custom;
+		LoadAssetNode.Descriptor = TEXT("K2.LoadAsset");
+		LoadAssetNode.Metadata.Add(TEXT("AssetClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphPin LoadAssetExecPin;
+		LoadAssetExecPin.Id = FGuid::NewGuid();
+		LoadAssetExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+		LoadAssetExecPin.Direction = EVergilPinDirection::Input;
+		LoadAssetExecPin.bIsExec = true;
+		LoadAssetNode.Pins.Add(LoadAssetExecPin);
+
+		FVergilGraphPin LoadAssetCompletedPin;
+		LoadAssetCompletedPin.Id = FGuid::NewGuid();
+		LoadAssetCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+		LoadAssetCompletedPin.Direction = EVergilPinDirection::Output;
+		LoadAssetCompletedPin.bIsExec = true;
+		LoadAssetNode.Pins.Add(LoadAssetCompletedPin);
+
+		FVergilGraphPin LoadAssetInputPin;
+		LoadAssetInputPin.Id = FGuid::NewGuid();
+		LoadAssetInputPin.Name = TEXT("Asset");
+		LoadAssetInputPin.Direction = EVergilPinDirection::Input;
+		LoadAssetNode.Pins.Add(LoadAssetInputPin);
+
+		FVergilGraphPin LoadAssetOutputPin;
+		LoadAssetOutputPin.Id = FGuid::NewGuid();
+		LoadAssetOutputPin.Name = TEXT("Object");
+		LoadAssetOutputPin.Direction = EVergilPinDirection::Output;
+		LoadAssetNode.Pins.Add(LoadAssetOutputPin);
+
+		FVergilGraphNode LoadAssetClassNode;
+		LoadAssetClassNode.Id = FGuid::NewGuid();
+		LoadAssetClassNode.Kind = EVergilNodeKind::Custom;
+		LoadAssetClassNode.Descriptor = TEXT("K2.LoadAssetClass");
+		LoadAssetClassNode.Metadata.Add(TEXT("AssetClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphPin LoadAssetClassExecPin;
+		LoadAssetClassExecPin.Id = FGuid::NewGuid();
+		LoadAssetClassExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+		LoadAssetClassExecPin.Direction = EVergilPinDirection::Input;
+		LoadAssetClassExecPin.bIsExec = true;
+		LoadAssetClassNode.Pins.Add(LoadAssetClassExecPin);
+
+		FVergilGraphPin LoadAssetClassCompletedPin;
+		LoadAssetClassCompletedPin.Id = FGuid::NewGuid();
+		LoadAssetClassCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+		LoadAssetClassCompletedPin.Direction = EVergilPinDirection::Output;
+		LoadAssetClassCompletedPin.bIsExec = true;
+		LoadAssetClassNode.Pins.Add(LoadAssetClassCompletedPin);
+
+		FVergilGraphPin LoadAssetClassInputPin;
+		LoadAssetClassInputPin.Id = FGuid::NewGuid();
+		LoadAssetClassInputPin.Name = TEXT("AssetClass");
+		LoadAssetClassInputPin.Direction = EVergilPinDirection::Input;
+		LoadAssetClassNode.Pins.Add(LoadAssetClassInputPin);
+
+		FVergilGraphPin LoadAssetClassOutputPin;
+		LoadAssetClassOutputPin.Id = FGuid::NewGuid();
+		LoadAssetClassOutputPin.Name = TEXT("Class");
+		LoadAssetClassOutputPin.Direction = EVergilPinDirection::Output;
+		LoadAssetClassNode.Pins.Add(LoadAssetClassOutputPin);
+
+		FVergilGraphNode LoadAssetsNode;
+		LoadAssetsNode.Id = FGuid::NewGuid();
+		LoadAssetsNode.Kind = EVergilNodeKind::Custom;
+		LoadAssetsNode.Descriptor = TEXT("K2.LoadAssets");
+		LoadAssetsNode.Metadata.Add(TEXT("AssetClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphPin LoadAssetsExecPin;
+		LoadAssetsExecPin.Id = FGuid::NewGuid();
+		LoadAssetsExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+		LoadAssetsExecPin.Direction = EVergilPinDirection::Input;
+		LoadAssetsExecPin.bIsExec = true;
+		LoadAssetsNode.Pins.Add(LoadAssetsExecPin);
+
+		FVergilGraphPin LoadAssetsCompletedPin;
+		LoadAssetsCompletedPin.Id = FGuid::NewGuid();
+		LoadAssetsCompletedPin.Name = UEdGraphSchema_K2::PN_Completed;
+		LoadAssetsCompletedPin.Direction = EVergilPinDirection::Output;
+		LoadAssetsCompletedPin.bIsExec = true;
+		LoadAssetsNode.Pins.Add(LoadAssetsCompletedPin);
+
+		FVergilGraphPin LoadAssetsInputPin;
+		LoadAssetsInputPin.Id = FGuid::NewGuid();
+		LoadAssetsInputPin.Name = TEXT("Assets");
+		LoadAssetsInputPin.Direction = EVergilPinDirection::Input;
+		LoadAssetsNode.Pins.Add(LoadAssetsInputPin);
+
+		FVergilGraphPin LoadAssetsOutputPin;
+		LoadAssetsOutputPin.Id = FGuid::NewGuid();
+		LoadAssetsOutputPin.Name = TEXT("Objects");
+		LoadAssetsOutputPin.Direction = EVergilPinDirection::Output;
+		LoadAssetsNode.Pins.Add(LoadAssetsOutputPin);
+
+		FVergilGraphNode ConvertAssetNode;
+		ConvertAssetNode.Id = FGuid::NewGuid();
+		ConvertAssetNode.Kind = EVergilNodeKind::Custom;
+		ConvertAssetNode.Descriptor = TEXT("K2.ConvertAsset");
+
+		FVergilGraphPin ConvertAssetInputPin;
+		ConvertAssetInputPin.Id = FGuid::NewGuid();
+		ConvertAssetInputPin.Name = TEXT("Input");
+		ConvertAssetInputPin.Direction = EVergilPinDirection::Input;
+		ConvertAssetNode.Pins.Add(ConvertAssetInputPin);
+
+		FVergilGraphPin ConvertAssetOutputPin;
+		ConvertAssetOutputPin.Id = FGuid::NewGuid();
+		ConvertAssetOutputPin.Name = TEXT("Output");
+		ConvertAssetOutputPin.Direction = EVergilPinDirection::Output;
+		ConvertAssetNode.Pins.Add(ConvertAssetOutputPin);
+
 		FVergilGraphNode SelectNode;
 		SelectNode.Id = FGuid::NewGuid();
 		SelectNode.Kind = EVergilNodeKind::Custom;
@@ -2557,7 +3256,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
+		Request.Document.Nodes = { CastNode, ClassCastNode, GetClassDefaultsNode, LoadAssetNode, LoadAssetClassNode, LoadAssetsNode, ConvertAssetNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
 
 		FVergilGraphEdge TransformToSpawn;
 		TransformToSpawn.Id = FGuid::NewGuid();
@@ -2628,6 +3327,54 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		if (PlannedCastCommand != nullptr)
 		{
 			TestEqual(TEXT("Cast target class paths should normalize before planning."), PlannedCastCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedClassCastCommand = FindNodeCommand(Result.Commands, ClassCastNode.Id);
+		TestNotNull(TEXT("Resolved class-cast nodes should still lower into AddNode commands."), PlannedClassCastCommand);
+		if (PlannedClassCastCommand != nullptr)
+		{
+			TestEqual(TEXT("ClassCast should lower into its dedicated command name."), PlannedClassCastCommand->Name, FName(TEXT("Vergil.K2.ClassCast")));
+			TestEqual(TEXT("ClassCast target class paths should normalize before planning."), PlannedClassCastCommand->StringValue, APawn::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedGetClassDefaultsCommand = FindNodeCommand(Result.Commands, GetClassDefaultsNode.Id);
+		TestNotNull(TEXT("Resolved get-class-defaults nodes should still lower into AddNode commands."), PlannedGetClassDefaultsCommand);
+		if (PlannedGetClassDefaultsCommand != nullptr)
+		{
+			TestEqual(TEXT("GetClassDefaults should lower into its dedicated command name."), PlannedGetClassDefaultsCommand->Name, FName(TEXT("Vergil.K2.GetClassDefaults")));
+			TestEqual(TEXT("GetClassDefaults should normalize ClassPath into StringValue."), PlannedGetClassDefaultsCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedLoadAssetCommand = FindNodeCommand(Result.Commands, LoadAssetNode.Id);
+		TestNotNull(TEXT("Resolved load-asset nodes should still lower into AddNode commands."), PlannedLoadAssetCommand);
+		if (PlannedLoadAssetCommand != nullptr)
+		{
+			TestEqual(TEXT("LoadAsset should lower into its dedicated command name."), PlannedLoadAssetCommand->Name, FName(TEXT("Vergil.K2.LoadAsset")));
+			TestEqual(TEXT("LoadAsset should normalize AssetClassPath into StringValue."), PlannedLoadAssetCommand->StringValue, AActor::StaticClass()->GetPathName());
+			TestEqual(TEXT("LoadAsset metadata should retain the normalized asset class path."), PlannedLoadAssetCommand->Attributes.FindRef(TEXT("AssetClassPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedLoadAssetClassCommand = FindNodeCommand(Result.Commands, LoadAssetClassNode.Id);
+		TestNotNull(TEXT("Resolved load-asset-class nodes should still lower into AddNode commands."), PlannedLoadAssetClassCommand);
+		if (PlannedLoadAssetClassCommand != nullptr)
+		{
+			TestEqual(TEXT("LoadAssetClass should lower into its dedicated command name."), PlannedLoadAssetClassCommand->Name, FName(TEXT("Vergil.K2.LoadAssetClass")));
+			TestEqual(TEXT("LoadAssetClass should normalize AssetClassPath into StringValue."), PlannedLoadAssetClassCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedLoadAssetsCommand = FindNodeCommand(Result.Commands, LoadAssetsNode.Id);
+		TestNotNull(TEXT("Resolved load-assets nodes should still lower into AddNode commands."), PlannedLoadAssetsCommand);
+		if (PlannedLoadAssetsCommand != nullptr)
+		{
+			TestEqual(TEXT("LoadAssets should lower into its dedicated command name."), PlannedLoadAssetsCommand->Name, FName(TEXT("Vergil.K2.LoadAssets")));
+			TestEqual(TEXT("LoadAssets should normalize AssetClassPath into StringValue."), PlannedLoadAssetsCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedConvertAssetCommand = FindNodeCommand(Result.Commands, ConvertAssetNode.Id);
+		TestNotNull(TEXT("Resolved convert-asset nodes should still lower into AddNode commands."), PlannedConvertAssetCommand);
+		if (PlannedConvertAssetCommand != nullptr)
+		{
+			TestEqual(TEXT("ConvertAsset should lower into its dedicated command name."), PlannedConvertAssetCommand->Name, FName(TEXT("Vergil.K2.ConvertAsset")));
 		}
 
 		const FVergilCompilerCommand* const PlannedSelectCommand = FindNodeCommand(Result.Commands, SelectNode.Id);
@@ -2885,6 +3632,84 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid cast target classes should fail type resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid cast target classes should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid cast target classes should report CastTargetClassNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("CastTargetClassNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidClassCastNode;
+		InvalidClassCastNode.Id = FGuid::NewGuid();
+		InvalidClassCastNode.Kind = EVergilNodeKind::Custom;
+		InvalidClassCastNode.Descriptor = TEXT("K2.ClassCast");
+		InvalidClassCastNode.Metadata.Add(TEXT("TargetClassPath"), TEXT("/Script/Engine.DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidClassCast");
+		Request.Document.Nodes.Add(InvalidClassCastNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid class-cast target classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid class-cast target classes should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid class-cast target classes should report ClassCastTargetClassNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("ClassCastTargetClassNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidGetClassDefaultsNode;
+		InvalidGetClassDefaultsNode.Id = FGuid::NewGuid();
+		InvalidGetClassDefaultsNode.Kind = EVergilNodeKind::Custom;
+		InvalidGetClassDefaultsNode.Descriptor = TEXT("K2.GetClassDefaults");
+		InvalidGetClassDefaultsNode.Metadata.Add(TEXT("ClassPath"), TEXT("/Script/Engine.DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidGetClassDefaults");
+		Request.Document.Nodes.Add(InvalidGetClassDefaultsNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid get-class-defaults class paths should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid get-class-defaults class paths should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid get-class-defaults class paths should report GetClassDefaultsClassNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("GetClassDefaultsClassNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidLoadAssetNode;
+		InvalidLoadAssetNode.Id = FGuid::NewGuid();
+		InvalidLoadAssetNode.Kind = EVergilNodeKind::Custom;
+		InvalidLoadAssetNode.Descriptor = TEXT("K2.LoadAsset");
+		InvalidLoadAssetNode.Metadata.Add(TEXT("AssetClassPath"), TEXT("/Script/Engine.DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidLoadAsset");
+		Request.Document.Nodes.Add(InvalidLoadAssetNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid load-asset class paths should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid load-asset class paths should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid load-asset class paths should report LoadAssetClassNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("LoadAssetClassNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidConvertAssetNode;
+		InvalidConvertAssetNode.Id = FGuid::NewGuid();
+		InvalidConvertAssetNode.Kind = EVergilNodeKind::Custom;
+		InvalidConvertAssetNode.Descriptor = TEXT("K2.ConvertAsset");
+
+		FVergilGraphPin InvalidConvertAssetExecPin;
+		InvalidConvertAssetExecPin.Id = FGuid::NewGuid();
+		InvalidConvertAssetExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+		InvalidConvertAssetExecPin.Direction = EVergilPinDirection::Input;
+		InvalidConvertAssetExecPin.bIsExec = true;
+		InvalidConvertAssetNode.Pins.Add(InvalidConvertAssetExecPin);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidConvertAsset");
+		Request.Document.Nodes.Add(InvalidConvertAssetNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Unsupported convert-asset pin surfaces should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Unsupported convert-asset pin surfaces should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Unsupported convert-asset pin surfaces should report ConvertAssetPinUnsupported."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConvertAssetPinUnsupported")));
 	}
 
 	{
@@ -3883,6 +4708,60 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.InterfaceMessage.<FunctionName> should report Call as its expected node kind."), InterfaceMessageContract->ExpectedNodeKind, FString(TEXT("Call")));
 		TestTrue(TEXT("K2.InterfaceMessage.<FunctionName> should require InterfaceClassPath metadata."), ContainsNameValue(InterfaceMessageContract->RequiredMetadataKeys, TEXT("InterfaceClassPath")));
 		TestTrue(TEXT("K2.InterfaceMessage.<FunctionName> notes should mention UK2Node_Message."), InterfaceMessageContract->Notes.Contains(TEXT("UK2Node_Message")));
+	}
+
+	const FVergilSupportedDescriptorContract* const ClassCastContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.ClassCast"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.ClassCast."), ClassCastContract);
+	if (ClassCastContract != nullptr)
+	{
+		TestEqual(TEXT("K2.ClassCast should report exact-match descriptor inspection."), ClassCastContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.ClassCast should require TargetClassPath metadata."), ContainsNameValue(ClassCastContract->RequiredMetadataKeys, TEXT("TargetClassPath")));
+		TestTrue(TEXT("K2.ClassCast notes should mention UK2Node_ClassDynamicCast."), ClassCastContract->Notes.Contains(TEXT("UK2Node_ClassDynamicCast")));
+	}
+
+	const FVergilSupportedDescriptorContract* const GetClassDefaultsContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.GetClassDefaults"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.GetClassDefaults."), GetClassDefaultsContract);
+	if (GetClassDefaultsContract != nullptr)
+	{
+		TestEqual(TEXT("K2.GetClassDefaults should report exact-match descriptor inspection."), GetClassDefaultsContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.GetClassDefaults should require ClassPath metadata."), ContainsNameValue(GetClassDefaultsContract->RequiredMetadataKeys, TEXT("ClassPath")));
+		TestTrue(TEXT("K2.GetClassDefaults notes should mention UK2Node_GetClassDefaults."), GetClassDefaultsContract->Notes.Contains(TEXT("UK2Node_GetClassDefaults")));
+	}
+
+	const FVergilSupportedDescriptorContract* const LoadAssetContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.LoadAsset"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.LoadAsset."), LoadAssetContract);
+	if (LoadAssetContract != nullptr)
+	{
+		TestEqual(TEXT("K2.LoadAsset should report exact-match descriptor inspection."), LoadAssetContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.LoadAsset should require AssetClassPath metadata."), ContainsNameValue(LoadAssetContract->RequiredMetadataKeys, TEXT("AssetClassPath")));
+		TestFalse(TEXT("K2.LoadAsset should not report UserConstructionScript as a supported graph."), ContainsNameValue(LoadAssetContract->SupportedTargetGraphs, TEXT("UserConstructionScript")));
+	}
+
+	const FVergilSupportedDescriptorContract* const LoadAssetClassContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.LoadAssetClass"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.LoadAssetClass."), LoadAssetClassContract);
+	if (LoadAssetClassContract != nullptr)
+	{
+		TestEqual(TEXT("K2.LoadAssetClass should report exact-match descriptor inspection."), LoadAssetClassContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.LoadAssetClass should require AssetClassPath metadata."), ContainsNameValue(LoadAssetClassContract->RequiredMetadataKeys, TEXT("AssetClassPath")));
+		TestTrue(TEXT("K2.LoadAssetClass notes should mention UK2Node_LoadAssetClass."), LoadAssetClassContract->Notes.Contains(TEXT("UK2Node_LoadAssetClass")));
+	}
+
+	const FVergilSupportedDescriptorContract* const LoadAssetsContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.LoadAssets"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.LoadAssets."), LoadAssetsContract);
+	if (LoadAssetsContract != nullptr)
+	{
+		TestEqual(TEXT("K2.LoadAssets should report exact-match descriptor inspection."), LoadAssetsContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.LoadAssets should require AssetClassPath metadata."), ContainsNameValue(LoadAssetsContract->RequiredMetadataKeys, TEXT("AssetClassPath")));
+		TestTrue(TEXT("K2.LoadAssets notes should mention UK2Node_LoadAssets."), LoadAssetsContract->Notes.Contains(TEXT("UK2Node_LoadAssets")));
+	}
+
+	const FVergilSupportedDescriptorContract* const ConvertAssetContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.ConvertAsset"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.ConvertAsset."), ConvertAssetContract);
+	if (ConvertAssetContract != nullptr)
+	{
+		TestEqual(TEXT("K2.ConvertAsset should report exact-match descriptor inspection."), ConvertAssetContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestEqual(TEXT("K2.ConvertAsset should not require metadata."), ConvertAssetContract->RequiredMetadataKeys.Num(), 0);
+		TestTrue(TEXT("K2.ConvertAsset notes should mention UK2Node_ConvertAsset."), ConvertAssetContract->Notes.Contains(TEXT("UK2Node_ConvertAsset")));
 	}
 
 	const FVergilSupportedDescriptorContract* const CommentContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("any non-empty descriptor"));

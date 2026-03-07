@@ -143,6 +143,7 @@ namespace
 	TArray<FVergilSupportedDescriptorContract> BuildSupportedDescriptorContracts()
 	{
 		const TArray<FName> SupportedGraphs = BuildSupportedTargetGraphs();
+		const TArray<FName> EventGraphOnly = { TEXT("EventGraph") };
 
 		return {
 			MakeDescriptorContract(
@@ -187,6 +188,48 @@ namespace
 				SupportedGraphs,
 				{ TEXT("InterfaceClassPath") },
 				TEXT("InterfaceClassPath must resolve to a UInterface-derived class and is normalized during symbol/type resolution. Under UE_5.7 this lowers to UK2Node_Message bound against the interface function owner, exposing the object-typed self/Target pin and the engine's no-op-if-unimplemented message semantics.")),
+			MakeDescriptorContract(
+				TEXT("K2.ClassCast"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{ TEXT("TargetClassPath") },
+				TEXT("TargetClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_ClassDynamicCast and preserves pure versus impure class-cast parity from the authored exec-pin surface.")),
+			MakeDescriptorContract(
+				TEXT("K2.GetClassDefaults"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{ TEXT("ClassPath") },
+				TEXT("ClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_GetClassDefaults with property-output pins sourced deterministically from the metadata-selected class; the dynamic Class pin is intentionally not part of the authored contract.")),
+			MakeDescriptorContract(
+				TEXT("K2.LoadAsset"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				EventGraphOnly,
+				{ TEXT("AssetClassPath") },
+				TEXT("AssetClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_LoadAsset with the latent Execute, Then, Completed, Asset, and Object surface. The Asset input pin is conformed to the metadata-selected soft-object type, while Object intentionally stays on the node's native UObject result family so the engine expansion remains compile-safe.")),
+			MakeDescriptorContract(
+				TEXT("K2.LoadAssetClass"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				EventGraphOnly,
+				{ TEXT("AssetClassPath") },
+				TEXT("AssetClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_LoadAssetClass with the latent Execute, Then, Completed, AssetClass, and Class surface, and the input/output pins are conformed to the metadata-selected class type.")),
+			MakeDescriptorContract(
+				TEXT("K2.LoadAssets"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				EventGraphOnly,
+				{ TEXT("AssetClassPath") },
+				TEXT("AssetClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_LoadAssets with the latent Execute, Then, Completed, Assets, and Objects surface. The Assets input array element type is conformed to the metadata-selected soft-object type, while Objects intentionally stays on the node's native UObject array-result family so the engine expansion remains compile-safe.")),
+			MakeDescriptorContract(
+				TEXT("K2.ConvertAsset"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Under UE_5.7 this lowers to UK2Node_ConvertAsset with the deterministic wildcard-free supported surface Input and Output. Type promotion comes from connected hard or soft object/class references rather than authored metadata.")),
 			MakeDescriptorContract(
 				TEXT("K2.VarGet.<VariableName>"),
 				EVergilDescriptorMatchKind::Prefix,
