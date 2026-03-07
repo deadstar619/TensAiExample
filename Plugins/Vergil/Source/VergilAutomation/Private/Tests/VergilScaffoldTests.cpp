@@ -1875,6 +1875,55 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilVariableDefinition FloatVariable;
+		FloatVariable.Name = TEXT("FloatValue");
+		FloatVariable.Type.PinCategory = TEXT("float");
+
+		FVergilGraphNode GetterNode;
+		GetterNode.Id = FGuid::NewGuid();
+		GetterNode.Kind = EVergilNodeKind::VariableGet;
+		GetterNode.Descriptor = TEXT("K2.VarGet.FloatValue");
+
+		FVergilGraphPin GetterExec;
+		GetterExec.Id = FGuid::NewGuid();
+		GetterExec.Name = TEXT("Execute");
+		GetterExec.Direction = EVergilPinDirection::Input;
+		GetterExec.bIsExec = true;
+		GetterNode.Pins.Add(GetterExec);
+
+		FVergilGraphPin GetterThen;
+		GetterThen.Id = FGuid::NewGuid();
+		GetterThen.Name = TEXT("Then");
+		GetterThen.Direction = EVergilPinDirection::Output;
+		GetterThen.bIsExec = true;
+		GetterNode.Pins.Add(GetterThen);
+
+		FVergilGraphPin GetterElse;
+		GetterElse.Id = FGuid::NewGuid();
+		GetterElse.Name = TEXT("Else");
+		GetterElse.Direction = EVergilPinDirection::Output;
+		GetterElse.bIsExec = true;
+		GetterNode.Pins.Add(GetterElse);
+
+		FVergilGraphPin GetterValue;
+		GetterValue.Id = FGuid::NewGuid();
+		GetterValue.Name = TEXT("FloatValue");
+		GetterValue.Direction = EVergilPinDirection::Output;
+		GetterNode.Pins.Add(GetterValue);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidVariableGetterVariant");
+		Request.Document.Variables.Add(FloatVariable);
+		Request.Document.Nodes.Add(GetterNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Unsupported impure variable getter types should fail compilation."), Result.bSucceeded);
+		TestEqual(TEXT("Unsupported impure variable getter types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Unsupported impure variable getter types should report the dedicated diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedVariableGetVariant")));
+	}
+
+	{
 		FVergilFunctionDefinition PureFunction;
 		PureFunction.Name = TEXT("ComputeLocalResult");
 		PureFunction.bPure = true;
@@ -6613,6 +6662,61 @@ bool FVergilCommandPlanValidationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Unsupported select index categories should emit the dedicated preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSelectIndexTypeCombination")));
 	}
 
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for impure variable getter preflight coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FEdGraphPinType FloatType;
+		FloatType.PinCategory = UEdGraphSchema_K2::PC_Real;
+		FloatType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+		TestTrue(TEXT("FloatValue member variable should be added for impure variable getter validation."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("FloatValue"), FloatType, TEXT("1.0")));
+
+		FVergilCompilerCommand InvalidGetterCommand;
+		InvalidGetterCommand.Type = EVergilCommandType::AddNode;
+		InvalidGetterCommand.GraphName = TEXT("EventGraph");
+		InvalidGetterCommand.NodeId = FGuid::NewGuid();
+		InvalidGetterCommand.Name = TEXT("Vergil.K2.VariableGet");
+		InvalidGetterCommand.SecondaryName = TEXT("FloatValue");
+
+		FVergilPlannedPin ExecutePin;
+		ExecutePin.PinId = FGuid::NewGuid();
+		ExecutePin.Name = TEXT("Execute");
+		ExecutePin.bIsInput = true;
+		ExecutePin.bIsExec = true;
+		InvalidGetterCommand.PlannedPins.Add(ExecutePin);
+
+		FVergilPlannedPin ThenPin;
+		ThenPin.PinId = FGuid::NewGuid();
+		ThenPin.Name = TEXT("Then");
+		ThenPin.bIsInput = false;
+		ThenPin.bIsExec = true;
+		InvalidGetterCommand.PlannedPins.Add(ThenPin);
+
+		FVergilPlannedPin ElsePin;
+		ElsePin.PinId = FGuid::NewGuid();
+		ElsePin.Name = TEXT("Else");
+		ElsePin.bIsInput = false;
+		ElsePin.bIsExec = true;
+		InvalidGetterCommand.PlannedPins.Add(ElsePin);
+
+		FVergilPlannedPin ValuePin;
+		ValuePin.PinId = FGuid::NewGuid();
+		ValuePin.Name = TEXT("FloatValue");
+		ValuePin.bIsInput = false;
+		InvalidGetterCommand.PlannedPins.Add(ValuePin);
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { InvalidGetterCommand });
+
+		TestFalse(TEXT("Unsupported impure variable getter plans should fail command-plan validation."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported impure variable getter plans should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Unsupported impure variable getter plans should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Unsupported impure variable getter plans should emit the dedicated preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedVariableGetVariant")));
+	}
+
 	return true;
 }
 
@@ -6965,6 +7069,320 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilPureDataFlowExecutionTest,
 	"Vergil.Scaffold.PureDataFlowExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilVariableGetterVariantsExecutionTest,
+	"Vergil.Scaffold.VariableGetterVariantsExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilVariableGetterVariantsExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("TestFlag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TestFlag"), BoolType, TEXT("true")));
+	TestTrue(TEXT("StoredFlag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("StoredFlag"), BoolType, TEXT("false")));
+
+	FEdGraphPinType ActorType;
+	ActorType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	ActorType.PinSubCategoryObject = AActor::StaticClass();
+	TestTrue(TEXT("TargetActor member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TargetActor"), ActorType, FString()));
+	TestTrue(TEXT("StoredActor member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("StoredActor"), ActorType, FString()));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThen;
+	BeginPlayThen.Id = FGuid::NewGuid();
+	BeginPlayThen.Name = TEXT("Then");
+	BeginPlayThen.Direction = EVergilPinDirection::Output;
+	BeginPlayThen.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThen);
+
+	FVergilGraphNode SequenceNode;
+	SequenceNode.Id = FGuid::NewGuid();
+	SequenceNode.Kind = EVergilNodeKind::Custom;
+	SequenceNode.Descriptor = TEXT("K2.Sequence");
+	SequenceNode.Position = FVector2D(260.0f, 0.0f);
+
+	FVergilGraphPin SequenceExec;
+	SequenceExec.Id = FGuid::NewGuid();
+	SequenceExec.Name = TEXT("Execute");
+	SequenceExec.Direction = EVergilPinDirection::Input;
+	SequenceExec.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceExec);
+
+	FVergilGraphPin SequenceThen0;
+	SequenceThen0.Id = FGuid::NewGuid();
+	SequenceThen0.Name = TEXT("Then_0");
+	SequenceThen0.Direction = EVergilPinDirection::Output;
+	SequenceThen0.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceThen0);
+
+	FVergilGraphPin SequenceThen1;
+	SequenceThen1.Id = FGuid::NewGuid();
+	SequenceThen1.Name = TEXT("Then_1");
+	SequenceThen1.Direction = EVergilPinDirection::Output;
+	SequenceThen1.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceThen1);
+
+	FVergilGraphNode BoolGetterNode;
+	BoolGetterNode.Id = FGuid::NewGuid();
+	BoolGetterNode.Kind = EVergilNodeKind::VariableGet;
+	BoolGetterNode.Descriptor = TEXT("K2.VarGet.TestFlag");
+	BoolGetterNode.Position = FVector2D(560.0f, -180.0f);
+
+	FVergilGraphPin BoolGetterExec;
+	BoolGetterExec.Id = FGuid::NewGuid();
+	BoolGetterExec.Name = TEXT("Execute");
+	BoolGetterExec.Direction = EVergilPinDirection::Input;
+	BoolGetterExec.bIsExec = true;
+	BoolGetterNode.Pins.Add(BoolGetterExec);
+
+	FVergilGraphPin BoolGetterThen;
+	BoolGetterThen.Id = FGuid::NewGuid();
+	BoolGetterThen.Name = TEXT("Then");
+	BoolGetterThen.Direction = EVergilPinDirection::Output;
+	BoolGetterThen.bIsExec = true;
+	BoolGetterNode.Pins.Add(BoolGetterThen);
+
+	FVergilGraphPin BoolGetterElse;
+	BoolGetterElse.Id = FGuid::NewGuid();
+	BoolGetterElse.Name = TEXT("Else");
+	BoolGetterElse.Direction = EVergilPinDirection::Output;
+	BoolGetterElse.bIsExec = true;
+	BoolGetterNode.Pins.Add(BoolGetterElse);
+
+	FVergilGraphPin BoolGetterValue;
+	BoolGetterValue.Id = FGuid::NewGuid();
+	BoolGetterValue.Name = TEXT("TestFlag");
+	BoolGetterValue.Direction = EVergilPinDirection::Output;
+	BoolGetterNode.Pins.Add(BoolGetterValue);
+
+	FVergilGraphNode BoolSetterNode;
+	BoolSetterNode.Id = FGuid::NewGuid();
+	BoolSetterNode.Kind = EVergilNodeKind::VariableSet;
+	BoolSetterNode.Descriptor = TEXT("K2.VarSet.StoredFlag");
+	BoolSetterNode.Position = FVector2D(900.0f, -180.0f);
+
+	FVergilGraphPin BoolSetterExec;
+	BoolSetterExec.Id = FGuid::NewGuid();
+	BoolSetterExec.Name = TEXT("Execute");
+	BoolSetterExec.Direction = EVergilPinDirection::Input;
+	BoolSetterExec.bIsExec = true;
+	BoolSetterNode.Pins.Add(BoolSetterExec);
+
+	FVergilGraphPin BoolSetterValue;
+	BoolSetterValue.Id = FGuid::NewGuid();
+	BoolSetterValue.Name = TEXT("StoredFlag");
+	BoolSetterValue.Direction = EVergilPinDirection::Input;
+	BoolSetterNode.Pins.Add(BoolSetterValue);
+
+	FVergilGraphNode ObjectGetterNode;
+	ObjectGetterNode.Id = FGuid::NewGuid();
+	ObjectGetterNode.Kind = EVergilNodeKind::VariableGet;
+	ObjectGetterNode.Descriptor = TEXT("K2.VarGet.TargetActor");
+	ObjectGetterNode.Position = FVector2D(560.0f, 180.0f);
+
+	FVergilGraphPin ObjectGetterExec;
+	ObjectGetterExec.Id = FGuid::NewGuid();
+	ObjectGetterExec.Name = TEXT("Execute");
+	ObjectGetterExec.Direction = EVergilPinDirection::Input;
+	ObjectGetterExec.bIsExec = true;
+	ObjectGetterNode.Pins.Add(ObjectGetterExec);
+
+	FVergilGraphPin ObjectGetterThen;
+	ObjectGetterThen.Id = FGuid::NewGuid();
+	ObjectGetterThen.Name = TEXT("Then");
+	ObjectGetterThen.Direction = EVergilPinDirection::Output;
+	ObjectGetterThen.bIsExec = true;
+	ObjectGetterNode.Pins.Add(ObjectGetterThen);
+
+	FVergilGraphPin ObjectGetterElse;
+	ObjectGetterElse.Id = FGuid::NewGuid();
+	ObjectGetterElse.Name = TEXT("Else");
+	ObjectGetterElse.Direction = EVergilPinDirection::Output;
+	ObjectGetterElse.bIsExec = true;
+	ObjectGetterNode.Pins.Add(ObjectGetterElse);
+
+	FVergilGraphPin ObjectGetterValue;
+	ObjectGetterValue.Id = FGuid::NewGuid();
+	ObjectGetterValue.Name = TEXT("TargetActor");
+	ObjectGetterValue.Direction = EVergilPinDirection::Output;
+	ObjectGetterNode.Pins.Add(ObjectGetterValue);
+
+	FVergilGraphNode ObjectSetterNode;
+	ObjectSetterNode.Id = FGuid::NewGuid();
+	ObjectSetterNode.Kind = EVergilNodeKind::VariableSet;
+	ObjectSetterNode.Descriptor = TEXT("K2.VarSet.StoredActor");
+	ObjectSetterNode.Position = FVector2D(900.0f, 180.0f);
+
+	FVergilGraphPin ObjectSetterExec;
+	ObjectSetterExec.Id = FGuid::NewGuid();
+	ObjectSetterExec.Name = TEXT("Execute");
+	ObjectSetterExec.Direction = EVergilPinDirection::Input;
+	ObjectSetterExec.bIsExec = true;
+	ObjectSetterNode.Pins.Add(ObjectSetterExec);
+
+	FVergilGraphPin ObjectSetterValue;
+	ObjectSetterValue.Id = FGuid::NewGuid();
+	ObjectSetterValue.Name = TEXT("StoredActor");
+	ObjectSetterValue.Direction = EVergilPinDirection::Input;
+	ObjectSetterNode.Pins.Add(ObjectSetterValue);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilVariableGetterVariants");
+	Document.Nodes = { BeginPlayNode, SequenceNode, BoolGetterNode, BoolSetterNode, ObjectGetterNode, ObjectSetterNode };
+
+	FVergilGraphEdge EventToSequence;
+	EventToSequence.Id = FGuid::NewGuid();
+	EventToSequence.SourceNodeId = BeginPlayNode.Id;
+	EventToSequence.SourcePinId = BeginPlayThen.Id;
+	EventToSequence.TargetNodeId = SequenceNode.Id;
+	EventToSequence.TargetPinId = SequenceExec.Id;
+	Document.Edges.Add(EventToSequence);
+
+	FVergilGraphEdge SequenceToBoolGetter;
+	SequenceToBoolGetter.Id = FGuid::NewGuid();
+	SequenceToBoolGetter.SourceNodeId = SequenceNode.Id;
+	SequenceToBoolGetter.SourcePinId = SequenceThen0.Id;
+	SequenceToBoolGetter.TargetNodeId = BoolGetterNode.Id;
+	SequenceToBoolGetter.TargetPinId = BoolGetterExec.Id;
+	Document.Edges.Add(SequenceToBoolGetter);
+
+	FVergilGraphEdge BoolGetterToBoolSetterExec;
+	BoolGetterToBoolSetterExec.Id = FGuid::NewGuid();
+	BoolGetterToBoolSetterExec.SourceNodeId = BoolGetterNode.Id;
+	BoolGetterToBoolSetterExec.SourcePinId = BoolGetterThen.Id;
+	BoolGetterToBoolSetterExec.TargetNodeId = BoolSetterNode.Id;
+	BoolGetterToBoolSetterExec.TargetPinId = BoolSetterExec.Id;
+	Document.Edges.Add(BoolGetterToBoolSetterExec);
+
+	FVergilGraphEdge BoolGetterToBoolSetterValue;
+	BoolGetterToBoolSetterValue.Id = FGuid::NewGuid();
+	BoolGetterToBoolSetterValue.SourceNodeId = BoolGetterNode.Id;
+	BoolGetterToBoolSetterValue.SourcePinId = BoolGetterValue.Id;
+	BoolGetterToBoolSetterValue.TargetNodeId = BoolSetterNode.Id;
+	BoolGetterToBoolSetterValue.TargetPinId = BoolSetterValue.Id;
+	Document.Edges.Add(BoolGetterToBoolSetterValue);
+
+	FVergilGraphEdge SequenceToObjectGetter;
+	SequenceToObjectGetter.Id = FGuid::NewGuid();
+	SequenceToObjectGetter.SourceNodeId = SequenceNode.Id;
+	SequenceToObjectGetter.SourcePinId = SequenceThen1.Id;
+	SequenceToObjectGetter.TargetNodeId = ObjectGetterNode.Id;
+	SequenceToObjectGetter.TargetPinId = ObjectGetterExec.Id;
+	Document.Edges.Add(SequenceToObjectGetter);
+
+	FVergilGraphEdge ObjectGetterToObjectSetterExec;
+	ObjectGetterToObjectSetterExec.Id = FGuid::NewGuid();
+	ObjectGetterToObjectSetterExec.SourceNodeId = ObjectGetterNode.Id;
+	ObjectGetterToObjectSetterExec.SourcePinId = ObjectGetterThen.Id;
+	ObjectGetterToObjectSetterExec.TargetNodeId = ObjectSetterNode.Id;
+	ObjectGetterToObjectSetterExec.TargetPinId = ObjectSetterExec.Id;
+	Document.Edges.Add(ObjectGetterToObjectSetterExec);
+
+	FVergilGraphEdge ObjectGetterToObjectSetterValue;
+	ObjectGetterToObjectSetterValue.Id = FGuid::NewGuid();
+	ObjectGetterToObjectSetterValue.SourceNodeId = ObjectGetterNode.Id;
+	ObjectGetterToObjectSetterValue.SourcePinId = ObjectGetterValue.Id;
+	ObjectGetterToObjectSetterValue.TargetNodeId = ObjectSetterNode.Id;
+	ObjectGetterToObjectSetterValue.TargetPinId = ObjectSetterValue.Id;
+	Document.Edges.Add(ObjectGetterToObjectSetterValue);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Variable getter variants document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Variable getter variants document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Variable getter variants document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after variable getter variant execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_ExecutionSequence* const SequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(EventGraph, SequenceNode.Id);
+	UK2Node_VariableGet* const BoolGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, BoolGetterNode.Id);
+	UK2Node_VariableSet* const BoolSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, BoolSetterNode.Id);
+	UK2Node_VariableGet* const ObjectGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, ObjectGetterNode.Id);
+	UK2Node_VariableSet* const ObjectSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, ObjectSetterNode.Id);
+
+	TestNotNull(TEXT("BeginPlay event node should exist."), EventNode);
+	TestNotNull(TEXT("Sequence node should exist."), SequenceGraphNode);
+	TestNotNull(TEXT("Bool getter node should exist."), BoolGetterGraphNode);
+	TestNotNull(TEXT("Bool setter node should exist."), BoolSetterGraphNode);
+	TestNotNull(TEXT("Object getter node should exist."), ObjectGetterGraphNode);
+	TestNotNull(TEXT("Object setter node should exist."), ObjectSetterGraphNode);
+	if (EventNode == nullptr
+		|| SequenceGraphNode == nullptr
+		|| BoolGetterGraphNode == nullptr
+		|| BoolSetterGraphNode == nullptr
+		|| ObjectGetterGraphNode == nullptr
+		|| ObjectSetterGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SequenceExecPin = SequenceGraphNode->GetExecPin();
+	UEdGraphPin* const SequenceThen0Pin = SequenceGraphNode->FindPin(TEXT("Then_0"));
+	UEdGraphPin* const SequenceThen1Pin = SequenceGraphNode->FindPin(TEXT("Then_1"));
+
+	UEdGraphPin* const BoolGetterExecPin = BoolGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const BoolGetterThenPin = BoolGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const BoolGetterElsePin = BoolGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Else);
+	UEdGraphPin* const BoolGetterValuePin = BoolGetterGraphNode->FindPin(TEXT("TestFlag"));
+	UEdGraphPin* const BoolSetterExecPin = BoolSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const BoolSetterValuePin = BoolSetterGraphNode->FindPin(TEXT("StoredFlag"));
+
+	UEdGraphPin* const ObjectGetterExecPin = ObjectGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const ObjectGetterThenPin = ObjectGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const ObjectGetterElsePin = ObjectGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Else);
+	UEdGraphPin* const ObjectGetterValuePin = ObjectGetterGraphNode->FindPin(TEXT("TargetActor"));
+	UEdGraphPin* const ObjectSetterExecPin = ObjectSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const ObjectSetterValuePin = ObjectSetterGraphNode->FindPin(TEXT("StoredActor"));
+
+	TestTrue(TEXT("BeginPlay should drive the sequence node."), EventThenPin != nullptr && EventThenPin->LinkedTo.Contains(SequenceExecPin));
+
+	TestFalse(TEXT("Bool variable getter should be impure under the branch variant."), BoolGetterGraphNode->IsNodePure());
+	TestTrue(TEXT("Bool getter should expose Execute."), BoolGetterExecPin != nullptr);
+	TestTrue(TEXT("Bool getter should expose Then and Else exec outputs."), BoolGetterThenPin != nullptr && BoolGetterElsePin != nullptr);
+	TestEqual(TEXT("Bool getter Then pin should use the UE_5.7 True label."), BoolGetterThenPin != nullptr ? BoolGetterThenPin->PinFriendlyName.ToString() : FString(), FString(TEXT("True")));
+	TestEqual(TEXT("Bool getter Else pin should use the UE_5.7 False label."), BoolGetterElsePin != nullptr ? BoolGetterElsePin->PinFriendlyName.ToString() : FString(), FString(TEXT("False")));
+	TestTrue(TEXT("Sequence Then_0 should drive the bool getter."), SequenceThen0Pin != nullptr && SequenceThen0Pin->LinkedTo.Contains(BoolGetterExecPin));
+	TestTrue(TEXT("Bool getter Then should drive the bool setter."), BoolGetterThenPin != nullptr && BoolGetterThenPin->LinkedTo.Contains(BoolSetterExecPin));
+	TestTrue(TEXT("Bool getter value should feed the bool setter input."), BoolGetterValuePin != nullptr && BoolGetterValuePin->LinkedTo.Contains(BoolSetterValuePin));
+
+	TestFalse(TEXT("Object variable getter should be impure under the validated-get variant."), ObjectGetterGraphNode->IsNodePure());
+	TestTrue(TEXT("Object getter should expose Execute."), ObjectGetterExecPin != nullptr);
+	TestTrue(TEXT("Object getter should expose Then and Else exec outputs."), ObjectGetterThenPin != nullptr && ObjectGetterElsePin != nullptr);
+	TestEqual(TEXT("Object getter Then pin should use the UE_5.7 Is Valid label."), ObjectGetterThenPin != nullptr ? ObjectGetterThenPin->PinFriendlyName.ToString() : FString(), FString(TEXT("Is Valid")));
+	TestEqual(TEXT("Object getter Else pin should use the UE_5.7 Is Not Valid label."), ObjectGetterElsePin != nullptr ? ObjectGetterElsePin->PinFriendlyName.ToString() : FString(), FString(TEXT("Is Not Valid")));
+	TestTrue(TEXT("Sequence Then_1 should drive the object getter."), SequenceThen1Pin != nullptr && SequenceThen1Pin->LinkedTo.Contains(ObjectGetterExecPin));
+	TestTrue(TEXT("Object getter Then should drive the object setter."), ObjectGetterThenPin != nullptr && ObjectGetterThenPin->LinkedTo.Contains(ObjectSetterExecPin));
+	TestTrue(TEXT("Object getter value should feed the object setter input."), ObjectGetterValuePin != nullptr && ObjectGetterValuePin->LinkedTo.Contains(ObjectSetterValuePin));
+
+	return true;
+}
 
 bool FVergilPureDataFlowExecutionTest::RunTest(const FString& Parameters)
 {

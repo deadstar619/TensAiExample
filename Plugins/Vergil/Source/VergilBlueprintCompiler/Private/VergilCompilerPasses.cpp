@@ -3,6 +3,7 @@
 #include "Algo/AnyOf.h"
 #include "Components/ActorComponent.h"
 #include "EdGraph/EdGraph.h"
+#include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectGlobals.h"
@@ -477,9 +478,17 @@ namespace
 	struct FVergilDocumentSymbolTables
 	{
 		TSet<FName> VariableNames;
+		TMap<FName, FVergilVariableTypeReference> VariableTypes;
 		TSet<FName> FunctionNames;
 		TSet<FName> DispatcherNames;
 		TMap<FName, int32> CustomEventCounts;
+	};
+
+	enum class EVergilVariableGetVariant : uint8
+	{
+		PureOnly,
+		BooleanBranch,
+		ValidatedObject
 	};
 
 	bool SetNormalizedMetadataValue(TMap<FName, FString>& Metadata, const FName Key, const FString& Value)
@@ -498,6 +507,160 @@ namespace
 
 		Metadata.Add(Key, TrimmedValue);
 		return true;
+	}
+
+	EVergilVariableGetVariant GetVariableGetVariantFromCategory(const FName PinCategory, const EVergilVariableContainerType ContainerType)
+	{
+		if (ContainerType != EVergilVariableContainerType::None)
+		{
+			return EVergilVariableGetVariant::PureOnly;
+		}
+
+		if (PinCategory == UEdGraphSchema_K2::PC_Boolean)
+		{
+			return EVergilVariableGetVariant::BooleanBranch;
+		}
+
+		if (PinCategory == UEdGraphSchema_K2::PC_Object
+			|| PinCategory == UEdGraphSchema_K2::PC_Class
+			|| PinCategory == UEdGraphSchema_K2::PC_SoftObject
+			|| PinCategory == UEdGraphSchema_K2::PC_SoftClass)
+		{
+			return EVergilVariableGetVariant::ValidatedObject;
+		}
+
+		return EVergilVariableGetVariant::PureOnly;
+	}
+
+	EVergilVariableGetVariant GetVariableGetVariantForType(const FVergilVariableTypeReference& Type)
+	{
+		return GetVariableGetVariantFromCategory(Type.PinCategory, Type.ContainerType);
+	}
+
+	EVergilVariableGetVariant GetVariableGetVariantForProperty(const FProperty* Property)
+	{
+		if (Property == nullptr)
+		{
+			return EVergilVariableGetVariant::PureOnly;
+		}
+
+		FEdGraphPinType PinType;
+		GetDefault<UEdGraphSchema_K2>()->ConvertPropertyToPinType(Property, PinType);
+		const EVergilVariableContainerType ContainerType = PinType.ContainerType == EPinContainerType::Array
+			? EVergilVariableContainerType::Array
+			: PinType.ContainerType == EPinContainerType::Set
+				? EVergilVariableContainerType::Set
+				: PinType.ContainerType == EPinContainerType::Map
+					? EVergilVariableContainerType::Map
+					: EVergilVariableContainerType::None;
+		return GetVariableGetVariantFromCategory(PinType.PinCategory, ContainerType);
+	}
+
+	bool HasVariableGetExecPins(const FVergilGraphNode& Node)
+	{
+		return Node.Pins.ContainsByPredicate([](const FVergilGraphPin& Pin)
+		{
+			return Pin.bIsExec;
+		});
+	}
+
+	bool ValidateImpureVariableGetPinShape(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
+	{
+		if (!HasVariableGetExecPins(Node))
+		{
+			return true;
+		}
+
+		bool bHasExecuteInput = false;
+		bool bHasThenOutput = false;
+		bool bHasElseOutput = false;
+		int32 ExecPinCount = 0;
+		bool bShapeValid = true;
+
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			if (!Pin.bIsExec)
+			{
+				continue;
+			}
+
+			++ExecPinCount;
+			if (Pin.Direction == EVergilPinDirection::Input && Pin.Name == UEdGraphSchema_K2::PN_Execute)
+			{
+				bHasExecuteInput = true;
+				continue;
+			}
+
+			if (Pin.Direction == EVergilPinDirection::Output && Pin.Name == UEdGraphSchema_K2::PN_Then)
+			{
+				bHasThenOutput = true;
+				continue;
+			}
+
+			if (Pin.Direction == EVergilPinDirection::Output && Pin.Name == UEdGraphSchema_K2::PN_Else)
+			{
+				bHasElseOutput = true;
+				continue;
+			}
+
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("InvalidVariableGetVariantPins"),
+				FString::Printf(
+					TEXT("Impure variable getter nodes under UE_5.7 only support exec pins Execute, Then, and Else; found '%s'."),
+					*Pin.Name.ToString()),
+				Node.Id);
+			bShapeValid = false;
+		}
+
+		if (bHasExecuteInput && bHasThenOutput && bHasElseOutput && ExecPinCount == 3)
+		{
+			return bShapeValid;
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("InvalidVariableGetVariantPins"),
+			TEXT("Impure variable getter nodes under UE_5.7 must expose exactly Execute input plus Then and Else exec outputs."),
+			Node.Id);
+		return false;
+	}
+
+	bool ValidateVariableGetVariant(
+		const FVergilGraphNode& Node,
+		FVergilCompilerContext& Context,
+		const FVergilVariableTypeReference* Type,
+		const FProperty* Property)
+	{
+		if (!Node.Descriptor.ToString().StartsWith(TEXT("K2.VarGet.")))
+		{
+			return true;
+		}
+
+		if (!ValidateImpureVariableGetPinShape(Node, Context))
+		{
+			return false;
+		}
+
+		if (!HasVariableGetExecPins(Node))
+		{
+			return true;
+		}
+
+		const EVergilVariableGetVariant SupportedVariant = Type != nullptr
+			? GetVariableGetVariantForType(*Type)
+			: GetVariableGetVariantForProperty(Property);
+		if (SupportedVariant != EVergilVariableGetVariant::PureOnly)
+		{
+			return true;
+		}
+
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("UnsupportedVariableGetVariant"),
+			TEXT("Impure variable getters under UE_5.7 are supported only for bool branch getters and object/class/soft reference validated getters."),
+			Node.Id);
+		return false;
 	}
 
 	bool SetNormalizedStringValue(FString& Value, const FString& NewValue)
@@ -1075,6 +1238,7 @@ namespace
 			if (!Variable.Name.IsNone())
 			{
 				SymbolTables.VariableNames.Add(Variable.Name);
+				SymbolTables.VariableTypes.Add(Variable.Name, Variable.Type);
 			}
 		}
 
@@ -1233,6 +1397,7 @@ namespace
 	{
 		const FString VariableNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarGet."));
 		const FString AlternateVariableNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.VarSet."));
+		const bool bIsVariableGet = !VariableNameString.IsEmpty();
 		const FName VariableName = !VariableNameString.IsEmpty()
 			? FName(*VariableNameString)
 			: FName(*AlternateVariableNameString);
@@ -1263,12 +1428,26 @@ namespace
 				return false;
 			}
 
+			if (bIsVariableGet && !ValidateVariableGetVariant(Node, Context, nullptr, Property))
+			{
+				return false;
+			}
+
 			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), Property->GetOwnerClass()->GetPathName());
 			return true;
 		}
 
 		if (SymbolTables.VariableNames.Contains(VariableName))
 		{
+			if (bIsVariableGet)
+			{
+				const FVergilVariableTypeReference* const VariableType = SymbolTables.VariableTypes.Find(VariableName);
+				if (!ValidateVariableGetVariant(Node, Context, VariableType, nullptr))
+				{
+					return false;
+				}
+			}
+
 			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
 			return true;
 		}
@@ -1278,6 +1457,11 @@ namespace
 		{
 			if (FProperty* const Property = FindFProperty<FProperty>(SearchClass, VariableName))
 			{
+				if (bIsVariableGet && !ValidateVariableGetVariant(Node, Context, nullptr, Property))
+				{
+					return false;
+				}
+
 				const UClass* const OwnerClass = Property->GetOwnerClass();
 				if (IsBlueprintSelfClass(Blueprint, OwnerClass))
 				{

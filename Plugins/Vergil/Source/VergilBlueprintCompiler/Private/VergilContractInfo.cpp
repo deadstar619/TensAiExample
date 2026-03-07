@@ -179,7 +179,7 @@ namespace
 				TEXT("VariableGet"),
 				SupportedGraphs,
 				{},
-				TEXT("Optional OwnerClassPath constrains property lookup. Without it, the symbol pass resolves document-authored members first, then existing Blueprint members, then inherited members. Only pure getter shapes are supported; exec pins on variable gets fail explicitly.")),
+				TEXT("Optional OwnerClassPath constrains property lookup. Without it, the symbol pass resolves document-authored members first, then existing Blueprint members, then inherited members. UE_5.7 getter variants now support pure reads, bool branch getters, and validated object/class/soft-reference getters. Impure getter shapes must use Execute, Then, and Else exec pins.")),
 			MakeDescriptorContract(
 				TEXT("K2.VarSet.<VariableName>"),
 				EVergilDescriptorMatchKind::Prefix,

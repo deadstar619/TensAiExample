@@ -319,7 +319,7 @@ Goal:
 Tickets:
 
 - [x] `VGR-5001` Complete pure/impure call parity
-- `VGR-5002` Add remaining variable node variants
+- [x] `VGR-5002` Add remaining variable node variants
 - `VGR-5003` Add common macro-instance families such as `DoOnce` and `FlipFlop`
 - `VGR-5004` Add deterministic `SpawnActor`
 - `VGR-5005` Add timer families beyond current delegate-driven coverage
@@ -343,6 +343,12 @@ Session note for `VGR-5001` (2026-03-07):
 - `K2.Call.*` now resolves against document-authored function definitions and existing Blueprint-local functions before falling back to inherited/native functions, matching the existing variable, delegate, and `K2.CreateDelegate.*` symbol-resolution behavior.
 - Empty-owner `Vergil.K2.Call` execution now resolves Blueprint self functions under `UE_5.7`, and self-owned call nodes bind through `SetSelfMember(...)` for both pure and impure Blueprint functions instead of only parent-class or custom-event targets.
 - `Vergil.Scaffold.SymbolResolutionPass` and `Vergil.Scaffold.SelfFunctionCallExecution` now cover the compiler and editor-apply paths for pure and impure self-function calls.
+
+Session note for `VGR-5002` (2026-03-07):
+
+- `UE_5.7` variable getters now support the remaining built-in variants: bool branch getters plus validated object/class/soft-reference getters, in addition to the existing pure read shape.
+- Compiler symbol resolution, direct command-plan preflight, and editor execution now all reject unsupported impure getter types explicitly instead of falling back to generic pin-registration failures.
+- `Vergil.Scaffold.SymbolResolutionPass`, `Vergil.Scaffold.CommandPlanValidation`, and `Vergil.Scaffold.VariableGetterVariantsExecution` now cover the compiler, direct-command, and editor-apply paths for these getter variants.
 
 ## Milestone 6: Advanced K2 Coverage
 Goal:
@@ -478,11 +484,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5002`
-2. `VGR-7002`
-3. `VGR-5003`
-4. `VGR-5004`
-5. `VGR-8003`
+1. `VGR-7002`
+2. `VGR-5003`
+3. `VGR-5004`
+4. `VGR-8003`
+5. `VGR-5005`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

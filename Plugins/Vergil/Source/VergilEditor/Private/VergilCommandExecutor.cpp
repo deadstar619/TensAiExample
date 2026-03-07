@@ -831,6 +831,48 @@ namespace
 		return *FString::Printf(TEXT("%s_%d_%s"), Prefix, Index, Suffix);
 	}
 
+	enum class EVergilVariableGetVariant : uint8
+	{
+		PureOnly,
+		BooleanBranch,
+		ValidatedObject
+	};
+
+	EVergilVariableGetVariant GetVariableGetVariantFromPinType(const FEdGraphPinType& PinType)
+	{
+		if (PinType.ContainerType != EPinContainerType::None)
+		{
+			return EVergilVariableGetVariant::PureOnly;
+		}
+
+		if (PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
+		{
+			return EVergilVariableGetVariant::BooleanBranch;
+		}
+
+		if (PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+			|| PinType.PinCategory == UEdGraphSchema_K2::PC_Class
+			|| PinType.PinCategory == UEdGraphSchema_K2::PC_SoftObject
+			|| PinType.PinCategory == UEdGraphSchema_K2::PC_SoftClass)
+		{
+			return EVergilVariableGetVariant::ValidatedObject;
+		}
+
+		return EVergilVariableGetVariant::PureOnly;
+	}
+
+	EVergilVariableGetVariant GetVariableGetVariantForProperty(const FProperty* Property)
+	{
+		if (Property == nullptr)
+		{
+			return EVergilVariableGetVariant::PureOnly;
+		}
+
+		FEdGraphPinType PinType;
+		GetDefault<UEdGraphSchema_K2>()->ConvertPropertyToPinType(Property, PinType);
+		return GetVariableGetVariantFromPinType(PinType);
+	}
+
 	bool HasPlannedExecPins(const FVergilCompilerCommand& Command)
 	{
 		for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
@@ -863,6 +905,146 @@ namespace
 		}
 
 		return PinNames;
+	}
+
+	bool ValidateImpureVariableGetPinShape(const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (!HasPlannedExecPins(Command))
+		{
+			return true;
+		}
+
+		bool bHasExecuteInput = false;
+		bool bHasThenOutput = false;
+		bool bHasElseOutput = false;
+		int32 ExecPinCount = 0;
+		bool bShapeValid = true;
+
+		for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+		{
+			if (!PlannedPin.bIsExec)
+			{
+				continue;
+			}
+
+			++ExecPinCount;
+			if (PlannedPin.bIsInput && PlannedPin.Name == UEdGraphSchema_K2::PN_Execute)
+			{
+				bHasExecuteInput = true;
+				continue;
+			}
+
+			if (!PlannedPin.bIsInput && PlannedPin.Name == UEdGraphSchema_K2::PN_Then)
+			{
+				bHasThenOutput = true;
+				continue;
+			}
+
+			if (!PlannedPin.bIsInput && PlannedPin.Name == UEdGraphSchema_K2::PN_Else)
+			{
+				bHasElseOutput = true;
+				continue;
+			}
+
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidVariableGetVariantPins"),
+				FString::Printf(
+					TEXT("Impure variable getter nodes under UE_5.7 only support exec pins Execute, Then, and Else; found '%s'."),
+					*PlannedPin.Name.ToString()),
+				Command.NodeId));
+			bShapeValid = false;
+		}
+
+		if (bHasExecuteInput && bHasThenOutput && bHasElseOutput && ExecPinCount == 3)
+		{
+			return bShapeValid;
+		}
+
+		Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("InvalidVariableGetVariantPins"),
+			TEXT("Impure variable getter nodes under UE_5.7 must expose exactly Execute input plus Then and Else exec outputs."),
+			Command.NodeId));
+		return false;
+	}
+
+	bool ValidateVariableGetVariantSupport(
+		const FVergilCompilerCommand& Command,
+		const FProperty* Property,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (!HasPlannedExecPins(Command))
+		{
+			return true;
+		}
+
+		if (GetVariableGetVariantForProperty(Property) != EVergilVariableGetVariant::PureOnly)
+		{
+			return true;
+		}
+
+		Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("UnsupportedVariableGetVariant"),
+			TEXT("Impure variable getters under UE_5.7 are supported only for bool branch getters and object/class/soft reference validated getters."),
+			Command.NodeId));
+		return false;
+	}
+
+	bool ApplyVariableGetVariantToNode(
+		UK2Node_VariableGet* Node,
+		const FProperty* Property,
+		const FGuid& NodeId,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Node == nullptr)
+		{
+			return false;
+		}
+
+		const EVergilVariableGetVariant SupportedVariant = GetVariableGetVariantForProperty(Property);
+		if (SupportedVariant == EVergilVariableGetVariant::PureOnly)
+		{
+			return true;
+		}
+
+		const EGetNodeVariation DesiredVariation = SupportedVariant == EVergilVariableGetVariant::BooleanBranch
+			? EGetNodeVariation::Branch
+			: EGetNodeVariation::ValidatedObject;
+		FProperty* const VariationProperty = UK2Node_VariableGet::StaticClass()->FindPropertyByName(TEXT("CurrentVariation"));
+		if (VariationProperty == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableGetVariantConfigurationFailed"),
+				TEXT("Unable to configure the UE_5.7 variable getter variation because CurrentVariation was not found."),
+				NodeId));
+			return false;
+		}
+
+		Node->Modify();
+		if (FEnumProperty* const EnumProperty = CastField<FEnumProperty>(VariationProperty))
+		{
+			void* const ValuePtr = EnumProperty->ContainerPtrToValuePtr<void>(Node);
+			EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, static_cast<int64>(DesiredVariation));
+		}
+		else if (FByteProperty* const ByteProperty = CastField<FByteProperty>(VariationProperty))
+		{
+			ByteProperty->SetPropertyValue_InContainer(Node, static_cast<uint8>(DesiredVariation));
+		}
+		else
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("VariableGetVariantConfigurationFailed"),
+				TEXT("Unable to configure the UE_5.7 variable getter variation because CurrentVariation uses an unexpected property type."),
+				NodeId));
+			return false;
+		}
+
+		Node->ReconstructNode();
+		return true;
 	}
 
 	UEdGraphPin* FindMatchingPin(const FVergilCompilerCommand& Command, UEdGraphNode* Node, const FVergilPlannedPin& PlannedPin)
@@ -4097,19 +4279,26 @@ namespace
 				return false;
 			}
 
-			if (HasPlannedExecPins(Command))
+			if (!ValidateImpureVariableGetPinShape(Command, Diagnostics))
 			{
-				Diagnostics.Add(FVergilDiagnostic::Make(
-					EVergilDiagnosticSeverity::Error,
-					TEXT("UnsupportedVariableGetVariant"),
-					TEXT("Impure variable getter execution is not implemented. Provide a pure getter shape with no exec pins."),
-					Command.NodeId));
+				return false;
+			}
+
+			if (!ValidateVariableGetVariantSupport(Command, Property, Diagnostics))
+			{
 				return false;
 			}
 
 			UK2Node_VariableGet* GetNode = NewObject<UK2Node_VariableGet>(Graph);
 			GetNode->SetFromProperty(Property, true, Property->GetOwnerClass());
 			FinalizePlacedNode(Graph, GetNode, Command.Position, Command.NodeId);
+			if (HasPlannedExecPins(Command))
+			{
+				if (!ApplyVariableGetVariantToNode(GetNode, Property, Command.NodeId, Diagnostics))
+				{
+					return false;
+				}
+			}
 			NewNode = GetNode;
 		}
 		else if (Command.Name == TEXT("Vergil.K2.VariableSet"))
@@ -5045,7 +5234,26 @@ namespace
 
 					if (HasPlannedExecPins(Command))
 					{
-						AddValidationError(TEXT("UnsupportedVariableGetVariant"), TEXT("Impure variable getter execution is not implemented. Provide a pure getter shape with no exec pins."), Command.NodeId);
+						if (!ValidateImpureVariableGetPinShape(Command, Diagnostics))
+						{
+							bIsValid = false;
+							break;
+						}
+
+						if (Blueprint != nullptr)
+						{
+							if (FProperty* const Property = ResolveVariableProperty(Blueprint, Command, Diagnostics))
+							{
+								if (!ValidateVariableGetVariantSupport(Command, Property, Diagnostics))
+								{
+									bIsValid = false;
+								}
+							}
+							else
+							{
+								bIsValid = false;
+							}
+						}
 					}
 					break;
 				}
