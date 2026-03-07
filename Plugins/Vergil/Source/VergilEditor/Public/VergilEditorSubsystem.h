@@ -17,6 +17,17 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FVergilCompileRequest MakeCompileRequest(
+		UBlueprint* Blueprint,
+		const FVergilGraphDocument& Document,
+		FName TargetGraphName = TEXT("EventGraph"),
+		bool bAutoLayout = true,
+		bool bGenerateComments = true) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCompileResult CompileRequest(const FVergilCompileRequest& Request, bool bApplyCommands = false) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Vergil")
 	FVergilCompileResult CompileDocument(UBlueprint* Blueprint, const FVergilGraphDocument& Document, bool bAutoLayout = true, bool bGenerateComments = true, bool bApplyCommands = false) const;
 

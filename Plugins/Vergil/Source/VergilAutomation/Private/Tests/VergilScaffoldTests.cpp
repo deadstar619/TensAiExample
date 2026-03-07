@@ -2797,6 +2797,15 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	{
 		return FindNodeCommand(Commands, EVergilCommandType::MoveNode, NodeId);
 	};
+	auto FindMetadataCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId, const FName MetadataKey) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId, MetadataKey](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::SetNodeMetadata
+				&& Command.NodeId == NodeId
+				&& Command.Name == MetadataKey;
+		});
+	};
 
 	const FVergilBlueprintCompilerService CompilerService;
 
@@ -2823,6 +2832,13 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	CommentEnabledRequest.AutoLayout.HorizontalSpacing = 256.0f;
 	CommentEnabledRequest.AutoLayout.VerticalSpacing = 192.0f;
 	CommentEnabledRequest.AutoLayout.CommentPadding = 80.0f;
+	CommentEnabledRequest.CommentGeneration.DefaultWidth = 512.0f;
+	CommentEnabledRequest.CommentGeneration.DefaultHeight = 144.0f;
+	CommentEnabledRequest.CommentGeneration.DefaultFontSize = 24;
+	CommentEnabledRequest.CommentGeneration.DefaultColor = FLinearColor(FColor(0x22, 0x88, 0xCC, 0xFF));
+	CommentEnabledRequest.CommentGeneration.bShowBubbleWhenZoomed = false;
+	CommentEnabledRequest.CommentGeneration.bColorBubble = true;
+	CommentEnabledRequest.CommentGeneration.MoveMode = EVergilCommentMoveMode::NoGroupMovement;
 
 	const FVergilCompileResult CommentEnabledResult = CompilerService.Compile(CommentEnabledRequest);
 	TestTrue(TEXT("Comment/layout post-pass coverage should compile successfully when comments are enabled."), CommentEnabledResult.bSucceeded);
@@ -2831,17 +2847,51 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	const FVergilCompilerCommand* const CommentAddNode = FindNodeCommand(CommentEnabledResult.Commands, EVergilCommandType::AddNode, CommentNode.Id);
 	const FVergilCompilerCommand* const PrimaryMoveNode = FindMoveCommand(CommentEnabledResult.Commands, PrimaryNode.Id);
 	const FVergilCompilerCommand* const CommentMoveNode = FindMoveCommand(CommentEnabledResult.Commands, CommentNode.Id);
+	const FVergilCompilerCommand* const CommentWidthMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("CommentWidth"));
+	const FVergilCompilerCommand* const CommentHeightMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("CommentHeight"));
+	const FVergilCompilerCommand* const CommentFontSizeMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("FontSize"));
+	const FVergilCompilerCommand* const CommentColorMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("CommentColor"));
+	const FVergilCompilerCommand* const CommentBubbleMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("ShowBubbleWhenZoomed"));
+	const FVergilCompilerCommand* const CommentColorBubbleMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("ColorBubble"));
+	const FVergilCompilerCommand* const CommentMoveModeMetadata = FindMetadataCommand(CommentEnabledResult.Commands, CommentNode.Id, TEXT("MoveMode"));
 	TestNotNull(TEXT("Core node lowering should still emit the primary AddNode command."), PrimaryAddNode);
 	TestNotNull(TEXT("The explicit comment post-pass should emit the comment AddNode command when comments are enabled."), CommentAddNode);
 	TestNotNull(TEXT("Auto-layout should emit a MoveNode command for the primary node when the deterministic layout differs from the authored position."), PrimaryMoveNode);
 	TestNotNull(TEXT("Auto-layout should emit a MoveNode command for comment nodes when comments are enabled."), CommentMoveNode);
-	if (PrimaryAddNode == nullptr || CommentAddNode == nullptr || PrimaryMoveNode == nullptr || CommentMoveNode == nullptr)
+	TestNotNull(TEXT("Explicit comment width metadata should still be preserved."), CommentWidthMetadata);
+	TestNotNull(TEXT("Missing comment height metadata should be synthesized from the explicit comment-generation settings."), CommentHeightMetadata);
+	TestNotNull(TEXT("Missing comment font size metadata should be synthesized from the explicit comment-generation settings."), CommentFontSizeMetadata);
+	TestNotNull(TEXT("Missing comment color metadata should be synthesized from the explicit comment-generation settings."), CommentColorMetadata);
+	TestNotNull(TEXT("Missing comment bubble metadata should be synthesized from the explicit comment-generation settings."), CommentBubbleMetadata);
+	TestNotNull(TEXT("Missing comment bubble-color metadata should be synthesized from the explicit comment-generation settings."), CommentColorBubbleMetadata);
+	TestNotNull(TEXT("Missing comment move-mode metadata should be synthesized from the explicit comment-generation settings."), CommentMoveModeMetadata);
+	if (PrimaryAddNode == nullptr
+		|| CommentAddNode == nullptr
+		|| PrimaryMoveNode == nullptr
+		|| CommentMoveNode == nullptr
+		|| CommentWidthMetadata == nullptr
+		|| CommentHeightMetadata == nullptr
+		|| CommentFontSizeMetadata == nullptr
+		|| CommentColorMetadata == nullptr
+		|| CommentBubbleMetadata == nullptr
+		|| CommentColorBubbleMetadata == nullptr
+		|| CommentMoveModeMetadata == nullptr)
 	{
 		return false;
 	}
 
 	TestEqual(TEXT("Primary auto-layout should anchor the first primary node at the requested origin."), PrimaryMoveNode->Position, FVector2D::ZeroVector);
 	TestEqual(TEXT("Comment auto-layout should place comments to the left of the primary layout band using the requested padding."), CommentMoveNode->Position, FVector2D(-500.0f, 0.0f));
+	TestEqual(TEXT("Explicit authored comment width metadata should win over request defaults."), CommentWidthMetadata->StringValue, FString(TEXT("420")));
+
+	float ParsedCommentHeight = 0.0f;
+	TestTrue(TEXT("Synthesized comment height metadata should remain parseable."), LexTryParseString(ParsedCommentHeight, *CommentHeightMetadata->StringValue));
+	TestEqual(TEXT("Synthesized comment height metadata should use the request default."), ParsedCommentHeight, 144.0f);
+	TestEqual(TEXT("Synthesized comment font size metadata should use the request default."), CommentFontSizeMetadata->StringValue, FString(TEXT("24")));
+	TestEqual(TEXT("Synthesized comment color metadata should use the request default."), CommentColorMetadata->StringValue, FString(TEXT("2288CCFF")));
+	TestEqual(TEXT("Synthesized comment bubble metadata should use the request default."), CommentBubbleMetadata->StringValue, FString(TEXT("false")));
+	TestEqual(TEXT("Synthesized comment bubble-color metadata should use the request default."), CommentColorBubbleMetadata->StringValue, FString(TEXT("true")));
+	TestEqual(TEXT("Synthesized comment move-mode metadata should use the request default."), CommentMoveModeMetadata->StringValue, FString(TEXT("NoGroupMovement")));
 
 	const int32 PrimaryAddIndex = CommentEnabledResult.Commands.IndexOfByPredicate([PrimaryNode](const FVergilCompilerCommand& Command)
 	{
@@ -6193,20 +6243,40 @@ bool FVergilCommentExecutionTest::RunTest(const FString& Parameters)
 	CommentNode.Position = FVector2D(128.0f, 96.0f);
 	CommentNode.Metadata.Add(TEXT("CommentText"), TEXT("Vergil applies comments"));
 	CommentNode.Metadata.Add(TEXT("CommentWidth"), TEXT("520"));
-	CommentNode.Metadata.Add(TEXT("CommentHeight"), TEXT("180"));
-	CommentNode.Metadata.Add(TEXT("FontSize"), TEXT("20"));
 
 	FVergilGraphDocument Document;
 	Document.BlueprintPath = TEXT("/Temp/BP_VergilCommentExecution");
 	Document.Nodes.Add(CommentNode);
 
-	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, true, true);
+	FVergilCompileRequest Request = EditorSubsystem->MakeCompileRequest(Blueprint, Document, TEXT("EventGraph"), false, true);
+	TestEqual(TEXT("The explicit editor request builder should seed the UE_5.7 default comment width."), Request.CommentGeneration.DefaultWidth, 400.0f);
+	TestEqual(TEXT("The explicit editor request builder should seed the UE_5.7 default comment height."), Request.CommentGeneration.DefaultHeight, 100.0f);
+	TestEqual(TEXT("The explicit editor request builder should seed the UE_5.7 default comment font size."), Request.CommentGeneration.DefaultFontSize, 18);
+	TestEqual(TEXT("The explicit editor request builder should seed the UE_5.7 default comment move mode."), Request.CommentGeneration.MoveMode, EVergilCommentMoveMode::GroupMovement);
+	TestTrue(TEXT("The explicit editor request builder should seed the UE_5.7 default zoom-bubble visibility."), Request.CommentGeneration.bShowBubbleWhenZoomed);
+	TestFalse(TEXT("The explicit editor request builder should seed the UE_5.7 default bubble-color behavior."), Request.CommentGeneration.bColorBubble);
+
+	Request.CommentGeneration.DefaultHeight = 180.0f;
+	Request.CommentGeneration.DefaultFontSize = 20;
+	Request.CommentGeneration.DefaultColor = FLinearColor(FColor(0x44, 0xAA, 0x66, 0xFF));
+	Request.CommentGeneration.bShowBubbleWhenZoomed = false;
+	Request.CommentGeneration.bColorBubble = true;
+	Request.CommentGeneration.MoveMode = EVergilCommentMoveMode::NoGroupMovement;
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileRequest(Request, true);
 
 	TestTrue(TEXT("Comment document should compile successfully."), Result.bSucceeded);
 	TestTrue(TEXT("Command plan should be applied."), Result.bApplied);
 	TestTrue(TEXT("At least one command should execute."), Result.ExecutedCommandCount > 0);
 	TestTrue(TEXT("Comment planning should emit commands."), Result.Commands.Num() >= 2);
-	TestEqual(TEXT("Planner uses explicit Vergil comment node command."), Result.Commands[1].Name, FName(TEXT("Vergil.Comment")));
+	TestNotNull(
+		TEXT("Planner should still use the explicit Vergil comment node command."),
+		Result.Commands.FindByPredicate([CommentNode](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode
+				&& Command.NodeId == CommentNode.Id
+				&& Command.Name == TEXT("Vergil.Comment");
+		}));
 
 	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
 	TestNotNull(TEXT("Event graph should exist after command execution."), EventGraph);
@@ -6233,8 +6303,12 @@ bool FVergilCommentExecutionTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("Comment text should match metadata."), Comment->NodeComment, FString(TEXT("Vergil applies comments")));
 	TestEqual(TEXT("Comment width should match metadata."), Comment->NodeWidth, 520);
-	TestEqual(TEXT("Comment height should match metadata."), Comment->NodeHeight, 180);
-	TestEqual(TEXT("Comment font size should match metadata."), Comment->FontSize, 20);
+	TestEqual(TEXT("Comment height should match the explicit comment-generation defaults when metadata omits it."), Comment->NodeHeight, 180);
+	TestEqual(TEXT("Comment font size should match the explicit comment-generation defaults when metadata omits it."), Comment->FontSize, 20);
+	TestEqual(TEXT("Comment bubble visibility should match the explicit comment-generation defaults."), static_cast<bool>(Comment->bCommentBubbleVisible_InDetailsPanel), false);
+	TestEqual(TEXT("Comment bubble color usage should match the explicit comment-generation defaults."), static_cast<bool>(Comment->bColorCommentBubble), true);
+	TestEqual(TEXT("Comment move mode should match the explicit comment-generation defaults."), static_cast<int32>(Comment->MoveMode.GetValue()), static_cast<int32>(ECommentBoxMode::NoGroupMovement));
+	TestEqual(TEXT("Comment color should match the explicit comment-generation defaults."), Comment->CommentColor.ToFColor(true), FColor(0x44, 0xAA, 0x66, 0xFF));
 
 	return true;
 }

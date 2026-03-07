@@ -392,7 +392,7 @@ Tickets:
 
 - [x] `VGR-7001` Add document/command/diagnostic inspector tooling
 - [x] `VGR-7002` Add deterministic auto-layout pass API
-- `VGR-7003` Add explicit comment generation pass API
+- [x] `VGR-7003` Add explicit comment generation pass API
 - `VGR-7004` Add document diff and command-plan preview tooling
 - `VGR-7005` Add stronger undo/redo transaction auditing
 - `VGR-7006` Expand developer settings for compiler/layout/validation behavior
@@ -413,6 +413,12 @@ Session note for `VGR-7002` (2026-03-07):
 - `FVergilLayoutPostPass` now emits deterministic `MoveNode` commands instead of acting as a no-op boundary. Primary nodes are laid out into dependency-driven columns and rows, and authored comment nodes are placed into a deterministic left-side band when comment generation is enabled.
 - `FVergilCompileRequest` now carries explicit `AutoLayout` settings for `Origin`, `HorizontalSpacing`, `VerticalSpacing`, and `CommentPadding`, while `UVergilEditorSubsystem` seeds those values from `UVergilDeveloperSettings` so the existing editor-facing compile helpers pick up project defaults automatically.
 - `Vergil.Scaffold.LayoutCommentPostPasses` now covers deterministic layout planning, and `Vergil.Scaffold.AutoLayoutExecution` now proves the planned `MoveNode` work is applied end-to-end under the `UE_5.7` editor pipeline.
+
+Session note for `VGR-7003` (2026-03-07):
+
+- `FVergilCompileRequest` now carries explicit `CommentGeneration` settings for comment width, height, font size, title color, zoom bubble visibility, bubble coloring, and move mode, using `UE_5.7` `UEdGraphNode_Comment` defaults as the deterministic baseline instead of inheriting per-user graph-editor defaults.
+- The comment post-pass now emits default `SetNodeMetadata` work for any missing comment style fields, so authored comment nodes stay explicit in the returned command plan while still allowing authored metadata to override request defaults on a field-by-field basis.
+- `UVergilEditorSubsystem` now exposes `MakeCompileRequest(...)` plus `CompileRequest(...)`, and `Vergil.Scaffold.LayoutCommentPostPasses` / `Vergil.Scaffold.CommentExecution` now cover request-level comment-pass customization through planning and end-to-end `UE_5.7` execution.
 
 ## Milestone 8: Real Agent Layer
 Goal:
@@ -502,11 +508,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7003`
-2. `VGR-8003`
-3. `VGR-5005`
-4. `VGR-5006`
-5. `VGR-5008`
+1. `VGR-8003`
+2. `VGR-5005`
+3. `VGR-5006`
+4. `VGR-5008`
+5. `VGR-7004`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

@@ -174,6 +174,40 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilAutoLayoutSettings
 	float CommentPadding = 96.0f;
 };
 
+UENUM(BlueprintType)
+enum class EVergilCommentMoveMode : uint8
+{
+	GroupMovement,
+	NoGroupMovement
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilCommentGenerationSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "16.0"))
+	float DefaultWidth = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "16.0"))
+	float DefaultHeight = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "1"))
+	int32 DefaultFontSize = 18;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FLinearColor DefaultColor = FLinearColor::White;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bShowBubbleWhenZoomed = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bColorBubble = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilCommentMoveMode MoveMode = EVergilCommentMoveMode::GroupMovement;
+};
+
 USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 {
@@ -196,6 +230,9 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	bool bGenerateComments = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ScriptName = "CommentGenerationSettings"))
+	FVergilCommentGenerationSettings CommentGeneration;
 };
 
 USTRUCT(BlueprintType)

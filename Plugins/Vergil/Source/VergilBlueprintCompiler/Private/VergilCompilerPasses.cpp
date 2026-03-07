@@ -2238,6 +2238,122 @@ namespace
 		return Node.Kind == EVergilNodeKind::Comment;
 	}
 
+	const TCHAR* LexBoolString(const bool bValue)
+	{
+		return bValue ? TEXT("true") : TEXT("false");
+	}
+
+	FString LexCommentMoveModeString(const EVergilCommentMoveMode MoveMode)
+	{
+		switch (MoveMode)
+		{
+		case EVergilCommentMoveMode::NoGroupMovement:
+			return TEXT("NoGroupMovement");
+
+		case EVergilCommentMoveMode::GroupMovement:
+		default:
+			return TEXT("GroupMovement");
+		}
+	}
+
+	bool HasTrimmedMetadataValue(const FVergilGraphNode& Node, const FName Key)
+	{
+		return !Node.Metadata.FindRef(Key).TrimStartAndEnd().IsEmpty();
+	}
+
+	void EmitNodeMetadataCommand(
+		const FGuid NodeId,
+		const FName GraphName,
+		const FName MetadataKey,
+		const FString& MetadataValue,
+		TFunctionRef<void(const FVergilCompilerCommand&)> EmitCommand)
+	{
+		FVergilCompilerCommand MetadataCommand;
+		MetadataCommand.Type = EVergilCommandType::SetNodeMetadata;
+		MetadataCommand.GraphName = GraphName;
+		MetadataCommand.NodeId = NodeId;
+		MetadataCommand.Name = MetadataKey;
+		MetadataCommand.StringValue = MetadataValue;
+		EmitCommand(MetadataCommand);
+	}
+
+	void AddDefaultCommentMetadataCommands(
+		const FVergilGraphNode& Node,
+		const FName GraphName,
+		const FVergilCommentGenerationSettings& Settings,
+		TFunctionRef<void(const FVergilCompilerCommand&)> EmitCommand)
+	{
+		if (!HasTrimmedMetadataValue(Node, TEXT("CommentWidth")) && !HasTrimmedMetadataValue(Node, TEXT("NodeWidth")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("CommentWidth"),
+				LexToString(FMath::Max(Settings.DefaultWidth, 16.0f)),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("CommentHeight")) && !HasTrimmedMetadataValue(Node, TEXT("NodeHeight")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("CommentHeight"),
+				LexToString(FMath::Max(Settings.DefaultHeight, 16.0f)),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("FontSize")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("FontSize"),
+				LexToString(FMath::Max(Settings.DefaultFontSize, 1)),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("CommentColor")) && !HasTrimmedMetadataValue(Node, TEXT("Color")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("CommentColor"),
+				Settings.DefaultColor.ToFColor(true).ToHex(),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("ShowBubbleWhenZoomed")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("ShowBubbleWhenZoomed"),
+				LexBoolString(Settings.bShowBubbleWhenZoomed),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("ColorBubble")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("ColorBubble"),
+				LexBoolString(Settings.bColorBubble),
+				EmitCommand);
+		}
+
+		if (!HasTrimmedMetadataValue(Node, TEXT("MoveMode")))
+		{
+			EmitNodeMetadataCommand(
+				Node.Id,
+				GraphName,
+				TEXT("MoveMode"),
+				LexCommentMoveModeString(Settings.MoveMode),
+				EmitCommand);
+		}
+	}
+
 	void AddNodeMetadataCommands(
 		const FVergilGraphNode& Node,
 		const FName GraphName,
@@ -2278,6 +2394,7 @@ namespace
 	void BuildCommentNodeCommands(
 		const FVergilGraphNode& Node,
 		const FName GraphName,
+		const FVergilCommentGenerationSettings& Settings,
 		TFunctionRef<void(const FVergilCompilerCommand&)> EmitCommand)
 	{
 		FVergilCompilerCommand AddNodeCommand;
@@ -2294,6 +2411,7 @@ namespace
 		}
 		CopyPlannedPins(Node, AddNodeCommand);
 		EmitCommand(AddNodeCommand);
+		AddDefaultCommentMetadataCommands(Node, GraphName, Settings, EmitCommand);
 		AddNodeMetadataCommands(Node, GraphName, EmitCommand);
 	}
 
@@ -2362,7 +2480,7 @@ namespace
 
 		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
 		{
-			BuildCommentNodeCommands(Node, Context.GetGraphName(), [&Context](const FVergilCompilerCommand& Command)
+			BuildCommentNodeCommands(Node, Context.GetGraphName(), FVergilCommentGenerationSettings(), [&Context](const FVergilCompilerCommand& Command)
 			{
 				Context.AddCommand(Command);
 			});
@@ -3512,7 +3630,7 @@ namespace
 				continue;
 			}
 
-			BuildCommentNodeCommands(Node, Context.GetGraphName(), [&Context](const FVergilCompilerCommand& Command)
+			BuildCommentNodeCommands(Node, Context.GetGraphName(), Request.CommentGeneration, [&Context](const FVergilCompilerCommand& Command)
 			{
 				Context.AddPostCommentCommand(Command);
 			});
@@ -3797,6 +3915,7 @@ namespace
 	void BuildCommentAutoLayoutPositions(
 		const TArray<const FVergilGraphNode*>& CommentNodes,
 		const FVergilAutoLayoutSettings& Settings,
+		const FVergilCommentGenerationSettings& CommentSettings,
 		const TMap<FGuid, FVector2D>& PrimaryPositions,
 		TMap<FGuid, FVector2D>& OutPositions)
 	{
@@ -3837,8 +3956,16 @@ namespace
 		{
 			check(CommentNode != nullptr);
 
-			const float CommentWidth = GetCommentDimension(*CommentNode, TEXT("CommentWidth"), TEXT("NodeWidth"), 400.0f);
-			const float CommentHeight = GetCommentDimension(*CommentNode, TEXT("CommentHeight"), TEXT("NodeHeight"), 160.0f);
+			const float CommentWidth = GetCommentDimension(
+				*CommentNode,
+				TEXT("CommentWidth"),
+				TEXT("NodeWidth"),
+				FMath::Max(CommentSettings.DefaultWidth, 16.0f));
+			const float CommentHeight = GetCommentDimension(
+				*CommentNode,
+				TEXT("CommentHeight"),
+				TEXT("NodeHeight"),
+				FMath::Max(CommentSettings.DefaultHeight, 16.0f));
 			const float CommentX = PrimaryPositions.Num() > 0
 				? (AnchorX - CommentWidth - CommentPadding)
 				: Settings.Origin.X;
@@ -3905,7 +4032,7 @@ namespace
 
 		TMap<FGuid, FVector2D> PlannedPositions;
 		BuildPrimaryAutoLayoutPositions(PrimaryNodes, TargetEdges, Request.AutoLayout, PlannedPositions);
-		BuildCommentAutoLayoutPositions(CommentNodes, Request.AutoLayout, PlannedPositions, PlannedPositions);
+		BuildCommentAutoLayoutPositions(CommentNodes, Request.AutoLayout, Request.CommentGeneration, PlannedPositions, PlannedPositions);
 		AddAutoLayoutMoveCommands(PrimaryNodes, PlannedPositions, Context.GetGraphName(), Context);
 		AddAutoLayoutMoveCommands(CommentNodes, PlannedPositions, Context.GetGraphName(), Context);
 

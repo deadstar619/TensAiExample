@@ -31,16 +31,8 @@ namespace
 		return Request;
 	}
 
-	FVergilCompileResult PlanDocumentToGraph(
-		UBlueprint* Blueprint,
-		const FVergilGraphDocument& Document,
-		const FName TargetGraphName,
-		const bool bAutoLayout,
-		const bool bGenerateComments,
-		const bool bApplyCommands)
+	FVergilCompileResult PlanCompileRequest(const FVergilCompileRequest& Request, const bool bApplyCommands)
 	{
-		const FVergilCompileRequest Request = BuildCompileRequest(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments);
-
 		const FVergilBlueprintCompilerService CompilerService;
 		FVergilCompileResult Result = CompilerService.Compile(Request);
 		Result.Statistics.bApplyRequested = bApplyCommands;
@@ -152,6 +144,31 @@ void UVergilEditorSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+FVergilCompileRequest UVergilEditorSubsystem::MakeCompileRequest(
+	UBlueprint* Blueprint,
+	const FVergilGraphDocument& Document,
+	const FName TargetGraphName,
+	const bool bAutoLayout,
+	const bool bGenerateComments) const
+{
+	return BuildCompileRequest(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments);
+}
+
+FVergilCompileResult UVergilEditorSubsystem::CompileRequest(const FVergilCompileRequest& Request, const bool bApplyCommands) const
+{
+	FVergilCompileResult Result = PlanCompileRequest(Request, bApplyCommands);
+	LogCommandPlanIfPresent(TEXT("Vergil planned command plan"), Result.Commands);
+	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString());
+	LogCompileResultMetadata(TEXT("Vergil compile result"), Result);
+
+	if (bApplyCommands && Result.bSucceeded)
+	{
+		ApplyCommandPlanResult(Request.TargetBlueprint, Result, false, TEXT("Vergil apply result"));
+	}
+
+	return Result;
+}
+
 FVergilCompileResult UVergilEditorSubsystem::CompileDocument(
 	UBlueprint* Blueprint,
 	const FVergilGraphDocument& Document,
@@ -176,17 +193,7 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocumentToGraph(
 	const bool bGenerateComments,
 	const bool bApplyCommands) const
 {
-	FVergilCompileResult Result = PlanDocumentToGraph(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments, bApplyCommands);
-	LogCommandPlanIfPresent(TEXT("Vergil planned command plan"), Result.Commands);
-	UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString());
-	LogCompileResultMetadata(TEXT("Vergil compile result"), Result);
-
-	if (bApplyCommands && Result.bSucceeded)
-	{
-		ApplyCommandPlanResult(Blueprint, Result, false, TEXT("Vergil apply result"));
-	}
-
-	return Result;
+	return CompileRequest(MakeCompileRequest(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments), bApplyCommands);
 }
 
 FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blueprint, const TArray<FVergilCompilerCommand>& Commands) const

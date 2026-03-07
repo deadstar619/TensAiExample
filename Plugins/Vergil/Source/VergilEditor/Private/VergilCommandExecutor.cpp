@@ -2018,6 +2018,53 @@ namespace
 		return false;
 	}
 
+	bool TryParseBoolString(const FString& Value, bool& OutValue)
+	{
+		const FString LowerValue = Value.TrimStartAndEnd().ToLower();
+		if (LowerValue.IsEmpty())
+		{
+			return false;
+		}
+
+		if (LowerValue == TEXT("true") || LowerValue == TEXT("1"))
+		{
+			OutValue = true;
+			return true;
+		}
+
+		if (LowerValue == TEXT("false") || LowerValue == TEXT("0"))
+		{
+			OutValue = false;
+			return true;
+		}
+
+		return false;
+	}
+
+	bool TryParseCommentMoveMode(const FString& Value, ECommentBoxMode::Type& OutValue)
+	{
+		const FString NormalizedValue = Value.TrimStartAndEnd();
+		if (NormalizedValue.IsEmpty())
+		{
+			return false;
+		}
+
+		if (NormalizedValue.Equals(TEXT("GroupMovement"), ESearchCase::IgnoreCase))
+		{
+			OutValue = ECommentBoxMode::GroupMovement;
+			return true;
+		}
+
+		if (NormalizedValue.Equals(TEXT("NoGroupMovement"), ESearchCase::IgnoreCase)
+			|| NormalizedValue.Equals(TEXT("Comment"), ESearchCase::IgnoreCase))
+		{
+			OutValue = ECommentBoxMode::NoGroupMovement;
+			return true;
+		}
+
+		return false;
+	}
+
 	bool BuildVariablePinTypeFromCommand(
 		const FVergilCompilerCommand& Command,
 		FEdGraphPinType& OutPinType,
@@ -3628,7 +3675,7 @@ namespace
 		{
 			UEdGraphNode_Comment* CommentNode = NewObject<UEdGraphNode_Comment>(Graph);
 			CommentNode->NodeWidth = 400;
-			CommentNode->NodeHeight = 160;
+			CommentNode->NodeHeight = 100;
 			CommentNode->NodeComment = Command.StringValue.IsEmpty() ? TEXT("Vergil Comment") : Command.StringValue;
 			FinalizePlacedNode(Graph, CommentNode, Command.Position, Command.NodeId);
 			NewNode = CommentNode;
@@ -4629,6 +4676,38 @@ namespace
 				FColor ParsedColor = FColor::FromHex(Command.StringValue);
 				CommentNode->CommentColor = FLinearColor(ParsedColor);
 				return true;
+			}
+
+			if (Command.Name == TEXT("ShowBubbleWhenZoomed"))
+			{
+				bool bShowBubbleWhenZoomed = false;
+				if (TryParseBoolString(Command.StringValue, bShowBubbleWhenZoomed))
+				{
+					CommentNode->bCommentBubbleVisible_InDetailsPanel = bShowBubbleWhenZoomed;
+					CommentNode->bCommentBubbleVisible = bShowBubbleWhenZoomed;
+					CommentNode->bCommentBubblePinned = bShowBubbleWhenZoomed;
+					return true;
+				}
+			}
+
+			if (Command.Name == TEXT("ColorBubble"))
+			{
+				bool bColorBubble = false;
+				if (TryParseBoolString(Command.StringValue, bColorBubble))
+				{
+					CommentNode->bColorCommentBubble = bColorBubble;
+					return true;
+				}
+			}
+
+			if (Command.Name == TEXT("MoveMode"))
+			{
+				ECommentBoxMode::Type MoveMode = ECommentBoxMode::GroupMovement;
+				if (TryParseCommentMoveMode(Command.StringValue, MoveMode))
+				{
+					CommentNode->MoveMode = MoveMode;
+					return true;
+				}
 			}
 		}
 

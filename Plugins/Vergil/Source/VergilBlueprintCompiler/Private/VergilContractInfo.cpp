@@ -151,7 +151,7 @@ namespace
 				TEXT("Comment"),
 				SupportedGraphs,
 				{},
-				TEXT("Comment nodes are matched by kind, not a fixed descriptor string. CommentText or Title sets the text. CommentWidth, CommentHeight, FontSize, Color, and CommentColor are supported.")),
+				TEXT("Comment nodes are matched by kind, not a fixed descriptor string. CommentText or Title sets the text. CommentWidth, CommentHeight, FontSize, Color, CommentColor, ShowBubbleWhenZoomed, ColorBubble, and MoveMode are supported. When those style keys are omitted, the dedicated comment post-pass fills deterministic defaults from FVergilCompileRequest.CommentGeneration using UE_5.7 comment-node defaults as the baseline.")),
 			MakeDescriptorContract(
 				TEXT("K2.Event.<FunctionName>"),
 				EVergilDescriptorMatchKind::Prefix,
