@@ -30,6 +30,7 @@
 #include "K2Node_MacroInstance.h"
 #include "K2Node_MakeSet.h"
 #include "K2Node_MakeStruct.h"
+#include "K2Node_Message.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_Select.h"
 #include "K2Node_Self.h"
@@ -2369,6 +2370,8 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		FVergilInterfaceDefinition Interface;
 		Interface.InterfaceClassPath = TEXT("   /Script/CoreUObject.Interface   ");
 
+		const FString AutomationInterfacePath = UVergilAutomationTestInterface::StaticClass()->GetPathName();
+
 		FVergilGraphNode CastNode;
 		CastNode.Id = FGuid::NewGuid();
 		CastNode.Kind = EVergilNodeKind::Custom;
@@ -2533,6 +2536,18 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		GetComponentsByTagReturnPin.Direction = EVergilPinDirection::Output;
 		GetComponentsByTagNode.Pins.Add(GetComponentsByTagReturnPin);
 
+		FVergilGraphNode InterfaceCallNode;
+		InterfaceCallNode.Id = FGuid::NewGuid();
+		InterfaceCallNode.Kind = EVergilNodeKind::Call;
+		InterfaceCallNode.Descriptor = TEXT("K2.InterfaceCall.VergilAutomationInterfacePing");
+		InterfaceCallNode.Metadata.Add(TEXT("InterfaceClassPath"), FString::Printf(TEXT("   %s   "), *AutomationInterfacePath));
+
+		FVergilGraphNode InterfaceMessageNode;
+		InterfaceMessageNode.Id = FGuid::NewGuid();
+		InterfaceMessageNode.Kind = EVergilNodeKind::Call;
+		InterfaceMessageNode.Descriptor = TEXT("K2.InterfaceMessage.VergilAutomationInterfacePing");
+		InterfaceMessageNode.Metadata.Add(TEXT("InterfaceClassPath"), FString::Printf(TEXT("   %s   "), *AutomationInterfacePath));
+
 		FVergilCompileRequest Request;
 		Request.TargetBlueprint = MakeTestBlueprint();
 		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_Normalized");
@@ -2542,7 +2557,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode };
+		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
 
 		FVergilGraphEdge TransformToSpawn;
 		TransformToSpawn.Id = FGuid::NewGuid();
@@ -2630,6 +2645,22 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		if (PlannedSwitchCommand != nullptr)
 		{
 			TestEqual(TEXT("Switch enum paths should normalize to the resolved enum path."), PlannedSwitchCommand->Attributes.FindRef(TEXT("EnumPath")), MovementModeEnum->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedInterfaceCallCommand = FindNodeCommand(Result.Commands, InterfaceCallNode.Id);
+		TestNotNull(TEXT("Resolved interface call nodes should still lower into AddNode commands."), PlannedInterfaceCallCommand);
+		if (PlannedInterfaceCallCommand != nullptr)
+		{
+			TestEqual(TEXT("Interface call nodes should lower into the dedicated interface-call command."), PlannedInterfaceCallCommand->Name, FName(TEXT("Vergil.K2.InterfaceCall")));
+			TestEqual(TEXT("Interface call nodes should normalize InterfaceClassPath before planning."), PlannedInterfaceCallCommand->StringValue, AutomationInterfacePath);
+		}
+
+		const FVergilCompilerCommand* const PlannedInterfaceMessageCommand = FindNodeCommand(Result.Commands, InterfaceMessageNode.Id);
+		TestNotNull(TEXT("Resolved interface message nodes should still lower into AddNode commands."), PlannedInterfaceMessageCommand);
+		if (PlannedInterfaceMessageCommand != nullptr)
+		{
+			TestEqual(TEXT("Interface message nodes should lower into the dedicated interface-message command."), PlannedInterfaceMessageCommand->Name, FName(TEXT("Vergil.K2.InterfaceMessage")));
+			TestEqual(TEXT("Interface message nodes should normalize InterfaceClassPath before planning."), PlannedInterfaceMessageCommand->StringValue, AutomationInterfacePath);
 		}
 
 		const FVergilCompilerCommand* const PlannedMakeStructCommand = FindNodeCommand(Result.Commands, MakeStructNode.Id);
@@ -3832,6 +3863,26 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.Call.<FunctionName> should report a prefix descriptor match."), CallContract->MatchKind, EVergilDescriptorMatchKind::Prefix);
 		TestEqual(TEXT("K2.Call.<FunctionName> should report Call as its expected node kind."), CallContract->ExpectedNodeKind, FString(TEXT("Call")));
 		TestTrue(TEXT("K2.Call.<FunctionName> should mention OwnerClassPath normalization in its notes."), CallContract->Notes.Contains(TEXT("OwnerClassPath")));
+	}
+
+	const FVergilSupportedDescriptorContract* const InterfaceCallContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.InterfaceCall.<FunctionName>"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.InterfaceCall.<FunctionName>."), InterfaceCallContract);
+	if (InterfaceCallContract != nullptr)
+	{
+		TestEqual(TEXT("K2.InterfaceCall.<FunctionName> should report a prefix descriptor match."), InterfaceCallContract->MatchKind, EVergilDescriptorMatchKind::Prefix);
+		TestEqual(TEXT("K2.InterfaceCall.<FunctionName> should report Call as its expected node kind."), InterfaceCallContract->ExpectedNodeKind, FString(TEXT("Call")));
+		TestTrue(TEXT("K2.InterfaceCall.<FunctionName> should require InterfaceClassPath metadata."), ContainsNameValue(InterfaceCallContract->RequiredMetadataKeys, TEXT("InterfaceClassPath")));
+		TestTrue(TEXT("K2.InterfaceCall.<FunctionName> notes should mention UK2Node_CallFunction."), InterfaceCallContract->Notes.Contains(TEXT("UK2Node_CallFunction")));
+	}
+
+	const FVergilSupportedDescriptorContract* const InterfaceMessageContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.InterfaceMessage.<FunctionName>"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.InterfaceMessage.<FunctionName>."), InterfaceMessageContract);
+	if (InterfaceMessageContract != nullptr)
+	{
+		TestEqual(TEXT("K2.InterfaceMessage.<FunctionName> should report a prefix descriptor match."), InterfaceMessageContract->MatchKind, EVergilDescriptorMatchKind::Prefix);
+		TestEqual(TEXT("K2.InterfaceMessage.<FunctionName> should report Call as its expected node kind."), InterfaceMessageContract->ExpectedNodeKind, FString(TEXT("Call")));
+		TestTrue(TEXT("K2.InterfaceMessage.<FunctionName> should require InterfaceClassPath metadata."), ContainsNameValue(InterfaceMessageContract->RequiredMetadataKeys, TEXT("InterfaceClassPath")));
+		TestTrue(TEXT("K2.InterfaceMessage.<FunctionName> notes should mention UK2Node_Message."), InterfaceMessageContract->Notes.Contains(TEXT("UK2Node_Message")));
 	}
 
 	const FVergilSupportedDescriptorContract* const CommentContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("any non-empty descriptor"));
@@ -11629,6 +11680,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.ComponentNodeExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilInterfaceInvocationExecutionTest,
+	"Vergil.Scaffold.InterfaceInvocationExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -13029,6 +13085,252 @@ bool FVergilComponentNodeExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("ComponentsByClass setter should chain into the ComponentsByTag setter."), SetComponentsByClassThenGraphPin != nullptr && SetComponentsByClassThenGraphPin->LinkedTo.Contains(SetComponentsByTagExecGraphPin));
 	TestTrue(TEXT("LookupTag getter should feed the GetComponentsByTag Tag pin."), LookupTagGetterGraphPin != nullptr && LookupTagGetterGraphPin->LinkedTo.Contains(GetComponentsByTagTagGraphPin));
 	TestTrue(TEXT("GetComponentsByTag ReturnValue should feed the ComponentsByTag setter value."), GetComponentsByTagReturnGraphPin != nullptr && GetComponentsByTagReturnGraphPin->LinkedTo.Contains(SetComponentsByTagValueGraphPin));
+	return true;
+}
+
+bool FVergilInterfaceInvocationExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint(AActor::StaticClass());
+	TestNotNull(TEXT("Transient actor test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FString InterfaceClassPath = UVergilAutomationTestInterface::StaticClass()->GetPathName();
+
+	FVergilInterfaceDefinition InterfaceDefinition;
+	InterfaceDefinition.InterfaceClassPath = InterfaceClassPath;
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode SelfNode;
+	SelfNode.Id = FGuid::NewGuid();
+	SelfNode.Kind = EVergilNodeKind::Custom;
+	SelfNode.Descriptor = TEXT("K2.Self");
+	SelfNode.Position = FVector2D(260.0f, 220.0f);
+
+	FVergilGraphPin SelfOutputPin;
+	SelfOutputPin.Id = FGuid::NewGuid();
+	SelfOutputPin.Name = UEdGraphSchema_K2::PN_Self;
+	SelfOutputPin.Direction = EVergilPinDirection::Output;
+	SelfNode.Pins.Add(SelfOutputPin);
+
+	FVergilGraphNode InterfaceCallNode;
+	InterfaceCallNode.Id = FGuid::NewGuid();
+	InterfaceCallNode.Kind = EVergilNodeKind::Call;
+	InterfaceCallNode.Descriptor = TEXT("K2.InterfaceCall.VergilAutomationInterfacePing");
+	InterfaceCallNode.Position = FVector2D(520.0f, 0.0f);
+	InterfaceCallNode.Metadata.Add(TEXT("InterfaceClassPath"), InterfaceClassPath);
+
+	FVergilGraphPin InterfaceCallExecPin;
+	InterfaceCallExecPin.Id = FGuid::NewGuid();
+	InterfaceCallExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	InterfaceCallExecPin.Direction = EVergilPinDirection::Input;
+	InterfaceCallExecPin.bIsExec = true;
+	InterfaceCallNode.Pins.Add(InterfaceCallExecPin);
+
+	FVergilGraphPin InterfaceCallThenPin;
+	InterfaceCallThenPin.Id = FGuid::NewGuid();
+	InterfaceCallThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	InterfaceCallThenPin.Direction = EVergilPinDirection::Output;
+	InterfaceCallThenPin.bIsExec = true;
+	InterfaceCallNode.Pins.Add(InterfaceCallThenPin);
+
+	FVergilGraphPin InterfaceCallSelfPin;
+	InterfaceCallSelfPin.Id = FGuid::NewGuid();
+	InterfaceCallSelfPin.Name = UEdGraphSchema_K2::PN_Self;
+	InterfaceCallSelfPin.Direction = EVergilPinDirection::Input;
+	InterfaceCallNode.Pins.Add(InterfaceCallSelfPin);
+
+	FVergilGraphPin InterfaceCallReturnPin;
+	InterfaceCallReturnPin.Id = FGuid::NewGuid();
+	InterfaceCallReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	InterfaceCallReturnPin.Direction = EVergilPinDirection::Output;
+	InterfaceCallNode.Pins.Add(InterfaceCallReturnPin);
+
+	FVergilGraphNode InterfaceMessageNode;
+	InterfaceMessageNode.Id = FGuid::NewGuid();
+	InterfaceMessageNode.Kind = EVergilNodeKind::Call;
+	InterfaceMessageNode.Descriptor = TEXT("K2.InterfaceMessage.VergilAutomationInterfacePing");
+	InterfaceMessageNode.Position = FVector2D(980.0f, 0.0f);
+	InterfaceMessageNode.Metadata.Add(TEXT("InterfaceClassPath"), InterfaceClassPath);
+
+	FVergilGraphPin InterfaceMessageExecPin;
+	InterfaceMessageExecPin.Id = FGuid::NewGuid();
+	InterfaceMessageExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	InterfaceMessageExecPin.Direction = EVergilPinDirection::Input;
+	InterfaceMessageExecPin.bIsExec = true;
+	InterfaceMessageNode.Pins.Add(InterfaceMessageExecPin);
+
+	FVergilGraphPin InterfaceMessageThenPin;
+	InterfaceMessageThenPin.Id = FGuid::NewGuid();
+	InterfaceMessageThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	InterfaceMessageThenPin.Direction = EVergilPinDirection::Output;
+	InterfaceMessageThenPin.bIsExec = true;
+	InterfaceMessageNode.Pins.Add(InterfaceMessageThenPin);
+
+	FVergilGraphPin InterfaceMessageSelfPin;
+	InterfaceMessageSelfPin.Id = FGuid::NewGuid();
+	InterfaceMessageSelfPin.Name = UEdGraphSchema_K2::PN_Self;
+	InterfaceMessageSelfPin.Direction = EVergilPinDirection::Input;
+	InterfaceMessageNode.Pins.Add(InterfaceMessageSelfPin);
+
+	FVergilGraphPin InterfaceMessageReturnPin;
+	InterfaceMessageReturnPin.Id = FGuid::NewGuid();
+	InterfaceMessageReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	InterfaceMessageReturnPin.Direction = EVergilPinDirection::Output;
+	InterfaceMessageNode.Pins.Add(InterfaceMessageReturnPin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilInterfaceInvocationExecution");
+	Document.Interfaces.Add(InterfaceDefinition);
+	Document.Nodes = { BeginPlayNode, SelfNode, InterfaceCallNode, InterfaceMessageNode };
+
+	FVergilGraphEdge EventToInterfaceCall;
+	EventToInterfaceCall.Id = FGuid::NewGuid();
+	EventToInterfaceCall.SourceNodeId = BeginPlayNode.Id;
+	EventToInterfaceCall.SourcePinId = BeginPlayThenPin.Id;
+	EventToInterfaceCall.TargetNodeId = InterfaceCallNode.Id;
+	EventToInterfaceCall.TargetPinId = InterfaceCallExecPin.Id;
+	Document.Edges.Add(EventToInterfaceCall);
+
+	FVergilGraphEdge SelfToInterfaceCall;
+	SelfToInterfaceCall.Id = FGuid::NewGuid();
+	SelfToInterfaceCall.SourceNodeId = SelfNode.Id;
+	SelfToInterfaceCall.SourcePinId = SelfOutputPin.Id;
+	SelfToInterfaceCall.TargetNodeId = InterfaceCallNode.Id;
+	SelfToInterfaceCall.TargetPinId = InterfaceCallSelfPin.Id;
+	Document.Edges.Add(SelfToInterfaceCall);
+
+	FVergilGraphEdge InterfaceCallToMessage;
+	InterfaceCallToMessage.Id = FGuid::NewGuid();
+	InterfaceCallToMessage.SourceNodeId = InterfaceCallNode.Id;
+	InterfaceCallToMessage.SourcePinId = InterfaceCallThenPin.Id;
+	InterfaceCallToMessage.TargetNodeId = InterfaceMessageNode.Id;
+	InterfaceCallToMessage.TargetPinId = InterfaceMessageExecPin.Id;
+	Document.Edges.Add(InterfaceCallToMessage);
+
+	FVergilGraphEdge SelfToInterfaceMessage;
+	SelfToInterfaceMessage.Id = FGuid::NewGuid();
+	SelfToInterfaceMessage.SourceNodeId = SelfNode.Id;
+	SelfToInterfaceMessage.SourcePinId = SelfOutputPin.Id;
+	SelfToInterfaceMessage.TargetNodeId = InterfaceMessageNode.Id;
+	SelfToInterfaceMessage.TargetPinId = InterfaceMessageSelfPin.Id;
+	Document.Edges.Add(SelfToInterfaceMessage);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+	TestTrue(TEXT("Interface invocation document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Interface invocation document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Interface invocation document should execute commands."), Result.ExecutedCommandCount > 0);
+	if (!Result.bSucceeded || !Result.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompilerCommand* const PlannedInterfaceCallCommand = FindNodeCommand(Result.Commands, InterfaceCallNode.Id);
+	const FVergilCompilerCommand* const PlannedInterfaceMessageCommand = FindNodeCommand(Result.Commands, InterfaceMessageNode.Id);
+	TestNotNull(TEXT("Interface call planning should emit an AddNode command."), PlannedInterfaceCallCommand);
+	TestNotNull(TEXT("Interface message planning should emit an AddNode command."), PlannedInterfaceMessageCommand);
+	if (PlannedInterfaceCallCommand != nullptr)
+	{
+		TestEqual(TEXT("Interface call planning should emit the dedicated interface-call command."), PlannedInterfaceCallCommand->Name, FName(TEXT("Vergil.K2.InterfaceCall")));
+		TestEqual(TEXT("Interface call planning should normalize the interface class path into StringValue."), PlannedInterfaceCallCommand->StringValue, InterfaceClassPath);
+	}
+	if (PlannedInterfaceMessageCommand != nullptr)
+	{
+		TestEqual(TEXT("Interface message planning should emit the dedicated interface-message command."), PlannedInterfaceMessageCommand->Name, FName(TEXT("Vergil.K2.InterfaceMessage")));
+		TestEqual(TEXT("Interface message planning should normalize the interface class path into StringValue."), PlannedInterfaceMessageCommand->StringValue, InterfaceClassPath);
+	}
+
+	TArray<UClass*> ImplementedInterfaces;
+	FBlueprintEditorUtils::FindImplementedInterfaces(Blueprint, true, ImplementedInterfaces);
+	TestTrue(TEXT("The execution blueprint should implement the authored test interface."), ImplementedInterfaces.Contains(UVergilAutomationTestInterface::StaticClass()));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after interface invocation execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_Self* const SelfGraphNode = FindGraphNodeByGuid<UK2Node_Self>(EventGraph, SelfNode.Id);
+	UK2Node_CallFunction* const InterfaceCallGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, InterfaceCallNode.Id);
+	UK2Node_Message* const InterfaceMessageGraphNode = FindGraphNodeByGuid<UK2Node_Message>(EventGraph, InterfaceMessageNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventGraphNode);
+	TestNotNull(TEXT("Self node should exist."), SelfGraphNode);
+	TestNotNull(TEXT("Interface call node should exist."), InterfaceCallGraphNode);
+	TestNotNull(TEXT("Interface message node should exist."), InterfaceMessageGraphNode);
+	TestNull(TEXT("Interface call node should not materialize as a message node."), Cast<UK2Node_Message>(InterfaceCallGraphNode));
+	if (EventGraphNode == nullptr || SelfGraphNode == nullptr || InterfaceCallGraphNode == nullptr || InterfaceMessageGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UFunction* const InterfaceCallFunction = InterfaceCallGraphNode->GetTargetFunction();
+	UFunction* const InterfaceMessageFunction = InterfaceMessageGraphNode->GetTargetFunction();
+	TestTrue(TEXT("Interface call node should resolve the test interface function."), InterfaceCallFunction != nullptr
+		&& InterfaceCallFunction->GetFName() == TEXT("VergilAutomationInterfacePing")
+		&& InterfaceCallFunction->GetOwnerClass() == UVergilAutomationTestInterface::StaticClass());
+	TestTrue(TEXT("Interface message node should resolve the test interface function."), InterfaceMessageFunction != nullptr
+		&& InterfaceMessageFunction->GetFName() == TEXT("VergilAutomationInterfacePing")
+		&& InterfaceMessageFunction->GetOwnerClass() == UVergilAutomationTestInterface::StaticClass());
+
+	UEdGraphPin* const EventThenGraphPin = EventGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SelfGraphPin = SelfGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const InterfaceCallExecGraphPin = InterfaceCallGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const InterfaceCallThenGraphPin = InterfaceCallGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const InterfaceCallSelfGraphPin = InterfaceCallGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const InterfaceCallReturnGraphPin = InterfaceCallGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const InterfaceMessageExecGraphPin = InterfaceMessageGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const InterfaceMessageSelfGraphPin = InterfaceMessageGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const InterfaceMessageReturnGraphPin = InterfaceMessageGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+
+	TestFalse(TEXT("Interface call node should remain impure for the callable test function."), InterfaceCallGraphNode->IsNodePure());
+	TestFalse(TEXT("Interface message nodes should always remain impure."), InterfaceMessageGraphNode->IsNodePure());
+	TestTrue(TEXT("Interface call should expose an interface-typed self pin."), InterfaceCallSelfGraphPin != nullptr
+		&& InterfaceCallSelfGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Interface
+		&& InterfaceCallSelfGraphPin->PinType.PinSubCategoryObject.Get() == UVergilAutomationTestInterface::StaticClass());
+	TestTrue(TEXT("Interface message should expose an object-typed self pin."), InterfaceMessageSelfGraphPin != nullptr
+		&& InterfaceMessageSelfGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object
+		&& InterfaceMessageSelfGraphPin->PinType.PinSubCategoryObject.Get() == UObject::StaticClass());
+	TestTrue(TEXT("Interface call ReturnValue should remain a bool pin."), InterfaceCallReturnGraphPin != nullptr
+		&& InterfaceCallReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("Interface message ReturnValue should remain a bool pin."), InterfaceMessageReturnGraphPin != nullptr
+		&& InterfaceMessageReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+	TestTrue(TEXT("BeginPlay should drive the interface-call exec pin."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(InterfaceCallExecGraphPin));
+	TestTrue(TEXT("Self should feed the interface-call self pin."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(InterfaceCallSelfGraphPin));
+	TestTrue(TEXT("Interface call Then should drive the interface-message exec pin."), InterfaceCallThenGraphPin != nullptr && InterfaceCallThenGraphPin->LinkedTo.Contains(InterfaceMessageExecGraphPin));
+	TestTrue(TEXT("Self should feed the interface-message self pin."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(InterfaceMessageSelfGraphPin));
+
 	return true;
 }
 

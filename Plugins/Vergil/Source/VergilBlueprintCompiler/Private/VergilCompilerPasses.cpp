@@ -64,6 +64,13 @@ namespace
 		bool bSupportsTag = false;
 	};
 
+	struct FVergilInterfaceInvocationDescriptor
+	{
+		const TCHAR* DescriptorPrefix = TEXT("");
+		FName CommandName = NAME_None;
+		bool bIsMessage = false;
+	};
+
 	const FVergilStandardMacroDescriptor* FindStandardMacroDescriptorByDescriptor(const FName Descriptor)
 	{
 		static const FVergilStandardMacroDescriptor Descriptors[] =
@@ -100,6 +107,26 @@ namespace
 		for (const FVergilComponentLookupDescriptor& Candidate : Descriptors)
 		{
 			if (Candidate.Descriptor == Descriptor)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FVergilInterfaceInvocationDescriptor* FindInterfaceInvocationDescriptorByDescriptor(const FName Descriptor)
+	{
+		static const FVergilInterfaceInvocationDescriptor Descriptors[] =
+		{
+			{ TEXT("K2.InterfaceCall."), TEXT("Vergil.K2.InterfaceCall"), false },
+			{ TEXT("K2.InterfaceMessage."), TEXT("Vergil.K2.InterfaceMessage"), true },
+		};
+
+		const FString DescriptorString = Descriptor.ToString();
+		for (const FVergilInterfaceInvocationDescriptor& Candidate : Descriptors)
+		{
+			if (DescriptorString.StartsWith(Candidate.DescriptorPrefix))
 			{
 				return &Candidate;
 			}
@@ -248,6 +275,36 @@ namespace
 				Context,
 				TEXT("MissingComponentLookupClassPath"),
 				FString::Printf(TEXT("%s nodes require metadata ComponentClassPath naming the component class to query."), *ComponentLookupDescriptor->Descriptor.ToString()));
+			return bIsValid;
+		}
+
+		if (const FVergilInterfaceInvocationDescriptor* const InterfaceDescriptor = FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor))
+		{
+			if (Node.Kind != EVergilNodeKind::Call)
+			{
+				AddNodeDiagnostic(
+					TEXT("CallNodeKindInvalid"),
+					FString::Printf(TEXT("Descriptor '%s' requires node kind Call."), *DescriptorString));
+			}
+
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, InterfaceDescriptor->DescriptorPrefix);
+			if (FunctionName.IsEmpty())
+			{
+				AddNodeDiagnostic(
+					TEXT("MissingFunctionName"),
+					InterfaceDescriptor->bIsMessage
+						? TEXT("Interface message nodes require a descriptor suffix naming the function.")
+						: TEXT("Interface call nodes require a descriptor suffix naming the function."));
+			}
+
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("InterfaceClassPath"),
+				Context,
+				TEXT("MissingInterfaceClassPath"),
+				InterfaceDescriptor->bIsMessage
+					? TEXT("Interface message nodes require metadata InterfaceClassPath naming the Blueprint interface class.")
+					: TEXT("Interface call nodes require metadata InterfaceClassPath naming the Blueprint interface class."));
 			return bIsValid;
 		}
 
@@ -1159,6 +1216,46 @@ namespace
 		return true;
 	}
 
+	bool ResolveAndNormalizeInterfaceClassMetadata(
+		FVergilGraphNode& Node,
+		const FName MetadataKey,
+		const FName NotFoundDiagnosticCode,
+		const FName InvalidDiagnosticCode,
+		const TCHAR* ContextLabel,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged,
+		UClass*& OutInterfaceClass)
+	{
+		OutInterfaceClass = nullptr;
+
+		const FString InterfaceClassPath = Node.Metadata.FindRef(MetadataKey).TrimStartAndEnd();
+		FString NormalizedClassPath;
+		if (!ResolveNormalizedClassPath(InterfaceClassPath, NormalizedClassPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				NotFoundDiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve %s '%s'."), ContextLabel, *InterfaceClassPath),
+				Node.Id);
+			return false;
+		}
+
+		UClass* const InterfaceClass = ResolveClassReference(NormalizedClassPath);
+		if (InterfaceClass == nullptr || !InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				InvalidDiagnosticCode,
+				FString::Printf(TEXT("%s '%s' must resolve to a UInterface-derived class."), ContextLabel, *NormalizedClassPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, MetadataKey, NormalizedClassPath);
+		OutInterfaceClass = InterfaceClass;
+		return true;
+	}
+
 	void BuildAddComponentSupportedPins(const UClass* ComponentClass, TArray<FVergilSupportedPinDescriptor>& OutPins)
 	{
 		OutPins.Reset();
@@ -1482,6 +1579,20 @@ namespace
 		return ValidateComponentLookupPins(Node, *Descriptor, ComponentClass, Context);
 	}
 
+	bool ResolveAndNormalizeInterfaceInvocationNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		UClass* InterfaceClass = nullptr;
+		return ResolveAndNormalizeInterfaceClassMetadata(
+			Node,
+			TEXT("InterfaceClassPath"),
+			TEXT("InterfaceNodeClassNotFound"),
+			TEXT("InterfaceNodeClassNotInterface"),
+			TEXT("interface class"),
+			Context,
+			bOutChanged,
+			InterfaceClass);
+	}
+
 	bool ResolveAndNormalizeSelectNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
 	{
 		return ResolveAndNormalizeNodePinTypeMetadata(Node, TEXT("IndexPinCategory"), TEXT("IndexObjectPath"), TEXT("InvalidSelectIndexType"), Context, bOutChanged)
@@ -1687,6 +1798,11 @@ namespace
 		if (FindComponentLookupDescriptorByDescriptor(Node.Descriptor) != nullptr)
 		{
 			return ResolveAndNormalizeComponentLookupNodeType(Node, Context, bOutChanged);
+		}
+
+		if (FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor) != nullptr)
+		{
+			return ResolveAndNormalizeInterfaceInvocationNodeType(Node, Context, bOutChanged);
 		}
 
 		if (Node.Descriptor == TEXT("K2.Cast"))
@@ -1897,6 +2013,67 @@ namespace
 			FString::Printf(TEXT("Unable to resolve function '%s' on the compiled document, Blueprint, or parent class."), *FunctionNameString),
 			Node.Id);
 		return false;
+	}
+
+	bool ResolveInterfaceInvocationSymbol(
+		FVergilGraphNode& Node,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
+		const FVergilInterfaceInvocationDescriptor* const Descriptor = FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor);
+		if (Descriptor == nullptr)
+		{
+			return true;
+		}
+
+		const FString FunctionNameString = GetDescriptorSuffix(Node.Descriptor, Descriptor->DescriptorPrefix);
+		const FName FunctionName(*FunctionNameString);
+		const FString InterfaceClassPath = Node.Metadata.FindRef(TEXT("InterfaceClassPath")).TrimStartAndEnd();
+		UClass* const InterfaceClass = ResolveClassReference(InterfaceClassPath);
+		if (InterfaceClass == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("MissingInterfaceClass"),
+				FString::Printf(TEXT("Unable to resolve interface class '%s' for function '%s'."), *InterfaceClassPath, *FunctionNameString),
+				Node.Id);
+			return false;
+		}
+
+		if (!InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("InvalidInterfaceClass"),
+				FString::Printf(TEXT("Interface invocation descriptor '%s' requires InterfaceClassPath '%s' to resolve to a UInterface-derived class."), *Node.Descriptor.ToString(), *InterfaceClassPath),
+				Node.Id);
+			return false;
+		}
+
+		UFunction* const Function = InterfaceClass->FindFunctionByName(FunctionName);
+		if (Function == nullptr)
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("InterfaceFunctionNotFound"),
+				FString::Printf(TEXT("Unable to resolve interface function '%s' on class '%s'."), *FunctionNameString, *InterfaceClass->GetName()),
+				Node.Id);
+			return false;
+		}
+
+		const UClass* const OwnerClass = Function->GetOwnerClass();
+		if (OwnerClass == nullptr || !OwnerClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			AddSymbolResolutionDiagnostic(
+				Context,
+				TEXT("InterfaceFunctionOwnerInvalid"),
+				FString::Printf(TEXT("Interface function '%s' did not resolve to an interface owner class."), *FunctionNameString),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("InterfaceClassPath"), OwnerClass->GetPathName());
+		return true;
 	}
 
 	bool ResolveVariableSymbol(
@@ -2278,6 +2455,11 @@ namespace
 		if (DescriptorString.StartsWith(TEXT("K2.Call.")))
 		{
 			return ResolveCallSymbol(Node, SymbolTables, Context, bOutChanged);
+		}
+
+		if (FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor) != nullptr)
+		{
+			return ResolveInterfaceInvocationSymbol(Node, Context, bOutChanged);
 		}
 
 		if (DescriptorString.StartsWith(TEXT("K2.VarGet.")) || DescriptorString.StartsWith(TEXT("K2.VarSet.")))
@@ -3364,6 +3546,71 @@ namespace
 		}
 	};
 
+	class FVergilInterfaceInvocationNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		explicit FVergilInterfaceInvocationNodeHandler(const FVergilInterfaceInvocationDescriptor& InDescriptor)
+			: Descriptor(InDescriptor)
+		{
+		}
+
+		virtual FName GetDescriptor() const override
+		{
+			return Descriptor.CommandName;
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			const FVergilInterfaceInvocationDescriptor* const Candidate = FindInterfaceInvocationDescriptorByDescriptor(Node.Descriptor);
+			return Candidate != nullptr && Candidate->CommandName == Descriptor.CommandName;
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString FunctionName = GetDescriptorSuffix(Node.Descriptor, Descriptor.DescriptorPrefix);
+			if (FunctionName.IsEmpty())
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingFunctionName"),
+					Descriptor.bIsMessage
+						? TEXT("Interface message nodes require a descriptor suffix naming the function.")
+						: TEXT("Interface call nodes require a descriptor suffix naming the function."),
+					Node.Id);
+				return false;
+			}
+
+			const FString InterfaceClassPath = Node.Metadata.FindRef(TEXT("InterfaceClassPath"));
+			if (InterfaceClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingInterfaceClassPath"),
+					Descriptor.bIsMessage
+						? TEXT("Interface message nodes require metadata InterfaceClassPath naming the Blueprint interface class.")
+						: TEXT("Interface call nodes require metadata InterfaceClassPath naming the Blueprint interface class."),
+					Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = Descriptor.CommandName;
+			Command.SecondaryName = *FunctionName;
+			Command.StringValue = InterfaceClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+
+	private:
+		FVergilInterfaceInvocationDescriptor Descriptor;
+	};
+
 	class FVergilVariableGetNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -3941,6 +4188,15 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilClearDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCallDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCreateDelegateNodeHandler, ESPMode::ThreadSafe>());
+		static const FVergilInterfaceInvocationDescriptor InterfaceInvocationDescriptors[] =
+		{
+			{ TEXT("K2.InterfaceCall."), TEXT("Vergil.K2.InterfaceCall"), false },
+			{ TEXT("K2.InterfaceMessage."), TEXT("Vergil.K2.InterfaceMessage"), true },
+		};
+		for (const FVergilInterfaceInvocationDescriptor& Descriptor : InterfaceInvocationDescriptors)
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilInterfaceInvocationNodeHandler, ESPMode::ThreadSafe>(Descriptor));
+		}
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCallNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableGetNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilVariableSetNodeHandler, ESPMode::ThreadSafe>());

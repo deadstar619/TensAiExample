@@ -174,6 +174,20 @@ namespace
 				{},
 				TEXT("Optional OwnerClassPath constrains function resolution. When omitted, the current scaffold resolves document-authored functions first, then existing Blueprint-local functions, then inherited/native functions. Self-owned resolutions keep an empty owner path; inherited/native resolutions normalize the owner path into the planned command. Headless UE_5.7 coverage now explicitly re-verifies timer-by-function-name helpers plus handle-based timer pause/query helpers through this generic call path.")),
 			MakeDescriptorContract(
+				TEXT("K2.InterfaceCall.<FunctionName>"),
+				EVergilDescriptorMatchKind::Prefix,
+				TEXT("Call"),
+				SupportedGraphs,
+				{ TEXT("InterfaceClassPath") },
+				TEXT("InterfaceClassPath must resolve to a UInterface-derived class and is normalized during symbol/type resolution. Under UE_5.7 this lowers to UK2Node_CallFunction bound against the interface function owner, preserving the interface-typed self pin instead of the generic object-target call surface.")),
+			MakeDescriptorContract(
+				TEXT("K2.InterfaceMessage.<FunctionName>"),
+				EVergilDescriptorMatchKind::Prefix,
+				TEXT("Call"),
+				SupportedGraphs,
+				{ TEXT("InterfaceClassPath") },
+				TEXT("InterfaceClassPath must resolve to a UInterface-derived class and is normalized during symbol/type resolution. Under UE_5.7 this lowers to UK2Node_Message bound against the interface function owner, exposing the object-typed self/Target pin and the engine's no-op-if-unimplemented message semantics.")),
+			MakeDescriptorContract(
 				TEXT("K2.VarGet.<VariableName>"),
 				EVergilDescriptorMatchKind::Prefix,
 				TEXT("VariableGet"),

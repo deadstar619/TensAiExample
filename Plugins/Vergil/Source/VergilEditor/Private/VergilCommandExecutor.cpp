@@ -26,6 +26,7 @@
 #include "K2Node_Knot.h"
 #include "K2Node_MakeArray.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_Message.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeMap.h"
@@ -110,6 +111,12 @@ namespace
 		bool bSupportsTag = false;
 	};
 
+	struct FVergilInterfaceInvocationCommand
+	{
+		FName CommandName;
+		bool bIsMessage = false;
+	};
+
 	const FVergilStandardMacroCommand* FindStandardMacroCommand(const FName CommandName)
 	{
 		static const FVergilStandardMacroCommand Commands[] =
@@ -144,6 +151,25 @@ namespace
 		};
 
 		for (const FVergilComponentLookupCommand& Candidate : Commands)
+		{
+			if (Candidate.CommandName == CommandName)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FVergilInterfaceInvocationCommand* FindInterfaceInvocationCommand(const FName CommandName)
+	{
+		static const FVergilInterfaceInvocationCommand Commands[] =
+		{
+			{ TEXT("Vergil.K2.InterfaceCall"), false },
+			{ TEXT("Vergil.K2.InterfaceMessage"), true },
+		};
+
+		for (const FVergilInterfaceInvocationCommand& Candidate : Commands)
 		{
 			if (Candidate.CommandName == CommandName)
 			{
@@ -2010,6 +2036,77 @@ namespace
 			FString::Printf(TEXT("Unable to resolve function '%s' on the target Blueprint or its parent class."), *Command.SecondaryName.ToString()),
 			Command.NodeId));
 		return nullptr;
+	}
+
+	UFunction* ResolveInterfaceFunction(const FVergilCompilerCommand& Command, TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (Command.SecondaryName.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingFunctionName"),
+				TEXT("Interface node execution requires SecondaryName to contain the function name."),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		const FString InterfaceClassPath = (Command.StringValue.IsEmpty()
+			? GetCommandAttribute(Command, TEXT("InterfaceClassPath"))
+			: Command.StringValue).TrimStartAndEnd();
+		if (InterfaceClassPath.IsEmpty())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingInterfaceClass"),
+				FString::Printf(TEXT("Interface node '%s' requires StringValue or InterfaceClassPath metadata to name the interface owner."), *Command.Name.ToString()),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		UClass* const InterfaceClass = ResolveClassReference(InterfaceClassPath);
+		if (InterfaceClass == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingInterfaceClass"),
+				FString::Printf(TEXT("Unable to resolve interface class '%s' for function '%s'."), *InterfaceClassPath, *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		if (!InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidInterfaceClass"),
+				FString::Printf(TEXT("Interface node '%s' requires interface owner '%s' to resolve to a UInterface-derived class."), *Command.Name.ToString(), *InterfaceClassPath),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		UFunction* const InterfaceFunction = InterfaceClass->FindFunctionByName(Command.SecondaryName);
+		if (InterfaceFunction == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InterfaceFunctionNotFound"),
+				FString::Printf(TEXT("Unable to resolve interface function '%s' on class '%s'."), *Command.SecondaryName.ToString(), *InterfaceClass->GetName()),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		const UClass* const OwnerClass = InterfaceFunction->GetOwnerClass();
+		if (OwnerClass == nullptr || !OwnerClass->HasAnyClassFlags(CLASS_Interface))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InterfaceFunctionOwnerInvalid"),
+				FString::Printf(TEXT("Resolved interface function '%s' did not report an interface owner class."), *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		return InterfaceFunction;
 	}
 
 	UObject* ResolveObjectReference(const FString& Reference)
@@ -4230,6 +4327,32 @@ namespace
 			FinalizePlacedNode(Graph, CallNode, Command.Position, Command.NodeId);
 			NewNode = CallNode;
 		}
+		else if (Command.Name == TEXT("Vergil.K2.InterfaceCall"))
+		{
+			UFunction* const InterfaceFunction = ResolveInterfaceFunction(Command, Diagnostics);
+			if (InterfaceFunction == nullptr)
+			{
+				return false;
+			}
+
+			UK2Node_CallFunction* CallNode = NewObject<UK2Node_CallFunction>(Graph);
+			CallNode->FunctionReference.SetExternalMember(Command.SecondaryName, InterfaceFunction->GetOwnerClass());
+			FinalizePlacedNode(Graph, CallNode, Command.Position, Command.NodeId);
+			NewNode = CallNode;
+		}
+		else if (Command.Name == TEXT("Vergil.K2.InterfaceMessage"))
+		{
+			UFunction* const InterfaceFunction = ResolveInterfaceFunction(Command, Diagnostics);
+			if (InterfaceFunction == nullptr)
+			{
+				return false;
+			}
+
+			UK2Node_Message* MessageNode = NewObject<UK2Node_Message>(Graph);
+			MessageNode->FunctionReference.SetExternalMember(Command.SecondaryName, InterfaceFunction->GetOwnerClass());
+			FinalizePlacedNode(Graph, MessageNode, Command.Position, Command.NodeId);
+			NewNode = MessageNode;
+		}
 		else if (Command.Name == TEXT("Vergil.K2.CallDelegate"))
 		{
 			FMulticastDelegateProperty* const DelegateProperty = ResolveDelegateProperty(Blueprint, Command, Diagnostics);
@@ -5651,6 +5774,20 @@ namespace
 					if (Command.SecondaryName.IsNone())
 					{
 						AddValidationError(TEXT("MissingFunctionName"), TEXT("Call node execution requires SecondaryName to contain the function name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (const FVergilInterfaceInvocationCommand* const InterfaceInvocationCommand = FindInterfaceInvocationCommand(Command.Name))
+				{
+					UFunction* const InterfaceFunction = ResolveInterfaceFunction(Command, Diagnostics);
+					if (InterfaceFunction == nullptr)
+					{
+						bIsValid = false;
+					}
+					else if (InterfaceInvocationCommand->bIsMessage && InterfaceFunction->HasAllFunctionFlags(FUNC_Static))
+					{
+						AddValidationError(TEXT("StaticInterfaceMessageUnsupported"), TEXT("Interface message nodes do not support static interface functions."), Command.NodeId);
 					}
 					break;
 				}

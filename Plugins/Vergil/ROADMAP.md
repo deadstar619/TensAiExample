@@ -389,7 +389,7 @@ Goal:
 Tickets:
 
 - [x] `VGR-6001` Add component-related nodes
-- `VGR-6002` Add interface call/message nodes
+- [x] `VGR-6002` Add interface call/message nodes
 - `VGR-6003` Add object/class/soft-reference families
 - `VGR-6004` Add async task node families where deterministic setup is possible
 - `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
@@ -407,6 +407,12 @@ Session note for `VGR-6001` (2026-03-07):
 - `UE_5.7` deterministic support now exists for `K2.AddComponentByClass`, `K2.GetComponentByClass`, `K2.GetComponentsByClass`, `K2.FindComponentByTag`, and `K2.GetComponentsByTag` through explicit specialized handlers instead of relying on the generic `K2.Call.*` path to infer dynamic component-class behavior.
 - Type resolution now normalizes `ComponentClassPath`, rejects non-`UActorComponent` classes, and validates the authored deterministic pin surface, while direct command-plan preflight and editor execution both instantiate the real `UK2Node_AddComponentByClass` or typed `AActor` lookup nodes and conform their return pins from the metadata-driven component class.
 - `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.ComponentNodeExecution` test now cover the compiler manifest, markdown contract table, command planning, and end-to-end editor-authoring path for this component-node family.
+
+Session note for `VGR-6002` (2026-03-07):
+
+- `UE_5.7` deterministic support now exists for explicit Blueprint-interface invocation descriptors `K2.InterfaceCall.*` and `K2.InterfaceMessage.*`, each requiring `InterfaceClassPath` instead of overloading the generic `K2.Call.*` path with hidden interface semantics.
+- Symbol and type resolution now normalize `InterfaceClassPath` against the real interface owner class, direct command-plan preflight validates the resolved interface function surface, and editor execution now materializes the real `UK2Node_CallFunction` versus `UK2Node_Message` node classes for direct call versus message semantics.
+- `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.InterfaceInvocationExecution` test now cover the manifest, markdown contract table, normalized planning, and end-to-end editor-authoring path for this interface-invocation family.
 
 ## Milestone 7: Editor Tooling
 Goal:
@@ -525,6 +531,7 @@ Tickets:
 - [x] `VGR-9007` Add semantic versioning and migration docs
 - `VGR-9008` Add extension docs for custom handlers
 - `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
+- [x] `VGR-9010` Add runtime-safe automation fixtures
 
 Acceptance criteria:
 
@@ -544,6 +551,12 @@ Session note for `VGR-9004` (2026-03-07):
 - The release-hardening migration bar now covers three layers: model-level helper migration, compiler-pass migration, and end-to-end legacy execution after migration.
 - `README.md` and `VERSIONING.md` now explicitly call out that supported migration paths should stay aligned with end-to-end execution coverage, not just helper or planning coverage.
 
+Session note for `VGR-9010` (2026-03-07):
+
+- The shared automation interface fixture `UVergilAutomationTestInterface` now lives in the runtime `VergilCore` module instead of the editor-only `VergilAutomation` module, so runtime Blueprint compilation no longer rejects interface-invocation coverage as editor-only.
+- The fixture also now marks `VergilAutomationInterfacePing` as explicitly impure for Blueprint graph authoring, matching the exec-pin interface call/message execution flow covered by the scaffold tests.
+- `Vergil.Scaffold.InterfaceInvocationExecution` now runs against a runtime-safe interface owner, and the full `Vergil.Scaffold.*` suite continues to pass after the fixture move.
+
 ## Critical Path
 The main dependency chain is:
 
@@ -558,11 +571,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-6002`
-2. `VGR-6003`
-3. `VGR-7005`
-4. `VGR-8006`
-5. `VGR-6004`
+1. `VGR-6003`
+2. `VGR-7005`
+3. `VGR-8006`
+4. `VGR-6004`
+5. `VGR-6005`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
