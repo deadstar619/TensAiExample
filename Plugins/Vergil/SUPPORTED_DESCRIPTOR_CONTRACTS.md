@@ -30,6 +30,7 @@ This document describes the current scaffold contracts implemented in code today
 - `UVergilEditorSubsystem` now exposes read-only command-plan, document, diagnostic, and compile-result inspection helpers, while `UVergilAgentSubsystem` mirrors those same helpers for tool-facing inspection without requiring callers to scrape logs.
 - `Vergil::GetSupportedContractManifest()` now exposes the current supported-contract surface as code-backed data, and `UVergilAgentSubsystem` exposes that manifest through read-only inspection helpers for structured data, descriptor-only inspection, deterministic JSON, and a human-readable summary.
 - The real agent-layer contract is now explicit and versioned. `PlanDocument` requests wrap `FVergilGraphDocument` plus target graph and compile flags, `ApplyCommandPlan` requests wrap explicit command plans plus target Blueprint path and expected fingerprint, responses wrap `FVergilCompileResult`, audit entries store the request/response pair plus a UTC timestamp, and the persisted audit-log wrapper stores those normalized entries on disk.
+- `UVergilAgentSubsystem::ExecuteRequest(...)` is the supported orchestration entry point for those agent requests. Planning stays read-only, apply requests replay only the explicit provided command plan, and each execution appends an audit entry automatically.
 
 ## Inspection manifest contracts
 
@@ -65,6 +66,10 @@ This document describes the current scaffold contracts implemented in code today
 - `FVergilAgentRequest::IsWriteRequest()` returns `true` only for `ApplyCommandPlan`, which is the current contract boundary for future permission-gating work.
 - `FVergilAgentResponse` currently carries `RequestId`, `Operation`, `State`, `Message`, and `Result`. `Result` stays the existing `FVergilCompileResult` so agent orchestration reuses the same compile/apply diagnostics, plan statistics, and normalized command-plan payload already documented elsewhere.
 - `FVergilAgentAuditEntry` currently carries `Request`, `Response`, and `TimestampUtc`.
+- `UVergilAgentSubsystem::MakeApplyRequestFromPlan(...)` is the supported helper for the explicit phase handoff. It copies the reviewed normalized plan, carries the target Blueprint path forward from the plan request, and stamps the expected normalized command-plan fingerprint onto the apply request.
+- `UVergilAgentSubsystem::ExecuteRequest(...)` now normalizes missing plan target paths from `Document.BlueprintPath`, defaults missing plan graph names to `EventGraph`, normalizes apply command ordering before fingerprint checks, and records the normalized request in the audit trail.
+- `PlanDocument` execution runs `UVergilEditorSubsystem::MakeCompileRequest(...)` plus `CompileRequest(..., false)` and never mutates the Blueprint. `ApplyCommandPlan` execution runs `ExecuteCommandPlan(...)` only after the provided expected fingerprint matches the normalized explicit plan.
+- Missing or mismatched `ExpectedCommandPlanFingerprint` rejects apply requests before mutation with explicit diagnostics, so plan review and apply replay stay separate.
 - `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing `TimestampUtc` before appending the audit trail and immediately persisting it.
 - `UVergilAgentSubsystem::GetAuditTrailPersistencePath()`, `FlushAuditTrailToDisk()`, and `ReloadAuditTrailFromDisk()` expose the supported persistence surface for the current audit trail.
 - `UVergilAgentSubsystem::ClearAuditTrail()` clears both the in-memory audit trail and the persisted on-disk audit log.

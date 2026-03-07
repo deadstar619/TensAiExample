@@ -23,7 +23,9 @@ public class VergilAgent : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Projects"
+				"Projects",
+				"UnrealEd",
+				"VergilEditor"
 			});
 	}
 }

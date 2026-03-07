@@ -2238,7 +2238,7 @@ namespace
 		return Node.Kind == EVergilNodeKind::Comment;
 	}
 
-	const TCHAR* LexBoolString(const bool bValue)
+	const TCHAR* LexCommentBoolString(const bool bValue)
 	{
 		return bValue ? TEXT("true") : TEXT("false");
 	}
@@ -2329,7 +2329,7 @@ namespace
 				Node.Id,
 				GraphName,
 				TEXT("ShowBubbleWhenZoomed"),
-				LexBoolString(Settings.bShowBubbleWhenZoomed),
+				LexCommentBoolString(Settings.bShowBubbleWhenZoomed),
 				EmitCommand);
 		}
 
@@ -2339,7 +2339,7 @@ namespace
 				Node.Id,
 				GraphName,
 				TEXT("ColorBubble"),
-				LexBoolString(Settings.bColorBubble),
+				LexCommentBoolString(Settings.bColorBubble),
 				EmitCommand);
 		}
 

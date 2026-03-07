@@ -3347,6 +3347,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.AgentAuditPersistence",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAgentPlanApplySeparationTest,
+	"Vergil.Scaffold.AgentPlanApplySeparation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -3916,6 +3921,123 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 
 	AgentSubsystem->ClearAuditTrail();
 	TestFalse(TEXT("Clearing the audit trail should delete the persisted audit-log file."), IFileManager::Get().FileExists(*PersistencePath));
+	return true;
+}
+
+bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for plan/apply execution coverage."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+
+	FScopedPersistentTestBlueprint PersistentBlueprint(TEXT("BP_AgentPlanApplySeparation"));
+	UBlueprint* const Blueprint = PersistentBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Plan/apply separation coverage should create a persistent Blueprint asset."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("The test Blueprint should start without the authored description."), Blueprint->BlueprintDescription.IsEmpty());
+
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = Vergil::SchemaVersion;
+	Document.BlueprintPath = PersistentBlueprint.PackagePath;
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Agent plan/apply separation"));
+
+	FVergilAgentRequest PlanRequest;
+	PlanRequest.Context.RequestId = FGuid::NewGuid();
+	PlanRequest.Context.Summary = TEXT("Plan the requested document.");
+	PlanRequest.Context.InputText = TEXT("Produce a dry-run command plan only.");
+	PlanRequest.Context.Tags = { TEXT("Agent"), TEXT("Plan"), TEXT("Separation") };
+	PlanRequest.Operation = EVergilAgentOperation::PlanDocument;
+	PlanRequest.Plan.Document = Document;
+	PlanRequest.Plan.bAutoLayout = false;
+	PlanRequest.Plan.bGenerateComments = false;
+
+	const FVergilAgentResponse PlanResponse = AgentSubsystem->ExecuteRequest(PlanRequest);
+	TestEqual(TEXT("Plan execution should report the plan operation."), PlanResponse.Operation, EVergilAgentOperation::PlanDocument);
+	TestEqual(TEXT("Plan execution should complete successfully for a valid request."), PlanResponse.State, EVergilAgentExecutionState::Completed);
+	TestTrue(TEXT("Plan execution should return a successful dry-run compile result."), PlanResponse.Result.bSucceeded);
+	TestFalse(TEXT("Plan execution should remain read-only."), PlanResponse.Result.bApplied);
+	TestFalse(TEXT("Plan execution should not mark apply as requested."), PlanResponse.Result.Statistics.bApplyRequested);
+	TestFalse(TEXT("Plan execution should not attempt editor execution."), PlanResponse.Result.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Plan execution should return a normalized command plan."), PlanResponse.Result.Statistics.bCommandPlanNormalized);
+	TestTrue(TEXT("Plan execution should return at least one planned command."), PlanResponse.Result.Commands.Num() > 0);
+	TestTrue(TEXT("Plan execution should produce a command-plan fingerprint."), !PlanResponse.Result.Statistics.CommandPlanFingerprint.IsEmpty());
+	TestTrue(TEXT("Plan execution message should advertise planning."), PlanResponse.Message.Contains(TEXT("Planned")));
+	TestTrue(TEXT("Planning should not mutate Blueprint metadata before apply."), Blueprint->BlueprintDescription.IsEmpty());
+
+	TArray<FVergilAgentAuditEntry> AuditEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Planning should record one normalized audit entry."), AuditEntries.Num(), 1);
+	if (AuditEntries.Num() != 1)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Recorded plan audit entries should keep the plan operation."), AuditEntries[0].Request.Operation, EVergilAgentOperation::PlanDocument);
+	TestEqual(TEXT("Recorded plan audit entries should normalize the target Blueprint path from the document."), AuditEntries[0].Request.Plan.TargetBlueprintPath, PersistentBlueprint.PackagePath);
+	TestEqual(TEXT("Recorded plan audit entries should keep the response state."), AuditEntries[0].Response.State, EVergilAgentExecutionState::Completed);
+
+	FVergilAgentRequestContext RejectedApplyContext;
+	RejectedApplyContext.RequestId = FGuid::NewGuid();
+	RejectedApplyContext.Summary = TEXT("Reject a mismatched apply request.");
+	RejectedApplyContext.InputText = TEXT("Do not replay a plan whose fingerprint changed.");
+	RejectedApplyContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Rejected") };
+
+	FVergilAgentRequest RejectedApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(RejectedApplyContext, PlanRequest, PlanResponse.Result);
+	TestEqual(TEXT("The helper should always produce an apply request operation."), RejectedApplyRequest.Operation, EVergilAgentOperation::ApplyCommandPlan);
+	TestEqual(TEXT("The helper should carry the reviewed Blueprint path into the apply request."), RejectedApplyRequest.Apply.TargetBlueprintPath, PersistentBlueprint.PackagePath);
+	TestEqual(TEXT("The helper should carry the reviewed command count into the apply request."), RejectedApplyRequest.Apply.Commands.Num(), PlanResponse.Result.Commands.Num());
+	TestEqual(TEXT("The helper should carry the reviewed fingerprint into the apply request."), RejectedApplyRequest.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
+
+	RejectedApplyRequest.Apply.ExpectedCommandPlanFingerprint = TEXT("deadbeef");
+	const FVergilAgentResponse RejectedApplyResponse = AgentSubsystem->ExecuteRequest(RejectedApplyRequest);
+	TestEqual(TEXT("Mismatched apply requests should be rejected before mutation."), RejectedApplyResponse.State, EVergilAgentExecutionState::Rejected);
+	TestFalse(TEXT("Rejected apply requests should not report a successful apply."), RejectedApplyResponse.Result.bApplied);
+	TestFalse(TEXT("Rejected apply requests should not attempt editor execution."), RejectedApplyResponse.Result.Statistics.bExecutionAttempted);
+	TestTrue(
+		TEXT("Rejected apply requests should emit an explicit fingerprint-mismatch diagnostic."),
+		RejectedApplyResponse.Result.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == TEXT("CommandPlanFingerprintMismatch");
+		}));
+	TestTrue(TEXT("Rejected apply requests should keep Blueprint metadata unchanged."), Blueprint->BlueprintDescription.IsEmpty());
+
+	FVergilAgentRequestContext ApplyContext;
+	ApplyContext.RequestId = FGuid::NewGuid();
+	ApplyContext.Summary = TEXT("Apply the reviewed command plan.");
+	ApplyContext.InputText = TEXT("Replay the approved command plan against the Blueprint.");
+	ApplyContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Approved") };
+
+	const FVergilAgentRequest ApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(ApplyContext, PlanRequest, PlanResponse.Result);
+	const FVergilAgentResponse ApplyResponse = AgentSubsystem->ExecuteRequest(ApplyRequest);
+	TestEqual(TEXT("Apply execution should report the apply operation."), ApplyResponse.Operation, EVergilAgentOperation::ApplyCommandPlan);
+	TestEqual(TEXT("Apply execution should complete successfully for the reviewed plan."), ApplyResponse.State, EVergilAgentExecutionState::Completed);
+	TestTrue(TEXT("Apply execution should apply the returned command plan."), ApplyResponse.Result.bApplied);
+	TestTrue(TEXT("Apply execution should succeed."), ApplyResponse.Result.bSucceeded);
+	TestTrue(TEXT("Apply execution should mark apply as requested."), ApplyResponse.Result.Statistics.bApplyRequested);
+	TestTrue(TEXT("Apply execution should attempt editor execution."), ApplyResponse.Result.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Apply execution should report that it used the returned command plan."), ApplyResponse.Result.Statistics.bExecutionUsedReturnedCommandPlan);
+	TestTrue(TEXT("Apply execution should execute at least one command."), ApplyResponse.Result.ExecutedCommandCount > 0);
+	TestTrue(TEXT("Apply execution message should advertise apply."), ApplyResponse.Message.Contains(TEXT("Applied")));
+	TestEqual(TEXT("The explicit second-phase apply should mutate Blueprint metadata."), Blueprint->BlueprintDescription, FString(TEXT("Agent plan/apply separation")));
+
+	AuditEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Plan, rejected apply, and successful apply should each record an audit entry."), AuditEntries.Num(), 3);
+	if (AuditEntries.Num() == 3)
+	{
+		TestEqual(TEXT("The second audit entry should record the rejected apply."), AuditEntries[1].Response.State, EVergilAgentExecutionState::Rejected);
+		TestEqual(TEXT("The third audit entry should record the successful apply."), AuditEntries[2].Response.State, EVergilAgentExecutionState::Completed);
+		TestEqual(TEXT("The third audit entry should preserve the approved fingerprint."), AuditEntries[2].Request.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
+	}
+
+	AgentSubsystem->ClearAuditTrail();
 	return true;
 }
 

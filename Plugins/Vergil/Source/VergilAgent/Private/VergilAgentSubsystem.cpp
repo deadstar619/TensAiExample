@@ -1,11 +1,15 @@
 #include "VergilAgentSubsystem.h"
 
+#include "Engine/Blueprint.h"
+#include "Editor.h"
 #include "HAL/FileManager.h"
 #include "JsonObjectConverter.h"
 #include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
+#include "VergilEditorSubsystem.h"
 #include "VergilLog.h"
 
 namespace
@@ -13,6 +17,67 @@ namespace
 	inline constexpr TCHAR PersistedAuditTrailFormatName[] = TEXT("Vergil.AgentAuditLog");
 	inline constexpr int32 PersistedAuditTrailFormatVersion = 1;
 	inline constexpr TCHAR PersistedAuditTrailRelativePath[] = TEXT("Vergil/AgentAuditTrail.json");
+	inline constexpr TCHAR DefaultTargetGraphName[] = TEXT("EventGraph");
+
+	FString TrimOptionalPath(const FString& Path)
+	{
+		return Path.TrimStartAndEnd();
+	}
+
+	FString NormalizeBlueprintReference(const FString& BlueprintPath)
+	{
+		const FString TrimmedPath = TrimOptionalPath(BlueprintPath);
+		if (TrimmedPath.IsEmpty())
+		{
+			return FString();
+		}
+
+		if (TrimmedPath.Contains(TEXT(".")))
+		{
+			const FString PackagePath = FPackageName::ObjectPathToPackageName(TrimmedPath);
+			return PackagePath.IsEmpty() ? TrimmedPath : PackagePath;
+		}
+
+		return TrimmedPath;
+	}
+
+	FString BuildBlueprintObjectPath(const FString& BlueprintPath)
+	{
+		const FString PackagePath = NormalizeBlueprintReference(BlueprintPath);
+		if (PackagePath.IsEmpty())
+		{
+			return FString();
+		}
+
+		if (PackagePath.Contains(TEXT(".")))
+		{
+			return PackagePath;
+		}
+
+		const FString AssetName = FPackageName::GetLongPackageAssetName(PackagePath);
+		if (AssetName.IsEmpty())
+		{
+			return FString();
+		}
+
+		return FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
+	}
+
+	UBlueprint* ResolveBlueprintFromReference(const FString& BlueprintPath)
+	{
+		const FString ObjectPath = BuildBlueprintObjectPath(BlueprintPath);
+		if (ObjectPath.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		if (UBlueprint* const ExistingBlueprint = FindObject<UBlueprint>(nullptr, *ObjectPath))
+		{
+			return ExistingBlueprint;
+		}
+
+		return LoadObject<UBlueprint>(nullptr, *ObjectPath);
+	}
 
 	FVergilAgentAuditEntry NormalizeAuditEntry(const FVergilAgentAuditEntry& Entry)
 	{
@@ -176,6 +241,25 @@ namespace
 		OutEntries = MoveTemp(ParsedEntries);
 		return true;
 	}
+
+	void AddAgentErrorDiagnostic(FVergilCompileResult& Result, const FName Code, const FString& Message)
+	{
+		Result.Diagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Error, Code, Message));
+		Result.bSucceeded = false;
+	}
+
+	FVergilAgentResponse MakeBaseResponse(const FVergilAgentRequest& Request)
+	{
+		FVergilAgentResponse Response;
+		Response.RequestId = Request.Context.RequestId;
+		Response.Operation = Request.Operation;
+		return Response;
+	}
+
+	FString FormatTargetBlueprintLabel(const FString& BlueprintPath)
+	{
+		return BlueprintPath.IsEmpty() ? FString(TEXT("<none>")) : BlueprintPath;
+	}
 }
 
 void UVergilAgentSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -256,6 +340,60 @@ FString UVergilAgentSubsystem::DescribeAgentAuditEntry(const FVergilAgentAuditEn
 FString UVergilAgentSubsystem::InspectAgentAuditEntryAsJson(const FVergilAgentAuditEntry& Entry, const bool bPrettyPrint) const
 {
 	return Vergil::SerializeAgentAuditEntry(Entry, bPrettyPrint);
+}
+
+FVergilAgentRequest UVergilAgentSubsystem::MakeApplyRequestFromPlan(
+	const FVergilAgentRequestContext& Context,
+	const FVergilAgentRequest& PlannedRequest,
+	const FVergilCompileResult& PlannedResult) const
+{
+	FVergilAgentRequest ApplyRequest;
+	ApplyRequest.Context = Context;
+	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
+	ApplyRequest.Apply.TargetBlueprintPath = NormalizeBlueprintReference(
+		!PlannedRequest.Plan.TargetBlueprintPath.IsEmpty()
+			? PlannedRequest.Plan.TargetBlueprintPath
+			: PlannedRequest.Plan.Document.BlueprintPath);
+	ApplyRequest.Apply.Commands = PlannedResult.Commands;
+	Vergil::NormalizeCommandPlan(ApplyRequest.Apply.Commands);
+
+	FVergilCompileStatistics PlannedStatistics = PlannedResult.Statistics;
+	PlannedStatistics.RebuildCommandStatistics(ApplyRequest.Apply.Commands);
+	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = PlannedStatistics.CommandPlanFingerprint;
+	return ApplyRequest;
+}
+
+FVergilAgentResponse UVergilAgentSubsystem::ExecuteRequest(const FVergilAgentRequest& Request)
+{
+	const FVergilAgentRequest NormalizedRequest = NormalizeRequest(Request);
+
+	FVergilAgentResponse Response;
+	switch (NormalizedRequest.Operation)
+	{
+	case EVergilAgentOperation::PlanDocument:
+		Response = ExecutePlanRequest(NormalizedRequest);
+		break;
+
+	case EVergilAgentOperation::ApplyCommandPlan:
+		Response = ExecuteApplyRequest(NormalizedRequest);
+		break;
+
+	default:
+		Response = MakeBaseResponse(NormalizedRequest);
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("Agent request is missing a supported operation.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingAgentOperation"),
+			TEXT("Agent request must specify either PlanDocument or ApplyCommandPlan."));
+		break;
+	}
+
+	FVergilAgentAuditEntry AuditEntry;
+	AuditEntry.Request = NormalizedRequest;
+	AuditEntry.Response = Response;
+	RecordAuditEntry(AuditEntry);
+	return Response;
 }
 
 FString UVergilAgentSubsystem::GetAuditTrailPersistencePath() const
@@ -356,6 +494,233 @@ void UVergilAgentSubsystem::ClearAuditTrail()
 void UVergilAgentSubsystem::TrimAuditTrailToMaxEntries()
 {
 	TrimAuditEntries(AuditTrail, MaxAuditEntries);
+}
+
+FVergilAgentRequest UVergilAgentSubsystem::NormalizeRequest(const FVergilAgentRequest& Request) const
+{
+	FVergilAgentRequest NormalizedRequest = Request;
+	if (!NormalizedRequest.Context.RequestId.IsValid())
+	{
+		NormalizedRequest.Context.RequestId = FGuid::NewGuid();
+	}
+
+	switch (NormalizedRequest.Operation)
+	{
+	case EVergilAgentOperation::PlanDocument:
+	{
+		const FString NormalizedTargetPath = NormalizeBlueprintReference(
+			!NormalizedRequest.Plan.TargetBlueprintPath.IsEmpty()
+				? NormalizedRequest.Plan.TargetBlueprintPath
+				: NormalizedRequest.Plan.Document.BlueprintPath);
+		NormalizedRequest.Plan.TargetBlueprintPath = NormalizedTargetPath;
+
+		if (NormalizedRequest.Plan.Document.BlueprintPath.IsEmpty())
+		{
+			NormalizedRequest.Plan.Document.BlueprintPath = NormalizedTargetPath;
+		}
+		else
+		{
+			NormalizedRequest.Plan.Document.BlueprintPath = NormalizeBlueprintReference(NormalizedRequest.Plan.Document.BlueprintPath);
+		}
+
+		if (NormalizedRequest.Plan.TargetGraphName.IsNone())
+		{
+			NormalizedRequest.Plan.TargetGraphName = FName(DefaultTargetGraphName);
+		}
+		break;
+	}
+
+	case EVergilAgentOperation::ApplyCommandPlan:
+		NormalizedRequest.Apply.TargetBlueprintPath = NormalizeBlueprintReference(NormalizedRequest.Apply.TargetBlueprintPath);
+		NormalizedRequest.Apply.ExpectedCommandPlanFingerprint = NormalizedRequest.Apply.ExpectedCommandPlanFingerprint.TrimStartAndEnd();
+		Vergil::NormalizeCommandPlan(NormalizedRequest.Apply.Commands);
+		break;
+
+	default:
+		break;
+	}
+
+	return NormalizedRequest;
+}
+
+FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(const FVergilAgentRequest& Request) const
+{
+	FVergilAgentResponse Response = MakeBaseResponse(Request);
+
+	if (GEditor == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("Vergil planning requires the editor subsystem.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingEditorContext"),
+			TEXT("Vergil agent planning requires an editor context."));
+		return Response;
+	}
+
+	if (Request.Plan.TargetBlueprintPath.IsEmpty())
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("PlanDocument requests require a target Blueprint path.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingPlanTargetBlueprintPath"),
+			TEXT("PlanDocument requests require a target Blueprint path."));
+		return Response;
+	}
+
+	if (!Request.Plan.Document.BlueprintPath.IsEmpty()
+		&& Request.Plan.Document.BlueprintPath != Request.Plan.TargetBlueprintPath)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("PlanDocument request target path does not match the document BlueprintPath.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("PlanTargetBlueprintPathMismatch"),
+			FString::Printf(
+				TEXT("PlanDocument target '%s' does not match document BlueprintPath '%s'."),
+				*Request.Plan.TargetBlueprintPath,
+				*Request.Plan.Document.BlueprintPath));
+		return Response;
+	}
+
+	UBlueprint* const Blueprint = ResolveBlueprintFromReference(Request.Plan.TargetBlueprintPath);
+	if (Blueprint == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("PlanDocument request could not resolve the target Blueprint.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("UnableToResolveTargetBlueprint"),
+			FString::Printf(
+				TEXT("Could not resolve the target Blueprint '%s'."),
+				*FormatTargetBlueprintLabel(Request.Plan.TargetBlueprintPath)));
+		return Response;
+	}
+
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor->GetEditorSubsystem<UVergilEditorSubsystem>();
+	if (EditorSubsystem == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("Vergil planning requires the editor subsystem.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingVergilEditorSubsystem"),
+			TEXT("UVergilEditorSubsystem was unavailable for plan execution."));
+		return Response;
+	}
+
+	const FVergilCompileRequest CompileRequest = EditorSubsystem->MakeCompileRequest(
+		Blueprint,
+		Request.Plan.Document,
+		Request.Plan.TargetGraphName,
+		Request.Plan.bAutoLayout,
+		Request.Plan.bGenerateComments);
+	Response.Result = EditorSubsystem->CompileRequest(CompileRequest, false);
+	Response.State = Response.Result.bSucceeded ? EVergilAgentExecutionState::Completed : EVergilAgentExecutionState::Failed;
+	Response.Message = Response.Result.bSucceeded
+		? FString::Printf(
+			TEXT("Planned %d commands for '%s'."),
+			Response.Result.Commands.Num(),
+			*FormatTargetBlueprintLabel(Request.Plan.TargetBlueprintPath))
+		: FString::Printf(
+			TEXT("Planning failed for '%s'."),
+			*FormatTargetBlueprintLabel(Request.Plan.TargetBlueprintPath));
+	return Response;
+}
+
+FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAgentRequest& Request) const
+{
+	FVergilAgentResponse Response = MakeBaseResponse(Request);
+	Response.Result.Commands = Request.Apply.Commands;
+	Response.Result.Statistics.bApplyRequested = true;
+	Response.Result.Statistics.bCommandPlanNormalized = true;
+	Response.Result.Statistics.RebuildCommandStatistics(Response.Result.Commands);
+
+	if (Request.Apply.TargetBlueprintPath.IsEmpty())
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("ApplyCommandPlan requests require a target Blueprint path.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingApplyTargetBlueprintPath"),
+			TEXT("ApplyCommandPlan requests require a target Blueprint path."));
+		return Response;
+	}
+
+	if (Request.Apply.ExpectedCommandPlanFingerprint.IsEmpty())
+	{
+		Response.State = EVergilAgentExecutionState::Rejected;
+		Response.Message = TEXT("ApplyCommandPlan requests require the reviewed command-plan fingerprint.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingExpectedCommandPlanFingerprint"),
+			TEXT("ApplyCommandPlan requests require ExpectedCommandPlanFingerprint so apply stays separated from planning."));
+		return Response;
+	}
+
+	if (Request.Apply.ExpectedCommandPlanFingerprint != Response.Result.Statistics.CommandPlanFingerprint)
+	{
+		Response.State = EVergilAgentExecutionState::Rejected;
+		Response.Message = TEXT("ApplyCommandPlan request fingerprint did not match the normalized command plan.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("CommandPlanFingerprintMismatch"),
+			FString::Printf(
+				TEXT("ApplyCommandPlan fingerprint '%s' did not match the normalized command plan fingerprint '%s'."),
+				*Request.Apply.ExpectedCommandPlanFingerprint,
+				*Response.Result.Statistics.CommandPlanFingerprint));
+		return Response;
+	}
+
+	if (GEditor == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("Vergil apply requires the editor subsystem.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingEditorContext"),
+			TEXT("Vergil agent apply requires an editor context."));
+		return Response;
+	}
+
+	UBlueprint* const Blueprint = ResolveBlueprintFromReference(Request.Apply.TargetBlueprintPath);
+	if (Blueprint == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("ApplyCommandPlan request could not resolve the target Blueprint.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("UnableToResolveTargetBlueprint"),
+			FString::Printf(
+				TEXT("Could not resolve the target Blueprint '%s'."),
+				*FormatTargetBlueprintLabel(Request.Apply.TargetBlueprintPath)));
+		return Response;
+	}
+
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor->GetEditorSubsystem<UVergilEditorSubsystem>();
+	if (EditorSubsystem == nullptr)
+	{
+		Response.State = EVergilAgentExecutionState::Failed;
+		Response.Message = TEXT("Vergil apply requires the editor subsystem.");
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			TEXT("MissingVergilEditorSubsystem"),
+			TEXT("UVergilEditorSubsystem was unavailable for apply execution."));
+		return Response;
+	}
+
+	Response.Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, Request.Apply.Commands);
+	Response.State = Response.Result.bApplied ? EVergilAgentExecutionState::Completed : EVergilAgentExecutionState::Failed;
+	Response.Message = Response.Result.bApplied
+		? FString::Printf(
+			TEXT("Applied %d commands to '%s'."),
+			Response.Result.ExecutedCommandCount,
+			*FormatTargetBlueprintLabel(Request.Apply.TargetBlueprintPath))
+		: FString::Printf(
+			TEXT("Apply failed for '%s'."),
+			*FormatTargetBlueprintLabel(Request.Apply.TargetBlueprintPath));
+	return Response;
 }
 
 bool UVergilAgentSubsystem::TryLoadAuditTrailFromDisk(TArray<FVergilAgentAuditEntry>& OutEntries, FString* OutErrorMessage) const

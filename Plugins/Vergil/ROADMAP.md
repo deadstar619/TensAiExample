@@ -429,7 +429,7 @@ Tickets:
 
 - [x] `VGR-8001` Define agent request/response contracts
 - [x] `VGR-8002` Persist audit data instead of keeping it transient only
-- `VGR-8003` Add plan/apply separation
+- [x] `VGR-8003` Add plan/apply separation
 - `VGR-8004` Add permission gates around write/apply actions
 - [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
 - `VGR-8006` Add partial-apply recovery flows
@@ -452,6 +452,12 @@ Session note for `VGR-8002` (2026-03-07):
 - `UVergilAgentSubsystem` now persists normalized audit entries to `Saved/Vergil/AgentAuditTrail.json` instead of keeping them in transient memory only, and it exposes `GetAuditTrailPersistencePath()`, `FlushAuditTrailToDisk()`, and `ReloadAuditTrailFromDisk()` for explicit operational control.
 - The persisted on-disk wrapper is versioned as `Vergil.AgentAuditLog` `v1`, so future agent audit-log changes have a dedicated migration/versioning boundary separate from the request/response/audit-entry inspection formats.
 - `Vergil.Scaffold.AgentAuditPersistence` now covers disk write, explicit reload, corruption handling, and clear/delete behavior while preserving any pre-existing audit-log file around the automation run.
+
+Session note for `VGR-8003` (2026-03-07):
+
+- `UVergilAgentSubsystem` now executes real `PlanDocument` and `ApplyCommandPlan` requests through `ExecuteRequest(...)` instead of only exposing inspection and persistence helpers, while still keeping the deterministic planning/apply logic in the existing editor subsystem.
+- `PlanDocument` now resolves the target Blueprint from the explicit request path, runs a dry-run compile only, and records the normalized read-only request plus response in the persisted audit trail. `ApplyCommandPlan` now replays only the explicit provided command plan after its expected normalized fingerprint matches, so apply stays a separate reviewed phase.
+- `UVergilAgentSubsystem::MakeApplyRequestFromPlan(...)` now packages the reviewed normalized plan plus fingerprint into the second-phase apply request, and `Vergil.Scaffold.AgentPlanApplySeparation` covers dry-run planning, rejected mismatched apply, successful explicit apply, and per-phase audit entries.
 
 Session note for `VGR-8005` (2026-03-06):
 
@@ -508,13 +514,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-8003`
-2. `VGR-5005`
-3. `VGR-5006`
-4. `VGR-5008`
-5. `VGR-7004`
+1. `VGR-5005`
+2. `VGR-5006`
+3. `VGR-5008`
+4. `VGR-7004`
+5. `VGR-8004`
 
-This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:
