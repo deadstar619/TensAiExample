@@ -3268,6 +3268,358 @@ namespace
 		return true;
 	}
 
+	struct FVergilAutoLayoutNodeState
+	{
+		const FVergilGraphNode* Node = nullptr;
+		TArray<int32> Incoming;
+		TArray<int32> Outgoing;
+		int32 Column = 0;
+		int32 Row = 0;
+		bool bPlaced = false;
+	};
+
+	bool IsGuidLexicallyLess(const FGuid& A, const FGuid& B)
+	{
+		if (A.A != B.A)
+		{
+			return A.A < B.A;
+		}
+
+		if (A.B != B.B)
+		{
+			return A.B < B.B;
+		}
+
+		if (A.C != B.C)
+		{
+			return A.C < B.C;
+		}
+
+		return A.D < B.D;
+	}
+
+	int32 GetAutoLayoutNodePriority(const FVergilGraphNode& Node)
+	{
+		if (Node.Kind == EVergilNodeKind::Event || Node.Descriptor.ToString().StartsWith(TEXT("K2.CustomEvent.")))
+		{
+			return 0;
+		}
+
+		if (IsCommentNode(Node))
+		{
+			return 2;
+		}
+
+		return 1;
+	}
+
+	bool IsAutoLayoutNodeLess(const FVergilGraphNode& A, const FVergilGraphNode& B)
+	{
+		const int32 PriorityA = GetAutoLayoutNodePriority(A);
+		const int32 PriorityB = GetAutoLayoutNodePriority(B);
+		if (PriorityA != PriorityB)
+		{
+			return PriorityA < PriorityB;
+		}
+
+		if (!FMath::IsNearlyEqual(A.Position.Y, B.Position.Y))
+		{
+			return A.Position.Y < B.Position.Y;
+		}
+
+		if (!FMath::IsNearlyEqual(A.Position.X, B.Position.X))
+		{
+			return A.Position.X < B.Position.X;
+		}
+
+		if (A.Descriptor != B.Descriptor)
+		{
+			return A.Descriptor.LexicalLess(B.Descriptor);
+		}
+
+		return IsGuidLexicallyLess(A.Id, B.Id);
+	}
+
+	float SanitizeLayoutSpacing(const float Value, const float Minimum)
+	{
+		return FMath::Max(Value, Minimum);
+	}
+
+	float GetCommentDimension(const FVergilGraphNode& Node, const FName PrimaryKey, const FName SecondaryKey, const float DefaultValue)
+	{
+		float ParsedValue = 0.0f;
+		const FString PrimaryValue = Node.Metadata.FindRef(PrimaryKey).TrimStartAndEnd();
+		if (!PrimaryValue.IsEmpty() && LexTryParseString(ParsedValue, *PrimaryValue) && ParsedValue > 0.0f)
+		{
+			return ParsedValue;
+		}
+
+		const FString SecondaryValue = Node.Metadata.FindRef(SecondaryKey).TrimStartAndEnd();
+		if (!SecondaryValue.IsEmpty() && LexTryParseString(ParsedValue, *SecondaryValue) && ParsedValue > 0.0f)
+		{
+			return ParsedValue;
+		}
+
+		return DefaultValue;
+	}
+
+	void BuildPrimaryAutoLayoutPositions(
+		const TArray<const FVergilGraphNode*>& PrimaryNodes,
+		const TArray<FVergilGraphEdge>& Edges,
+		const FVergilAutoLayoutSettings& Settings,
+		TMap<FGuid, FVector2D>& OutPositions)
+	{
+		OutPositions.Reset();
+		if (PrimaryNodes.Num() == 0)
+		{
+			return;
+		}
+
+		TArray<const FVergilGraphNode*> SortedPrimaryNodes = PrimaryNodes;
+		SortedPrimaryNodes.Sort([](const FVergilGraphNode& A, const FVergilGraphNode& B)
+		{
+			return IsAutoLayoutNodeLess(A, B);
+		});
+
+		TArray<FVergilAutoLayoutNodeState> NodeStates;
+		NodeStates.Reserve(SortedPrimaryNodes.Num());
+
+		TMap<FGuid, int32> NodeIndices;
+		for (int32 NodeIndex = 0; NodeIndex < SortedPrimaryNodes.Num(); ++NodeIndex)
+		{
+			FVergilAutoLayoutNodeState& NodeState = NodeStates.AddDefaulted_GetRef();
+			NodeState.Node = SortedPrimaryNodes[NodeIndex];
+			NodeIndices.Add(SortedPrimaryNodes[NodeIndex]->Id, NodeIndex);
+		}
+
+		for (const FVergilGraphEdge& Edge : Edges)
+		{
+			const int32* const SourceIndex = NodeIndices.Find(Edge.SourceNodeId);
+			const int32* const TargetIndex = NodeIndices.Find(Edge.TargetNodeId);
+			if (SourceIndex == nullptr || TargetIndex == nullptr || *SourceIndex == *TargetIndex)
+			{
+				continue;
+			}
+
+			NodeStates[*SourceIndex].Outgoing.Add(*TargetIndex);
+			NodeStates[*TargetIndex].Incoming.Add(*SourceIndex);
+		}
+
+		TArray<int32> RemainingIndegree;
+		RemainingIndegree.Reserve(NodeStates.Num());
+		for (const FVergilAutoLayoutNodeState& NodeState : NodeStates)
+		{
+			RemainingIndegree.Add(NodeState.Incoming.Num());
+		}
+
+		int32 PlacedCount = 0;
+		while (PlacedCount < NodeStates.Num())
+		{
+			int32 SelectedIndex = INDEX_NONE;
+			for (int32 NodeIndex = 0; NodeIndex < NodeStates.Num(); ++NodeIndex)
+			{
+				if (!NodeStates[NodeIndex].bPlaced && RemainingIndegree[NodeIndex] == 0)
+				{
+					SelectedIndex = NodeIndex;
+					break;
+				}
+			}
+
+			if (SelectedIndex == INDEX_NONE)
+			{
+				for (int32 NodeIndex = 0; NodeIndex < NodeStates.Num(); ++NodeIndex)
+				{
+					if (!NodeStates[NodeIndex].bPlaced)
+					{
+						SelectedIndex = NodeIndex;
+						break;
+					}
+				}
+			}
+
+			check(SelectedIndex != INDEX_NONE);
+
+			int32 Column = 0;
+			for (const int32 IncomingIndex : NodeStates[SelectedIndex].Incoming)
+			{
+				if (NodeStates[IncomingIndex].bPlaced)
+				{
+					Column = FMath::Max(Column, NodeStates[IncomingIndex].Column + 1);
+				}
+			}
+
+			NodeStates[SelectedIndex].Column = Column;
+			NodeStates[SelectedIndex].bPlaced = true;
+			++PlacedCount;
+
+			for (const int32 OutgoingIndex : NodeStates[SelectedIndex].Outgoing)
+			{
+				if (!NodeStates[OutgoingIndex].bPlaced && RemainingIndegree[OutgoingIndex] > 0)
+				{
+					--RemainingIndegree[OutgoingIndex];
+				}
+			}
+		}
+
+		int32 MaxColumn = 0;
+		for (const FVergilAutoLayoutNodeState& NodeState : NodeStates)
+		{
+			MaxColumn = FMath::Max(MaxColumn, NodeState.Column);
+		}
+
+		TArray<TArray<int32>> ColumnBuckets;
+		ColumnBuckets.SetNum(MaxColumn + 1);
+		for (int32 NodeIndex = 0; NodeIndex < NodeStates.Num(); ++NodeIndex)
+		{
+			ColumnBuckets[NodeStates[NodeIndex].Column].Add(NodeIndex);
+		}
+
+		const float HorizontalSpacing = SanitizeLayoutSpacing(Settings.HorizontalSpacing, 64.0f);
+		const float VerticalSpacing = SanitizeLayoutSpacing(Settings.VerticalSpacing, 64.0f);
+
+		for (int32 ColumnIndex = 0; ColumnIndex < ColumnBuckets.Num(); ++ColumnIndex)
+		{
+			TArray<int32>& Bucket = ColumnBuckets[ColumnIndex];
+			Bucket.Sort([&NodeStates](const int32 A, const int32 B)
+			{
+				double AverageIncomingRowA = 0.0;
+				double AverageIncomingRowB = 0.0;
+				int32 IncomingRowCountA = 0;
+				int32 IncomingRowCountB = 0;
+
+				for (const int32 IncomingIndex : NodeStates[A].Incoming)
+				{
+					if (NodeStates[IncomingIndex].Column < NodeStates[A].Column)
+					{
+						AverageIncomingRowA += NodeStates[IncomingIndex].Row;
+						++IncomingRowCountA;
+					}
+				}
+
+				for (const int32 IncomingIndex : NodeStates[B].Incoming)
+				{
+					if (NodeStates[IncomingIndex].Column < NodeStates[B].Column)
+					{
+						AverageIncomingRowB += NodeStates[IncomingIndex].Row;
+						++IncomingRowCountB;
+					}
+				}
+
+				if (IncomingRowCountA > 0)
+				{
+					AverageIncomingRowA /= IncomingRowCountA;
+				}
+
+				if (IncomingRowCountB > 0)
+				{
+					AverageIncomingRowB /= IncomingRowCountB;
+				}
+
+				if ((IncomingRowCountA > 0) != (IncomingRowCountB > 0))
+				{
+					return IncomingRowCountA > 0;
+				}
+
+				if (IncomingRowCountA > 0 && !FMath::IsNearlyEqual(AverageIncomingRowA, AverageIncomingRowB))
+				{
+					return AverageIncomingRowA < AverageIncomingRowB;
+				}
+
+				return IsAutoLayoutNodeLess(*NodeStates[A].Node, *NodeStates[B].Node);
+			});
+
+			for (int32 RowIndex = 0; RowIndex < Bucket.Num(); ++RowIndex)
+			{
+				FVergilAutoLayoutNodeState& NodeState = NodeStates[Bucket[RowIndex]];
+				NodeState.Row = RowIndex;
+				OutPositions.Add(
+					NodeState.Node->Id,
+					FVector2D(
+						Settings.Origin.X + (ColumnIndex * HorizontalSpacing),
+						Settings.Origin.Y + (RowIndex * VerticalSpacing)));
+			}
+		}
+	}
+
+	void BuildCommentAutoLayoutPositions(
+		const TArray<const FVergilGraphNode*>& CommentNodes,
+		const FVergilAutoLayoutSettings& Settings,
+		const TMap<FGuid, FVector2D>& PrimaryPositions,
+		TMap<FGuid, FVector2D>& OutPositions)
+	{
+		if (CommentNodes.Num() == 0)
+		{
+			return;
+		}
+
+		float AnchorX = Settings.Origin.X;
+		float AnchorY = Settings.Origin.Y;
+		if (PrimaryPositions.Num() > 0)
+		{
+			bool bFirstPrimaryPosition = true;
+			for (const TPair<FGuid, FVector2D>& PositionEntry : PrimaryPositions)
+			{
+				if (bFirstPrimaryPosition)
+				{
+					AnchorX = PositionEntry.Value.X;
+					AnchorY = PositionEntry.Value.Y;
+					bFirstPrimaryPosition = false;
+					continue;
+				}
+
+				AnchorX = FMath::Min(AnchorX, PositionEntry.Value.X);
+				AnchorY = FMath::Min(AnchorY, PositionEntry.Value.Y);
+			}
+		}
+
+		TArray<const FVergilGraphNode*> SortedComments = CommentNodes;
+		SortedComments.Sort([](const FVergilGraphNode& A, const FVergilGraphNode& B)
+		{
+			return IsAutoLayoutNodeLess(A, B);
+		});
+
+		const float CommentPadding = SanitizeLayoutSpacing(Settings.CommentPadding, 16.0f);
+		float CurrentY = AnchorY;
+		for (const FVergilGraphNode* CommentNode : SortedComments)
+		{
+			check(CommentNode != nullptr);
+
+			const float CommentWidth = GetCommentDimension(*CommentNode, TEXT("CommentWidth"), TEXT("NodeWidth"), 400.0f);
+			const float CommentHeight = GetCommentDimension(*CommentNode, TEXT("CommentHeight"), TEXT("NodeHeight"), 160.0f);
+			const float CommentX = PrimaryPositions.Num() > 0
+				? (AnchorX - CommentWidth - CommentPadding)
+				: Settings.Origin.X;
+
+			OutPositions.Add(CommentNode->Id, FVector2D(CommentX, CurrentY));
+			CurrentY += CommentHeight + CommentPadding;
+		}
+	}
+
+	void AddAutoLayoutMoveCommands(
+		const TArray<const FVergilGraphNode*>& Nodes,
+		const TMap<FGuid, FVector2D>& PlannedPositions,
+		const FName GraphName,
+		FVergilCompilerContext& Context)
+	{
+		for (const FVergilGraphNode* Node : Nodes)
+		{
+			check(Node != nullptr);
+
+			const FVector2D* const PlannedPosition = PlannedPositions.Find(Node->Id);
+			if (PlannedPosition == nullptr || Node->Position.Equals(*PlannedPosition, KINDA_SMALL_NUMBER))
+			{
+				continue;
+			}
+
+			FVergilCompilerCommand MoveCommand;
+			MoveCommand.Type = EVergilCommandType::MoveNode;
+			MoveCommand.GraphName = GraphName;
+			MoveCommand.NodeId = Node->Id;
+			MoveCommand.Position = *PlannedPosition;
+			Context.AddPostLayoutCommand(MoveCommand);
+		}
+	}
+
 	bool BuildPostLayoutCommands(const FVergilCompileRequest& Request, FVergilCompilerContext& Context)
 	{
 		Context.ResetPostLayoutCommands();
@@ -3276,7 +3628,34 @@ namespace
 			return true;
 		}
 
-		// Layout remains a dedicated optional post-pass boundary for now.
+		const TArray<FVergilGraphNode>& TargetNodes = GetTargetGraphNodes(Context);
+		const TArray<FVergilGraphEdge>& TargetEdges = GetTargetGraphEdges(Context);
+
+		TArray<const FVergilGraphNode*> PrimaryNodes;
+		TArray<const FVergilGraphNode*> CommentNodes;
+		PrimaryNodes.Reserve(TargetNodes.Num());
+		CommentNodes.Reserve(TargetNodes.Num());
+
+		for (const FVergilGraphNode& Node : TargetNodes)
+		{
+			if (IsCommentNode(Node))
+			{
+				if (Request.bGenerateComments)
+				{
+					CommentNodes.Add(&Node);
+				}
+				continue;
+			}
+
+			PrimaryNodes.Add(&Node);
+		}
+
+		TMap<FGuid, FVector2D> PlannedPositions;
+		BuildPrimaryAutoLayoutPositions(PrimaryNodes, TargetEdges, Request.AutoLayout, PlannedPositions);
+		BuildCommentAutoLayoutPositions(CommentNodes, Request.AutoLayout, PlannedPositions, PlannedPositions);
+		AddAutoLayoutMoveCommands(PrimaryNodes, PlannedPositions, Context.GetGraphName(), Context);
+		AddAutoLayoutMoveCommands(CommentNodes, PlannedPositions, Context.GetGraphName(), Context);
+
 		return true;
 	}
 

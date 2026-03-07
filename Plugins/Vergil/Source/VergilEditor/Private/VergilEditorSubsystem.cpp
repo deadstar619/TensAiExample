@@ -14,11 +14,19 @@ namespace
 		const bool bAutoLayout,
 		const bool bGenerateComments)
 	{
+		const UVergilDeveloperSettings* const Settings = GetDefault<UVergilDeveloperSettings>();
+
 		FVergilCompileRequest Request;
 		Request.TargetBlueprint = Blueprint;
 		Request.Document = Document;
 		Request.TargetGraphName = TargetGraphName;
 		Request.bAutoLayout = bAutoLayout;
+		if (Settings != nullptr)
+		{
+			Request.AutoLayout.HorizontalSpacing = Settings->DefaultNodeSpacing;
+			Request.AutoLayout.VerticalSpacing = Settings->DefaultNodeSpacing;
+			Request.AutoLayout.CommentPadding = Settings->DefaultCommentPadding;
+		}
 		Request.bGenerateComments = bGenerateComments;
 		return Request;
 	}

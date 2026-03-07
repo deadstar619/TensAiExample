@@ -19,7 +19,7 @@ This document describes the current scaffold contracts implemented in code today
 - The current schema version is `3`. Older document schemas can be upgraded explicitly through `Vergil::MigrateDocumentSchema(...)` / `Vergil::MigrateDocumentToCurrentSchema(...)`, and the compiler now runs that upgrade path automatically before structural validation and planning.
 - The current plugin semantic version is `0.1.0`, and the current supported document migration steps are `1->2` and `2->3`. See [VERSIONING.md](VERSIONING.md) for the release/versioning policy that governs schema, command-plan, and manifest version changes.
 - The compiler pipeline now runs schema migration, structural validation, semantic validation, symbol resolution, type resolution, node lowering, connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and then command planning.
-- `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` now gates the dedicated layout post-pass boundary. The layout pass currently emits no commands until the future layout API lands.
+- `FVergilCompileRequest.bGenerateComments` now controls whether authored comment nodes are emitted through the dedicated comment post-pass, and `bAutoLayout` plus `AutoLayout` now control deterministic `MoveNode` generation through the dedicated layout post-pass. `AutoLayout` currently supports `Origin`, `HorizontalSpacing`, `VerticalSpacing`, and `CommentPadding`, and `UVergilEditorSubsystem` seeds those values from `UVergilDeveloperSettings`.
 - `FVergilCompileResult` now includes `Statistics` plus ordered `PassRecords`. Compiler-produced results report target graph, requested/effective schema version, requested auto-layout/comment flags, normalized per-phase command counts, plan fingerprints, planning/apply invocation counts, and the last completed or failed compiler pass without requiring log scraping.
 - Direct `ExecuteCommandPlan` execution now supports explicit asset-mutation commands for Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node removal/movement, and explicit blueprint compilation.
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
@@ -193,8 +193,9 @@ This document describes the current scaffold contracts implemented in code today
 ## Layout post-pass contracts
 
 - `FVergilLayoutPostPass` now runs after the comment post-pass and before final command planning.
-- `FVergilCompileRequest.bAutoLayout` now gates this dedicated layout boundary, but the pass is intentionally a no-op until the future deterministic layout API lands.
-- Because the layout pass is isolated from core lowering and planning, future layout work can add `MoveNode` or related commands without changing earlier compiler stages.
+- `FVergilCompileRequest.bAutoLayout` now gates deterministic `MoveNode` planning through this boundary, and `FVergilCompileRequest.AutoLayout` currently exposes `Origin`, `HorizontalSpacing`, `VerticalSpacing`, and `CommentPadding`.
+- Primary non-comment nodes are currently laid out into deterministic dependency columns and rows. When comment generation is enabled, authored comment nodes are stacked into a deterministic left-side band using `CommentPadding` plus authored width or height metadata when present.
+- Because the layout pass remains isolated from core lowering and planning, future layout work can extend the same `MoveNode`-based surface without changing earlier compiler stages.
 
 ## Blueprint metadata contracts
 

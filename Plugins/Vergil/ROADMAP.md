@@ -227,8 +227,8 @@ Session note for `VGR-3007` (2026-03-06):
 Session note for `VGR-3008` (2026-03-06):
 
 - `FVergilCommentPostPass` and `FVergilLayoutPostPass` now run after post-compile finalize lowering and before final command planning, which makes comment/layout work explicit optional post-passes instead of part of core node lowering.
-- Authored comment nodes now lower through the dedicated comment post-pass when `FVergilCompileRequest.bGenerateComments` is true, while the dedicated layout pass is an isolated no-op boundary awaiting the later deterministic layout API.
-- `Vergil.Scaffold.LayoutCommentPostPasses` now verifies comment-node emission only happens through the post-pass and that toggling `bAutoLayout` does not perturb the normalized command plan yet.
+- Authored comment nodes now lower through the dedicated comment post-pass when `FVergilCompileRequest.bGenerateComments` is true, while the dedicated layout pass stays isolated as the later extension point that `VGR-7002` wires into deterministic `MoveNode` planning.
+- `Vergil.Scaffold.LayoutCommentPostPasses` now verifies comment-node emission only happens through the post-pass, and `VGR-7002` later extends that coverage to assert deterministic `MoveNode` output when `bAutoLayout` is enabled.
 
 Session note for `VGR-3009` (2026-03-06):
 
@@ -379,7 +379,7 @@ Goal:
 Tickets:
 
 - [x] `VGR-7001` Add document/command/diagnostic inspector tooling
-- `VGR-7002` Add deterministic auto-layout pass API
+- [x] `VGR-7002` Add deterministic auto-layout pass API
 - `VGR-7003` Add explicit comment generation pass API
 - `VGR-7004` Add document diff and command-plan preview tooling
 - `VGR-7005` Add stronger undo/redo transaction auditing
@@ -395,6 +395,12 @@ Session note for `VGR-7001` (2026-03-07):
 - The existing inspection helper declarations are now implemented end-to-end: `Vergil::DescribeGraphDocument(...)` / `SerializeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)` / `SerializeDiagnostics(...)`, and `Vergil::DescribeCompileResult(...)` / `SerializeCompileResult(...)` now expose stable document, diagnostics, and compile-result inspection surfaces alongside the pre-existing command-plan inspection helpers.
 - `UVergilEditorSubsystem` now exposes read-only `DescribeCommandPlan()`, `DescribeDocument()`, `SerializeDocument()`, `DescribeDiagnostics()`, `SerializeDiagnostics()`, `DescribeCompileResult()`, and `SerializeCompileResult()` helpers, while `UVergilAgentSubsystem` mirrors the same surfaces plus `InspectCommandPlanAsJson()` for tool-facing inspection without scraping logs.
 - `Vergil.Scaffold.InspectorTooling` now covers namespace, editor-subsystem, and agent-subsystem inspection parity for command plans, canonical documents, diagnostics, and compile results, including deterministic JSON payload checks.
+
+Session note for `VGR-7002` (2026-03-07):
+
+- `FVergilLayoutPostPass` now emits deterministic `MoveNode` commands instead of acting as a no-op boundary. Primary nodes are laid out into dependency-driven columns and rows, and authored comment nodes are placed into a deterministic left-side band when comment generation is enabled.
+- `FVergilCompileRequest` now carries explicit `AutoLayout` settings for `Origin`, `HorizontalSpacing`, `VerticalSpacing`, and `CommentPadding`, while `UVergilEditorSubsystem` seeds those values from `UVergilDeveloperSettings` so the existing editor-facing compile helpers pick up project defaults automatically.
+- `Vergil.Scaffold.LayoutCommentPostPasses` now covers deterministic layout planning, and `Vergil.Scaffold.AutoLayoutExecution` now proves the planned `MoveNode` work is applied end-to-end under the `UE_5.7` editor pipeline.
 
 ## Milestone 8: Real Agent Layer
 Goal:
@@ -484,9 +490,9 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7002`
-2. `VGR-5003`
-3. `VGR-5004`
+1. `VGR-5003`
+2. `VGR-5004`
+3. `VGR-7003`
 4. `VGR-8003`
 5. `VGR-5005`
 

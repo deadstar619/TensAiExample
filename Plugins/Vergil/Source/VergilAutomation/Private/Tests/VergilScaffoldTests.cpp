@@ -2640,6 +2640,10 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 			return Command.Type == Type && Command.NodeId == NodeId;
 		});
 	};
+	auto FindMoveCommand = [&FindNodeCommand](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return FindNodeCommand(Commands, EVergilCommandType::MoveNode, NodeId);
+	};
 
 	const FVergilBlueprintCompilerService CompilerService;
 
@@ -2663,18 +2667,28 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	CommentEnabledRequest.Document.Nodes = { PrimaryNode, CommentNode };
 	CommentEnabledRequest.bGenerateComments = true;
 	CommentEnabledRequest.bAutoLayout = true;
+	CommentEnabledRequest.AutoLayout.HorizontalSpacing = 256.0f;
+	CommentEnabledRequest.AutoLayout.VerticalSpacing = 192.0f;
+	CommentEnabledRequest.AutoLayout.CommentPadding = 80.0f;
 
 	const FVergilCompileResult CommentEnabledResult = CompilerService.Compile(CommentEnabledRequest);
 	TestTrue(TEXT("Comment/layout post-pass coverage should compile successfully when comments are enabled."), CommentEnabledResult.bSucceeded);
 
 	const FVergilCompilerCommand* const PrimaryAddNode = FindNodeCommand(CommentEnabledResult.Commands, EVergilCommandType::AddNode, PrimaryNode.Id);
 	const FVergilCompilerCommand* const CommentAddNode = FindNodeCommand(CommentEnabledResult.Commands, EVergilCommandType::AddNode, CommentNode.Id);
+	const FVergilCompilerCommand* const PrimaryMoveNode = FindMoveCommand(CommentEnabledResult.Commands, PrimaryNode.Id);
+	const FVergilCompilerCommand* const CommentMoveNode = FindMoveCommand(CommentEnabledResult.Commands, CommentNode.Id);
 	TestNotNull(TEXT("Core node lowering should still emit the primary AddNode command."), PrimaryAddNode);
 	TestNotNull(TEXT("The explicit comment post-pass should emit the comment AddNode command when comments are enabled."), CommentAddNode);
-	if (PrimaryAddNode == nullptr || CommentAddNode == nullptr)
+	TestNotNull(TEXT("Auto-layout should emit a MoveNode command for the primary node when the deterministic layout differs from the authored position."), PrimaryMoveNode);
+	TestNotNull(TEXT("Auto-layout should emit a MoveNode command for comment nodes when comments are enabled."), CommentMoveNode);
+	if (PrimaryAddNode == nullptr || CommentAddNode == nullptr || PrimaryMoveNode == nullptr || CommentMoveNode == nullptr)
 	{
 		return false;
 	}
+
+	TestEqual(TEXT("Primary auto-layout should anchor the first primary node at the requested origin."), PrimaryMoveNode->Position, FVector2D::ZeroVector);
+	TestEqual(TEXT("Comment auto-layout should place comments to the left of the primary layout band using the requested padding."), CommentMoveNode->Position, FVector2D(-500.0f, 0.0f));
 
 	const int32 PrimaryAddIndex = CommentEnabledResult.Commands.IndexOfByPredicate([PrimaryNode](const FVergilCompilerCommand& Command)
 	{
@@ -2684,7 +2698,17 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	{
 		return Command.Type == EVergilCommandType::AddNode && Command.NodeId == CommentNode.Id;
 	});
+	const int32 PrimaryMoveIndex = CommentEnabledResult.Commands.IndexOfByPredicate([PrimaryNode](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::MoveNode && Command.NodeId == PrimaryNode.Id;
+	});
+	const int32 CommentMoveIndex = CommentEnabledResult.Commands.IndexOfByPredicate([CommentNode](const FVergilCompilerCommand& Command)
+	{
+		return Command.Type == EVergilCommandType::MoveNode && Command.NodeId == CommentNode.Id;
+	});
 	TestTrue(TEXT("Comment post-pass AddNode work should land after core node-lowering AddNode work in the normalized plan."), PrimaryAddIndex >= 0 && CommentAddIndex > PrimaryAddIndex);
+	TestTrue(TEXT("Primary layout work should run after core node-lowering AddNode work in the normalized plan."), PrimaryAddIndex >= 0 && PrimaryMoveIndex > PrimaryAddIndex);
+	TestTrue(TEXT("Comment layout work should run after comment AddNode work in the normalized plan."), CommentAddIndex >= 0 && CommentMoveIndex > CommentAddIndex);
 
 	FVergilCompileRequest CommentDisabledRequest = CommentEnabledRequest;
 	CommentDisabledRequest.Document.BlueprintPath = TEXT("/Game/Tests/BP_LayoutCommentPostPasses_Disabled");
@@ -2693,7 +2717,9 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 	const FVergilCompileResult CommentDisabledResult = CompilerService.Compile(CommentDisabledRequest);
 	TestTrue(TEXT("Disabling comment post-pass work should still compile successfully."), CommentDisabledResult.bSucceeded);
 	TestNull(TEXT("Comment AddNode work should be omitted when bGenerateComments is false."), FindNodeCommand(CommentDisabledResult.Commands, EVergilCommandType::AddNode, CommentNode.Id));
+	TestNull(TEXT("Comment MoveNode work should be omitted when comment generation is disabled because the comment node is never authored."), FindMoveCommand(CommentDisabledResult.Commands, CommentNode.Id));
 	TestNotNull(TEXT("Disabling comment post-pass work should not affect the primary lowered node."), FindNodeCommand(CommentDisabledResult.Commands, EVergilCommandType::AddNode, PrimaryNode.Id));
+	TestNotNull(TEXT("Primary layout work should still run when comments are disabled."), FindMoveCommand(CommentDisabledResult.Commands, PrimaryNode.Id));
 
 	FVergilCompileRequest LayoutDisabledRequest = CommentEnabledRequest;
 	LayoutDisabledRequest.Document.BlueprintPath = TEXT("/Game/Tests/BP_LayoutCommentPostPasses_NoLayout");
@@ -2701,10 +2727,11 @@ bool FVergilLayoutCommentPostPassesTest::RunTest(const FString& Parameters)
 
 	const FVergilCompileResult LayoutDisabledResult = CompilerService.Compile(LayoutDisabledRequest);
 	TestTrue(TEXT("Disabling the layout post-pass should still compile successfully."), LayoutDisabledResult.bSucceeded);
-	TestEqual(
-		TEXT("The dedicated layout post-pass is currently a no-op boundary, so toggling bAutoLayout should not change the normalized command plan yet."),
-		Vergil::SerializeCommandPlan(CommentEnabledResult.Commands, false),
-		Vergil::SerializeCommandPlan(LayoutDisabledResult.Commands, false));
+	TestNull(TEXT("Disabling auto-layout should omit primary MoveNode work."), FindMoveCommand(LayoutDisabledResult.Commands, PrimaryNode.Id));
+	TestNull(TEXT("Disabling auto-layout should omit comment MoveNode work."), FindMoveCommand(LayoutDisabledResult.Commands, CommentNode.Id));
+	TestTrue(
+		TEXT("Enabling the deterministic layout pass should now change the normalized command plan relative to a layout-disabled compile."),
+		Vergil::SerializeCommandPlan(CommentEnabledResult.Commands, false) != Vergil::SerializeCommandPlan(LayoutDisabledResult.Commands, false));
 
 	return true;
 }
@@ -2757,6 +2784,7 @@ bool FVergilConnectionLegalityPassTest::RunTest(const FString& Parameters)
 		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_Valid");
 		Request.Document.Nodes = { SourceNode, TargetNode };
 		Request.Document.Edges.Add(Edge);
+		Request.bAutoLayout = false;
 
 		const FVergilCompileResult Result = CompilerService.Compile(Request);
 		TestTrue(TEXT("Legal connections should survive the connection-legality pass."), Result.bSucceeded);
@@ -4998,6 +5026,7 @@ bool FVergilConstructionScriptDefinitionPlanningTest::RunTest(const FString& Par
 	Request.TargetBlueprint = MakeTestBlueprint();
 	Request.Document = Document;
 	Request.TargetGraphName = TEXT("UserConstructionScript");
+	Request.bAutoLayout = false;
 
 	const FVergilBlueprintCompilerService CompilerService;
 	const FVergilCompileResult Result = CompilerService.Compile(Request);
@@ -5886,6 +5915,7 @@ bool FVergilCommandPlanningTest::RunTest(const FString& Parameters)
 	Request.TargetBlueprint = MakeTestBlueprint();
 	Request.Document = Document;
 	Request.TargetGraphName = TEXT("EventGraph");
+	Request.bAutoLayout = false;
 
 	const FVergilBlueprintCompilerService CompilerService;
 	const FVergilCompileResult Result = CompilerService.Compile(Request);
@@ -5932,6 +5962,7 @@ bool FVergilSpecificHandlerDispatchTest::RunTest(const FString& Parameters)
 	FVergilCompileRequest Request;
 	Request.TargetBlueprint = MakeTestBlueprint();
 	Request.Document = Document;
+	Request.bAutoLayout = false;
 
 	const FVergilBlueprintCompilerService CompilerService;
 	const FVergilCompileResult Result = CompilerService.Compile(Request);
@@ -5946,6 +5977,11 @@ bool FVergilSpecificHandlerDispatchTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilCommentExecutionTest,
 	"Vergil.Scaffold.CommentExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAutoLayoutExecutionTest,
+	"Vergil.Scaffold.AutoLayoutExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilCommentExecutionTest::RunTest(const FString& Parameters)
@@ -6013,6 +6049,144 @@ bool FVergilCommentExecutionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Comment width should match metadata."), Comment->NodeWidth, 520);
 	TestEqual(TEXT("Comment height should match metadata."), Comment->NodeHeight, 180);
 	TestEqual(TEXT("Comment font size should match metadata."), Comment->FontSize, 20);
+
+	return true;
+}
+
+bool FVergilAutoLayoutExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(840.0f, 320.0f);
+
+	FVergilGraphPin BeginPlayThen;
+	BeginPlayThen.Id = FGuid::NewGuid();
+	BeginPlayThen.Name = TEXT("Then");
+	BeginPlayThen.Direction = EVergilPinDirection::Output;
+	BeginPlayThen.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThen);
+
+	FVergilGraphNode SequenceNode;
+	SequenceNode.Id = FGuid::NewGuid();
+	SequenceNode.Kind = EVergilNodeKind::ControlFlow;
+	SequenceNode.Descriptor = TEXT("K2.Sequence");
+	SequenceNode.Position = FVector2D(120.0f, 680.0f);
+
+	FVergilGraphPin SequenceExecIn;
+	SequenceExecIn.Id = FGuid::NewGuid();
+	SequenceExecIn.Name = TEXT("Execute");
+	SequenceExecIn.Direction = EVergilPinDirection::Input;
+	SequenceExecIn.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceExecIn);
+
+	FVergilGraphPin SequenceThen0;
+	SequenceThen0.Id = FGuid::NewGuid();
+	SequenceThen0.Name = TEXT("Then_0");
+	SequenceThen0.Direction = EVergilPinDirection::Output;
+	SequenceThen0.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceThen0);
+
+	FVergilGraphPin SequenceThen1;
+	SequenceThen1.Id = FGuid::NewGuid();
+	SequenceThen1.Name = TEXT("Then_1");
+	SequenceThen1.Direction = EVergilPinDirection::Output;
+	SequenceThen1.bIsExec = true;
+	SequenceNode.Pins.Add(SequenceThen1);
+
+	FVergilGraphNode CommentNode;
+	CommentNode.Id = FGuid::NewGuid();
+	CommentNode.Kind = EVergilNodeKind::Comment;
+	CommentNode.Descriptor = TEXT("UI.Comment");
+	CommentNode.Position = FVector2D(1024.0f, -180.0f);
+	CommentNode.Metadata.Add(TEXT("CommentText"), TEXT("Auto-layout comment"));
+	CommentNode.Metadata.Add(TEXT("CommentWidth"), TEXT("520"));
+	CommentNode.Metadata.Add(TEXT("CommentHeight"), TEXT("180"));
+
+	FVergilGraphEdge ExecEdge;
+	ExecEdge.Id = FGuid::NewGuid();
+	ExecEdge.SourceNodeId = BeginPlayNode.Id;
+	ExecEdge.SourcePinId = BeginPlayThen.Id;
+	ExecEdge.TargetNodeId = SequenceNode.Id;
+	ExecEdge.TargetPinId = SequenceExecIn.Id;
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilAutoLayoutExecution");
+	Document.Nodes = { BeginPlayNode, SequenceNode, CommentNode };
+	Document.Edges.Add(ExecEdge);
+
+	FVergilCompileRequest Request;
+	Request.TargetBlueprint = Blueprint;
+	Request.Document = Document;
+	Request.bAutoLayout = true;
+	Request.bGenerateComments = true;
+	Request.AutoLayout.HorizontalSpacing = 240.0f;
+	Request.AutoLayout.VerticalSpacing = 200.0f;
+	Request.AutoLayout.CommentPadding = 72.0f;
+
+	const FVergilBlueprintCompilerService CompilerService;
+	const FVergilCompileResult PlannedResult = CompilerService.Compile(Request);
+	TestTrue(TEXT("Auto-layout execution coverage should compile successfully."), PlannedResult.bSucceeded);
+	if (!PlannedResult.bSucceeded)
+	{
+		return false;
+	}
+
+	TestTrue(
+		TEXT("The deterministic auto-layout pass should emit movement commands before apply."),
+		PlannedResult.Commands.ContainsByPredicate([](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::MoveNode;
+		}));
+
+	const FVergilCompileResult ApplyResult = EditorSubsystem->ExecuteCommandPlan(Blueprint, PlannedResult.Commands);
+	TestTrue(TEXT("Auto-layout command plan should apply cleanly."), ApplyResult.bSucceeded);
+	TestTrue(TEXT("Auto-layout command plan should mutate the blueprint."), ApplyResult.bApplied);
+	if (!ApplyResult.bSucceeded || !ApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after auto-layout apply."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_ExecutionSequence* const SequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(EventGraph, SequenceNode.Id);
+	UEdGraphNode_Comment* const CommentGraphNode = FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, CommentNode.Id);
+
+	TestNotNull(TEXT("Auto-layout apply should create the BeginPlay node."), EventGraphNode);
+	TestNotNull(TEXT("Auto-layout apply should create the sequence node."), SequenceGraphNode);
+	TestNotNull(TEXT("Auto-layout apply should create the comment node."), CommentGraphNode);
+	if (EventGraphNode == nullptr || SequenceGraphNode == nullptr || CommentGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Auto-layout should anchor the first event node at the requested origin."), EventGraphNode->NodePosX, 0);
+	TestEqual(TEXT("Auto-layout should anchor the first event node at the requested origin Y."), EventGraphNode->NodePosY, 0);
+	TestEqual(TEXT("Auto-layout should place downstream nodes one column to the right."), SequenceGraphNode->NodePosX, 240);
+	TestEqual(TEXT("Auto-layout should keep the downstream sequence on the first row when it is the only child."), SequenceGraphNode->NodePosY, 0);
+	TestEqual(TEXT("Comment auto-layout should place comments to the left of the primary band using the requested padding."), CommentGraphNode->NodePosX, -592);
+	TestEqual(TEXT("Comment auto-layout should align the first comment row to the primary origin."), CommentGraphNode->NodePosY, 0);
 
 	return true;
 }

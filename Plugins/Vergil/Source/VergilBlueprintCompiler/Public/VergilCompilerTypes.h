@@ -157,6 +157,24 @@ public:
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilAutoLayoutSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVector2D Origin = FVector2D::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "64.0"))
+	float HorizontalSpacing = 320.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "64.0"))
+	float VerticalSpacing = 320.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ClampMin = "16.0"))
+	float CommentPadding = 96.0f;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 {
 	GENERATED_BODY()
@@ -172,6 +190,9 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	bool bAutoLayout = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ScriptName = "AutoLayoutSettings"))
+	FVergilAutoLayoutSettings AutoLayout;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	bool bGenerateComments = true;
