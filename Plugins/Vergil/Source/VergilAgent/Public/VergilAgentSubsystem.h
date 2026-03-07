@@ -5,6 +5,7 @@
 #include "VergilContractInfo.h"
 #include "VergilCompilerTypes.h"
 #include "VergilAgentTypes.h"
+#include "VergilReflectionInfo.h"
 #include "VergilAgentSubsystem.generated.h"
 
 UCLASS()
@@ -93,6 +94,24 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString InspectCompileResultAsJson(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FVergilReflectionSymbolInfo InspectReflectionSymbol(const FString& Query) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeReflectionSymbol(const FString& Query) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectReflectionSymbolAsJson(const FString& Query, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FVergilReflectionDiscoveryResults DiscoverReflectionSymbols(const FString& Query, int32 MaxResults = 25) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeReflectionDiscovery(const FString& Query, int32 MaxResults = 25) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectReflectionDiscoveryAsJson(const FString& Query, int32 MaxResults = 25, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
 	void ClearAuditTrail();

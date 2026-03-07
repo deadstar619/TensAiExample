@@ -482,6 +482,36 @@ FString UVergilAgentSubsystem::InspectCompileResultAsJson(const FVergilCompileRe
 	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
 }
 
+FVergilReflectionSymbolInfo UVergilAgentSubsystem::InspectReflectionSymbol(const FString& Query) const
+{
+	return Vergil::InspectReflectionSymbol(Query);
+}
+
+FString UVergilAgentSubsystem::DescribeReflectionSymbol(const FString& Query) const
+{
+	return Vergil::DescribeReflectionSymbol(Vergil::InspectReflectionSymbol(Query));
+}
+
+FString UVergilAgentSubsystem::InspectReflectionSymbolAsJson(const FString& Query, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeReflectionSymbol(Vergil::InspectReflectionSymbol(Query), bPrettyPrint);
+}
+
+FVergilReflectionDiscoveryResults UVergilAgentSubsystem::DiscoverReflectionSymbols(const FString& Query, const int32 MaxResults) const
+{
+	return Vergil::DiscoverReflectionSymbols(Query, MaxResults);
+}
+
+FString UVergilAgentSubsystem::DescribeReflectionDiscovery(const FString& Query, const int32 MaxResults) const
+{
+	return Vergil::DescribeReflectionDiscovery(Vergil::DiscoverReflectionSymbols(Query, MaxResults));
+}
+
+FString UVergilAgentSubsystem::InspectReflectionDiscoveryAsJson(const FString& Query, const int32 MaxResults, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeReflectionDiscovery(Vergil::DiscoverReflectionSymbols(Query, MaxResults), bPrettyPrint);
+}
+
 void UVergilAgentSubsystem::ClearAuditTrail()
 {
 	AuditTrail.Reset();

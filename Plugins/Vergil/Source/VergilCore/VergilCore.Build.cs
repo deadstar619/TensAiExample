@@ -13,5 +13,11 @@ public class VergilCore : ModuleRules
 				"CoreUObject",
 				"Engine"
 			});
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"Json"
+			});
 	}
 }

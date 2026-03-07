@@ -250,6 +250,36 @@ FString UVergilEditorSubsystem::SerializeCompileResult(const FVergilCompileResul
 	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
 }
 
+FVergilReflectionSymbolInfo UVergilEditorSubsystem::InspectReflectionSymbol(const FString& Query) const
+{
+	return Vergil::InspectReflectionSymbol(Query);
+}
+
+FString UVergilEditorSubsystem::DescribeReflectionSymbol(const FString& Query) const
+{
+	return Vergil::DescribeReflectionSymbol(Vergil::InspectReflectionSymbol(Query));
+}
+
+FString UVergilEditorSubsystem::InspectReflectionSymbolAsJson(const FString& Query, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeReflectionSymbol(Vergil::InspectReflectionSymbol(Query), bPrettyPrint);
+}
+
+FVergilReflectionDiscoveryResults UVergilEditorSubsystem::DiscoverReflectionSymbols(const FString& Query, const int32 MaxResults) const
+{
+	return Vergil::DiscoverReflectionSymbols(Query, MaxResults);
+}
+
+FString UVergilEditorSubsystem::DescribeReflectionDiscovery(const FString& Query, const int32 MaxResults) const
+{
+	return Vergil::DescribeReflectionDiscovery(Vergil::DiscoverReflectionSymbols(Query, MaxResults));
+}
+
+FString UVergilEditorSubsystem::InspectReflectionDiscoveryAsJson(const FString& Query, const int32 MaxResults, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeReflectionDiscovery(Vergil::DiscoverReflectionSymbols(Query, MaxResults), bPrettyPrint);
+}
+
 FVergilCompileResult UVergilEditorSubsystem::ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const
 {
 	FVergilCompileResult Result;

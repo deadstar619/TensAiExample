@@ -403,6 +403,7 @@ Tickets:
 - `VGR-7004` Add document diff and command-plan preview tooling
 - `VGR-7005` Add stronger undo/redo transaction auditing
 - `VGR-7006` Expand developer settings for compiler/layout/validation behavior
+- [x] `VGR-7007` Add runtime/reflection inspection/discovery utilities
 
 Acceptance criteria:
 
@@ -426,6 +427,12 @@ Session note for `VGR-7003` (2026-03-07):
 - `FVergilCompileRequest` now carries explicit `CommentGeneration` settings for comment width, height, font size, title color, zoom bubble visibility, bubble coloring, and move mode, using `UE_5.7` `UEdGraphNode_Comment` defaults as the deterministic baseline instead of inheriting per-user graph-editor defaults.
 - The comment post-pass now emits default `SetNodeMetadata` work for any missing comment style fields, so authored comment nodes stay explicit in the returned command plan while still allowing authored metadata to override request defaults on a field-by-field basis.
 - `UVergilEditorSubsystem` now exposes `MakeCompileRequest(...)` plus `CompileRequest(...)`, and `Vergil.Scaffold.LayoutCommentPostPasses` / `Vergil.Scaffold.CommentExecution` now cover request-level comment-pass customization through planning and end-to-end `UE_5.7` execution.
+
+Session note for `VGR-7007` (2026-03-07):
+
+- Vergil now exposes code-backed runtime/reflection inspection helpers for classes, structs, enums, and Blueprint generated classes through `Vergil::InspectReflectionSymbol(...)` plus bridge-friendly `UVergilEditorSubsystem` / `UVergilAgentSubsystem` wrappers that accept simple string queries.
+- A matching discovery surface now exists through `Vergil::DiscoverReflectionSymbols(...)`, returning deterministic substring matches across the currently loaded reflected type set so future tooling can discover likely script/object paths without depending on TensAi-only editor tools.
+- The new versioned inspection formats are `Vergil.ReflectionSymbol` and `Vergil.ReflectionDiscovery`, each at version `1`, and `Vergil.Scaffold.ReflectionInspection` now covers namespace, editor-subsystem, and agent-subsystem parity for class, enum, struct, missing-symbol, and search-result inspection.
 
 ## Milestone 8: Real Agent Layer
 Goal:

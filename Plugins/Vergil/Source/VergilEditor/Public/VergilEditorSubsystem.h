@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
 #include "VergilCompilerTypes.h"
+#include "VergilReflectionInfo.h"
 #include "VergilEditorSubsystem.generated.h"
 
 class UBlueprint;
@@ -66,6 +67,24 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FString SerializeCompileResult(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FVergilReflectionSymbolInfo InspectReflectionSymbol(const FString& Query) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeReflectionSymbol(const FString& Query) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString InspectReflectionSymbolAsJson(const FString& Query, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FVergilReflectionDiscoveryResults DiscoverReflectionSymbols(const FString& Query, int32 MaxResults = 25) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeReflectionDiscovery(const FString& Query, int32 MaxResults = 25) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString InspectReflectionDiscoveryAsJson(const FString& Query, int32 MaxResults = 25, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil")
 	FVergilCompileResult ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const;

@@ -58,6 +58,7 @@
 #include "VergilEditorSubsystem.h"
 #include "VergilGraphDocument.h"
 #include "VergilNodeRegistry.h"
+#include "VergilReflectionInfo.h"
 #include "VergilAutomationTestInterface.h"
 #include "VergilVersion.h"
 
@@ -3338,6 +3339,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilReflectionInspectionTest,
+	"Vergil.Scaffold.ReflectionInspection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilAgentRequestResponseContractsTest,
 	"Vergil.Scaffold.AgentRequestResponseContracts",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -3684,6 +3690,95 @@ bool FVergilInspectorToolingTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Serialized compile results should include the schema-migration diagnostic code."), NamespaceCompileResultJson.Contains(TEXT("SchemaMigrationApplied")));
 
 	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
+
+bool FVergilReflectionInspectionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem should be available for reflection inspection."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for reflection inspection."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	const FString ActorQuery = TEXT("/Script/Engine.Actor");
+	const FVergilReflectionSymbolInfo NamespaceActorInfo = Vergil::InspectReflectionSymbol(ActorQuery);
+	const FVergilReflectionSymbolInfo EditorActorInfo = EditorSubsystem->InspectReflectionSymbol(ActorQuery);
+	const FVergilReflectionSymbolInfo AgentActorInfo = AgentSubsystem->InspectReflectionSymbol(ActorQuery);
+
+	TestTrue(TEXT("Actor reflection inspection should resolve successfully."), NamespaceActorInfo.bResolved);
+	TestEqual(TEXT("Actor reflection inspection should report a class kind."), NamespaceActorInfo.Kind, EVergilReflectionSymbolKind::Class);
+	TestEqual(TEXT("Editor actor inspection should mirror the namespace helper path."), EditorActorInfo.ResolvedPath, NamespaceActorInfo.ResolvedPath);
+	TestEqual(TEXT("Agent actor inspection should mirror the namespace helper path."), AgentActorInfo.ResolvedPath, NamespaceActorInfo.ResolvedPath);
+	TestEqual(TEXT("Short-name actor inspection should normalize to the Actor class path."), EditorSubsystem->InspectReflectionSymbol(TEXT("Actor")).ResolvedPath, ActorQuery);
+	TestTrue(TEXT("Actor reflection inspection should include K2_DestroyActor."), NamespaceActorInfo.Functions.ContainsByPredicate([](const FVergilReflectionFunctionInfo& FunctionInfo)
+	{
+		return FunctionInfo.Name == TEXT("K2_DestroyActor");
+	}));
+	TestTrue(TEXT("Actor reflection inspection should include the Tags property."), NamespaceActorInfo.Properties.ContainsByPredicate([](const FVergilReflectionPropertyInfo& PropertyInfo)
+	{
+		return PropertyInfo.Name == TEXT("Tags");
+	}));
+
+	const FString NamespaceActorDescription = Vergil::DescribeReflectionSymbol(NamespaceActorInfo);
+	TestEqual(TEXT("Editor actor reflection description should mirror the namespace helper."), EditorSubsystem->DescribeReflectionSymbol(ActorQuery), NamespaceActorDescription);
+	TestEqual(TEXT("Agent actor reflection description should mirror the namespace helper."), AgentSubsystem->DescribeReflectionSymbol(ActorQuery), NamespaceActorDescription);
+	TestTrue(TEXT("Actor reflection description should advertise the reflection format marker."), NamespaceActorDescription.Contains(TEXT("Vergil.ReflectionSymbol version=1")));
+	TestTrue(TEXT("Actor reflection description should include K2_DestroyActor."), NamespaceActorDescription.Contains(TEXT("K2_DestroyActor")));
+
+	const FString NamespaceActorJson = Vergil::SerializeReflectionSymbol(NamespaceActorInfo, false);
+	TestEqual(TEXT("Editor actor reflection JSON should mirror the namespace helper."), EditorSubsystem->InspectReflectionSymbolAsJson(ActorQuery, false), NamespaceActorJson);
+	TestEqual(TEXT("Agent actor reflection JSON should mirror the namespace helper."), AgentSubsystem->InspectReflectionSymbolAsJson(ActorQuery, false), NamespaceActorJson);
+	TestTrue(TEXT("Actor reflection JSON should advertise the reflection format marker."), NamespaceActorJson.Contains(TEXT("\"format\":\"Vergil.ReflectionSymbol\"")));
+	TestTrue(TEXT("Actor reflection JSON should include the class kind."), NamespaceActorJson.Contains(TEXT("\"kind\":\"Class\"")));
+	TestTrue(TEXT("Actor reflection JSON should include K2_DestroyActor."), NamespaceActorJson.Contains(TEXT("\"name\":\"K2_DestroyActor\"")));
+
+	const FVergilReflectionSymbolInfo EnumInfo = EditorSubsystem->InspectReflectionSymbol(TEXT("/Script/Engine.EMovementMode"));
+	TestTrue(TEXT("Enum reflection inspection should resolve successfully."), EnumInfo.bResolved);
+	TestEqual(TEXT("Enum reflection inspection should report an enum kind."), EnumInfo.Kind, EVergilReflectionSymbolKind::Enum);
+	TestTrue(TEXT("Enum reflection inspection should include MOVE_Walking."), EnumInfo.EnumEntries.ContainsByPredicate([](const FVergilReflectionEnumEntryInfo& EntryInfo)
+	{
+		return EntryInfo.Name == TEXT("MOVE_Walking");
+	}));
+
+	const FVergilReflectionSymbolInfo StructInfo = EditorSubsystem->InspectReflectionSymbol(TEXT("/Script/CoreUObject.Vector"));
+	TestTrue(TEXT("Struct reflection inspection should resolve successfully."), StructInfo.bResolved);
+	TestEqual(TEXT("Struct reflection inspection should report a struct kind."), StructInfo.Kind, EVergilReflectionSymbolKind::Struct);
+	TestTrue(TEXT("Struct reflection inspection should include the X field."), StructInfo.Properties.ContainsByPredicate([](const FVergilReflectionPropertyInfo& PropertyInfo)
+	{
+		return PropertyInfo.Name == TEXT("X");
+	}));
+
+	const FVergilReflectionSymbolInfo MissingInfo = EditorSubsystem->InspectReflectionSymbol(TEXT("DefinitelyMissingVergilSymbol"));
+	TestFalse(TEXT("Missing reflection inspection should stay unresolved."), MissingInfo.bResolved);
+	TestTrue(TEXT("Missing reflection inspection should include a failure reason."), !MissingInfo.FailureReason.IsEmpty());
+
+	const FString DiscoveryQuery = TEXT("MovementMode");
+	const FVergilReflectionDiscoveryResults NamespaceDiscovery = Vergil::DiscoverReflectionSymbols(DiscoveryQuery, 10);
+	TestTrue(TEXT("Reflection discovery should find the movement-mode enum path."), NamespaceDiscovery.Matches.ContainsByPredicate([](const FVergilReflectionSearchResult& SearchResult)
+	{
+		return SearchResult.Kind == EVergilReflectionSymbolKind::Enum && SearchResult.ResolvedPath == TEXT("/Script/Engine.EMovementMode");
+	}));
+
+	const FString NamespaceDiscoveryDescription = Vergil::DescribeReflectionDiscovery(NamespaceDiscovery);
+	TestEqual(TEXT("Editor reflection discovery description should mirror the namespace helper."), EditorSubsystem->DescribeReflectionDiscovery(DiscoveryQuery, 10), NamespaceDiscoveryDescription);
+	TestEqual(TEXT("Agent reflection discovery description should mirror the namespace helper."), AgentSubsystem->DescribeReflectionDiscovery(DiscoveryQuery, 10), NamespaceDiscoveryDescription);
+	TestTrue(TEXT("Reflection discovery description should advertise the discovery format marker."), NamespaceDiscoveryDescription.Contains(TEXT("Vergil.ReflectionDiscovery version=1")));
+
+	const FString NamespaceDiscoveryJson = Vergil::SerializeReflectionDiscovery(NamespaceDiscovery, false);
+	TestEqual(TEXT("Editor reflection discovery JSON should mirror the namespace helper."), EditorSubsystem->InspectReflectionDiscoveryAsJson(DiscoveryQuery, 10, false), NamespaceDiscoveryJson);
+	TestEqual(TEXT("Agent reflection discovery JSON should mirror the namespace helper."), AgentSubsystem->InspectReflectionDiscoveryAsJson(DiscoveryQuery, 10, false), NamespaceDiscoveryJson);
+	TestTrue(TEXT("Reflection discovery JSON should advertise the discovery format marker."), NamespaceDiscoveryJson.Contains(TEXT("\"format\":\"Vergil.ReflectionDiscovery\"")));
+	TestTrue(TEXT("Reflection discovery JSON should include the enum path."), NamespaceDiscoveryJson.Contains(TEXT("\"resolvedPath\":\"/Script/Engine.EMovementMode\"")));
+
 	return true;
 }
 

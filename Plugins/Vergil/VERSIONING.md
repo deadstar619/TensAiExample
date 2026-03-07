@@ -1,6 +1,6 @@
 # Vergil Versioning and Migration
 
-Vergil tracks the plugin release, document schema, serialized command-plan format, document/diagnostic/compile-result inspection formats, agent request/response/audit inspection formats, the persisted agent audit-log format, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
+Vergil tracks the plugin release, document schema, serialized command-plan format, document/diagnostic/compile-result/reflection inspection formats, agent request/response/audit inspection formats, the persisted agent audit-log format, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
 
 ## Current version surfaces
 
@@ -18,6 +18,10 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
   Source of truth: `Vergil::GetDiagnosticsInspectionFormatName()` and `Vergil::GetDiagnosticsInspectionFormatVersion()`
 - Compile-result inspection format: `Vergil.CompileResult` version `1`
   Source of truth: `Vergil::GetCompileResultInspectionFormatName()` and `Vergil::GetCompileResultInspectionFormatVersion()`
+- Reflection-symbol inspection format: `Vergil.ReflectionSymbol` version `1`
+  Source of truth: `Vergil::GetReflectionSymbolFormatName()` and `Vergil::GetReflectionSymbolFormatVersion()`
+- Reflection-discovery inspection format: `Vergil.ReflectionDiscovery` version `1`
+  Source of truth: `Vergil::GetReflectionDiscoveryFormatName()` and `Vergil::GetReflectionDiscoveryFormatVersion()`
 - Agent request inspection format: `Vergil.AgentRequest` version `1`
   Source of truth: `Vergil::GetAgentRequestFormatName()` and `Vergil::GetAgentRequestFormatVersion()`
 - Agent response inspection format: `Vergil.AgentResponse` version `1`
@@ -57,6 +61,8 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Bump the graph-document inspection format version only for incompatible `Vergil.GraphDocument` JSON shape changes.
 - Bump the diagnostics inspection format version only for incompatible `Vergil.Diagnostics` JSON shape changes.
 - Bump the compile-result inspection format version only for incompatible `Vergil.CompileResult` JSON shape changes.
+- Bump the reflection-symbol inspection format version only for incompatible `Vergil.ReflectionSymbol` JSON shape changes.
+- Bump the reflection-discovery inspection format version only for incompatible `Vergil.ReflectionDiscovery` JSON shape changes.
 - Bump the agent request, response, or audit-entry inspection format version only for incompatible `Vergil.AgentRequest`, `Vergil.AgentResponse`, or `Vergil.AgentAuditEntry` JSON shape changes.
 - Bump the persisted agent audit-log format version only for incompatible `Vergil.AgentAuditLog` wrapper changes in the saved on-disk audit trail.
 - Bump the command-plan format version only for incompatible serialized command-plan changes.
@@ -68,7 +74,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Keep `Vergil.uplugin` `VersionName` and `Version` aligned with `VergilVersion.h`.
 - If the document schema changed, update `Vergil::SchemaVersion`, add the forward migration step, and extend migration automation.
 - If supported migration paths changed, keep helper coverage, compiler-pass coverage, and end-to-end legacy execution coverage aligned with the new path set.
-- If graph-document, diagnostics, compile-result, agent request/response/audit inspection JSON, or the persisted agent audit-log wrapper changed incompatibly, update the corresponding version surface and extend inspection or persistence coverage.
+- If graph-document, diagnostics, compile-result, reflection, agent request/response/audit inspection JSON, or the persisted agent audit-log wrapper changed incompatibly, update the corresponding version surface and extend inspection or persistence coverage.
 - If serialized command plans changed incompatibly, update the command-plan format version and deserializer coverage.
 - If the supported-contract manifest changed incompatibly, update its manifest version and inspection coverage.
 - Update `README.md`, `SUPPORTED_DESCRIPTOR_CONTRACTS.md`, and `ROADMAP.md` when the public versioning or migration contract changes.
