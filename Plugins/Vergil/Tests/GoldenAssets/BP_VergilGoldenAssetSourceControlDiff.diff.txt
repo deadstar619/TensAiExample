@@ -1,0 +1,36 @@
+~ [ 0003 | 0003 ]
+                  description=Golden asset snapshot              coverage.
+                                           ~~~~~~~~vvvvvvvvvvvvv          
+                  description=Golden asset source  -control diff coverage.
+~ [ 0006 | 0006 ]
+                  variable=RoundtripFlag|type=bool|defaultOnCDO=true |category=State|tooltip=Persists across  save           and  reload  .
+                                                                ~~~~~                        ~~~~~~~~ ~~~~~~~ ~~~~~~vvvvvvvv ~~~~ ~~~~~~~~ 
+                  variable=RoundtripFlag|type=bool|defaultOnCDO=false|category=State|tooltip=Updated  through source-control diff coverage.
+~ [ 0009 | 0009 ]
+                  component=Root|class=/Script/Engine.SceneComponent|parent=<none>|socket=<none>|location=25.0, 10.0,5 .0
+                                                                                                          ~~  ~~~~   ~~  
+                  component=Root|class=/Script/Engine.SceneComponent|parent=<none>|socket=<none>|location=50.0,-15.0,12.0
+~ [ 0010 | 0010 ]
+                  component=VisualMesh|class=/Script/Engine.StaticMeshComponent|parent=Root|socket=GripSocket   |hiddenInGame=true |castShadow=false
+                                                                                                   ~~~~~~~~~~~~~              ~~~~~            ~~~~~
+                  component=VisualMesh|class=/Script/Engine.StaticMeshComponent|parent=Root|socket=UpdatedSocket|hiddenInGame=false|castShadow=true 
+~ [ 0012 | 0012 ]
+                  classDefaults|replicates=true|initialLifeSpan=4.5
+                                                                ~  
+                  classDefaults|replicates=true|initialLifeSpan=7.5
+~ [ 0013 | 0013 ]
+                  eventGraph|beginPlayPos=0,0|sequencePos=320,0 |edge=BeginPlay.Then->Sequence.Execute
+                                                          ~~~ ~~                                      
+                  eventGraph|beginPlayPos=0,0|sequencePos=512,96|edge=BeginPlay.Then->Sequence.Execute
+~ [ 0014 | 0014 ]
+                  constructionGraph|entryPos=0,0|sequencePos=320,0 |edge=UserConstructionScript.Then->Sequence.Execute
+                                                             ~~~ ~~                                                   
+                  constructionGraph|entryPos=0,0|sequencePos=448,96|edge=UserConstructionScript.Then->Sequence.Execute
+~ [ 0015 | 0015 ]
+                  eventDryRun|fingerprint=6214d19f|commands=22
+                                          ~~~~~~~~            
+                  eventDryRun|fingerprint=1f073e68|commands=22
+~ [ 0016 | 0016 ]
+                  constructionDryRun|fingerprint=ff1fff36|commands=4
+                                                 ~~~~~~~~           
+                  constructionDryRun|fingerprint=d4d1e570|commands=4

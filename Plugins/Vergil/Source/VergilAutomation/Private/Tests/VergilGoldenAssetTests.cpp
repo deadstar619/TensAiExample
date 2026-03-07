@@ -18,6 +18,7 @@
 #include "K2Node_FunctionResult.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet/KismetStringLibrary.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -32,6 +33,9 @@ namespace
 	inline constexpr TCHAR GoldenAssetName[] = TEXT("BP_VergilGoldenAsset");
 	inline constexpr TCHAR GoldenSnapshotRelativePath[] = TEXT("Plugins/Vergil/Tests/GoldenAssets/BP_VergilGoldenAsset.txt");
 	inline constexpr TCHAR ActualSnapshotRelativePath[] = TEXT("Vergil/GoldenAssets/BP_VergilGoldenAsset.actual.txt");
+	inline constexpr TCHAR SourceControlDiffAssetName[] = TEXT("BP_VergilGoldenAssetSourceControlDiff");
+	inline constexpr TCHAR SourceControlDiffRelativePath[] = TEXT("Plugins/Vergil/Tests/GoldenAssets/BP_VergilGoldenAssetSourceControlDiff.diff.txt");
+	inline constexpr TCHAR ActualSourceControlDiffRelativePath[] = TEXT("Vergil/GoldenAssets/BP_VergilGoldenAssetSourceControlDiff.diff.actual.txt");
 
 	struct FScopedGoldenAssetBlueprint final
 	{
@@ -298,16 +302,35 @@ namespace
 		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), GoldenSnapshotRelativePath));
 	}
 
+	FString GetSourceControlDiffPath()
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), SourceControlDiffRelativePath));
+	}
+
 	FString GetActualSnapshotPath()
 	{
 		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), ActualSnapshotRelativePath));
 	}
 
+	FString GetActualSourceControlDiffPath()
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), ActualSourceControlDiffRelativePath));
+	}
+
+	void WriteActualArtifact(const FString& ArtifactPath, const FString& Text)
+	{
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ArtifactPath), true);
+		FFileHelper::SaveStringToFile(Text, *ArtifactPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
 	void WriteActualSnapshot(const FString& Snapshot)
 	{
-		const FString ActualPath = GetActualSnapshotPath();
-		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ActualPath), true);
-		FFileHelper::SaveStringToFile(Snapshot, *ActualPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+		WriteActualArtifact(GetActualSnapshotPath(), Snapshot);
+	}
+
+	void WriteActualSourceControlDiff(const FString& DiffText)
+	{
+		WriteActualArtifact(GetActualSourceControlDiffPath(), DiffText);
 	}
 
 	FString DescribePinType(const UEdGraphPin* Pin)
@@ -520,7 +543,74 @@ namespace
 			ConstructionDocument.ConstructionScriptEdges.Add(ConstructionEdge);
 			return ConstructionDocument;
 		}
+
+		FVergilGraphDocument BuildUpdatedEventDocument(const FString& PackagePath) const
+		{
+			FVergilGraphDocument EventDocument = BuildEventDocument(PackagePath);
+			EventDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Golden asset source-control diff coverage."));
+
+			if (FVergilVariableDefinition* const Variable = EventDocument.Variables.FindByPredicate([this](const FVergilVariableDefinition& Candidate)
+			{
+				return Candidate.Name == VariableName;
+			}))
+			{
+				Variable->DefaultValue = TEXT("false");
+				Variable->Metadata.Add(TEXT("Tooltip"), TEXT("Updated through source-control diff coverage."));
+			}
+
+			if (FVergilComponentDefinition* const RootComponent = EventDocument.Components.FindByPredicate([this](const FVergilComponentDefinition& Candidate)
+			{
+				return Candidate.Name == RootComponentName;
+			}))
+			{
+				RootComponent->RelativeTransform.RelativeLocation = FVector(50.0f, -15.0f, 12.0f);
+			}
+
+			if (FVergilComponentDefinition* const VisualComponent = EventDocument.Components.FindByPredicate([this](const FVergilComponentDefinition& Candidate)
+			{
+				return Candidate.Name == VisualComponentName;
+			}))
+			{
+				VisualComponent->AttachSocketName = TEXT("UpdatedSocket");
+				VisualComponent->TemplateProperties.Add(TEXT("HiddenInGame"), TEXT("False"));
+				VisualComponent->TemplateProperties.Add(TEXT("CastShadow"), TEXT("True"));
+			}
+
+			EventDocument.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("7.5"));
+
+			if (FVergilGraphNode* const EventSequenceNode = EventDocument.Nodes.FindByPredicate([this](const FVergilGraphNode& Candidate)
+			{
+				return Candidate.Id == EventSequenceNodeId;
+			}))
+			{
+				EventSequenceNode->Position = FVector2D(512.0f, 96.0f);
+			}
+
+			return EventDocument;
+		}
+
+		FVergilGraphDocument BuildUpdatedConstructionDocument(const FString& PackagePath) const
+		{
+			FVergilGraphDocument ConstructionDocument = BuildConstructionDocument(PackagePath);
+			if (FVergilGraphNode* const ConstructionSequenceNode = ConstructionDocument.ConstructionScriptNodes.FindByPredicate([this](const FVergilGraphNode& Candidate)
+			{
+				return Candidate.Id == ConstructionSequenceNodeId;
+			}))
+			{
+				ConstructionSequenceNode->Position = FVector2D(448.0f, 96.0f);
+			}
+
+			return ConstructionDocument;
+		}
 	};
+
+	FVergilGraphDocument BuildCombinedDocument(const FVergilGraphDocument& EventDocument, const FVergilGraphDocument& ConstructionDocument)
+	{
+		FVergilGraphDocument CombinedDocument = EventDocument;
+		CombinedDocument.ConstructionScriptNodes = ConstructionDocument.ConstructionScriptNodes;
+		CombinedDocument.ConstructionScriptEdges = ConstructionDocument.ConstructionScriptEdges;
+		return CombinedDocument;
+	}
 
 	FString BuildGoldenAssetSnapshot(
 		UBlueprint* Blueprint,
@@ -679,6 +769,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.GoldenAssetSnapshot",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSourceControlDiffTest,
+	"Vergil.Scaffold.SourceControlDiff",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilGoldenAssetSnapshotTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -792,6 +887,258 @@ bool FVergilGoldenAssetSnapshotTest::RunTest(const FString& Parameters)
 			TEXT("Golden asset snapshot mismatch. Expected '%s'; wrote actual snapshot to '%s'."),
 			*GoldenSnapshotPath,
 			*GetActualSnapshotPath()));
+		return false;
+	}
+
+	return true;
+}
+
+bool FVergilSourceControlDiffTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem should be available for source-control diff coverage."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	const FGoldenAssetFixture Fixture;
+	FScopedGoldenAssetBlueprint GoldenBlueprint(SourceControlDiffAssetName);
+	UBlueprint* const Blueprint = GoldenBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Source-control diff coverage should create a persistent Blueprint asset."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilGraphDocument BaselineEventDocument = Fixture.BuildEventDocument(GoldenBlueprint.PackagePath);
+	const FVergilGraphDocument BaselineConstructionDocument = Fixture.BuildConstructionDocument(GoldenBlueprint.PackagePath);
+
+	const FVergilCompileResult BaselineEventApplyResult = EditorSubsystem->CompileDocument(Blueprint, BaselineEventDocument, false, false, true);
+	TestTrue(TEXT("Baseline event-graph authoring should succeed for source-control diff coverage."), BaselineEventApplyResult.bSucceeded && BaselineEventApplyResult.bApplied);
+	if (!BaselineEventApplyResult.bSucceeded || !BaselineEventApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult BaselineConstructionApplyResult = EditorSubsystem->CompileDocumentToGraph(
+		Blueprint,
+		BaselineConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		true);
+	TestTrue(TEXT("Baseline construction-script authoring should succeed for source-control diff coverage."), BaselineConstructionApplyResult.bSucceeded && BaselineConstructionApplyResult.bApplied);
+	if (!BaselineConstructionApplyResult.bSucceeded || !BaselineConstructionApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	FString SaveErrorMessage;
+	TestTrue(TEXT("Baseline source-control diff Blueprint should save cleanly."), GoldenBlueprint.Save(Blueprint, &SaveErrorMessage));
+	if (!SaveErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Baseline source-control diff save status: %s"), *SaveErrorMessage));
+	}
+
+	FString ReloadErrorMessage;
+	UBlueprint* ReloadedBlueprint = GoldenBlueprint.Reload(&ReloadErrorMessage);
+	TestNotNull(TEXT("Baseline source-control diff Blueprint should reload from disk."), ReloadedBlueprint);
+	if (!ReloadErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Baseline source-control diff reload status: %s"), *ReloadErrorMessage));
+	}
+	if (ReloadedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult BaselineEventDryRunResult = EditorSubsystem->CompileDocument(ReloadedBlueprint, BaselineEventDocument, false, false, false);
+	TestTrue(TEXT("Baseline event-graph dry-run should succeed after reload."), BaselineEventDryRunResult.bSucceeded && !BaselineEventDryRunResult.bApplied);
+	if (!BaselineEventDryRunResult.bSucceeded || BaselineEventDryRunResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult BaselineConstructionDryRunResult = EditorSubsystem->CompileDocumentToGraph(
+		ReloadedBlueprint,
+		BaselineConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		false);
+	TestTrue(TEXT("Baseline construction-script dry-run should succeed after reload."), BaselineConstructionDryRunResult.bSucceeded && !BaselineConstructionDryRunResult.bApplied);
+	if (!BaselineConstructionDryRunResult.bSucceeded || BaselineConstructionDryRunResult.bApplied)
+	{
+		return false;
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(ReloadedBlueprint);
+	TestTrue(TEXT("Baseline source-control diff Blueprint should compile cleanly after reload verification."), ReloadedBlueprint->IsUpToDate());
+	if (!ReloadedBlueprint->IsUpToDate())
+	{
+		return false;
+	}
+
+	const FString BaselineSnapshot = NormalizeLineEndings(BuildGoldenAssetSnapshot(
+		ReloadedBlueprint,
+		BaselineEventDryRunResult,
+		BaselineConstructionDryRunResult,
+		Fixture));
+
+	GoldenBlueprint.Cleanup();
+
+	UBlueprint* const UpdatedBlueprint = GoldenBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Updated source-control diff coverage should recreate the persistent Blueprint asset."), UpdatedBlueprint);
+	if (UpdatedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilGraphDocument UpdatedEventDocument = Fixture.BuildUpdatedEventDocument(GoldenBlueprint.PackagePath);
+	const FVergilGraphDocument UpdatedConstructionDocument = Fixture.BuildUpdatedConstructionDocument(GoldenBlueprint.PackagePath);
+
+	const FVergilCompileResult UpdatedEventApplyResult = EditorSubsystem->CompileDocument(UpdatedBlueprint, UpdatedEventDocument, false, false, true);
+	TestTrue(TEXT("Updated event-graph authoring should succeed for source-control diff coverage."), UpdatedEventApplyResult.bSucceeded && UpdatedEventApplyResult.bApplied);
+	if (!UpdatedEventApplyResult.bSucceeded || !UpdatedEventApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult UpdatedConstructionApplyResult = EditorSubsystem->CompileDocumentToGraph(
+		UpdatedBlueprint,
+		UpdatedConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		true);
+	TestTrue(TEXT("Updated construction-script authoring should succeed for source-control diff coverage."), UpdatedConstructionApplyResult.bSucceeded && UpdatedConstructionApplyResult.bApplied);
+	if (!UpdatedConstructionApplyResult.bSucceeded || !UpdatedConstructionApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	SaveErrorMessage.Reset();
+	TestTrue(TEXT("Updated source-control diff Blueprint should save cleanly."), GoldenBlueprint.Save(UpdatedBlueprint, &SaveErrorMessage));
+	if (!SaveErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Updated source-control diff save status: %s"), *SaveErrorMessage));
+	}
+
+	ReloadErrorMessage.Reset();
+	ReloadedBlueprint = GoldenBlueprint.Reload(&ReloadErrorMessage);
+	TestNotNull(TEXT("Updated source-control diff Blueprint should reload from disk."), ReloadedBlueprint);
+	if (!ReloadErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Updated source-control diff reload status: %s"), *ReloadErrorMessage));
+	}
+	if (ReloadedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult UpdatedEventDryRunResult = EditorSubsystem->CompileDocument(ReloadedBlueprint, UpdatedEventDocument, false, false, false);
+	TestTrue(TEXT("Updated event-graph dry-run should succeed after reload."), UpdatedEventDryRunResult.bSucceeded && !UpdatedEventDryRunResult.bApplied);
+	if (!UpdatedEventDryRunResult.bSucceeded || UpdatedEventDryRunResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult UpdatedConstructionDryRunResult = EditorSubsystem->CompileDocumentToGraph(
+		ReloadedBlueprint,
+		UpdatedConstructionDocument,
+		UEdGraphSchema_K2::FN_UserConstructionScript,
+		false,
+		false,
+		false);
+	TestTrue(TEXT("Updated construction-script dry-run should succeed after reload."), UpdatedConstructionDryRunResult.bSucceeded && !UpdatedConstructionDryRunResult.bApplied);
+	if (!UpdatedConstructionDryRunResult.bSucceeded || UpdatedConstructionDryRunResult.bApplied)
+	{
+		return false;
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(ReloadedBlueprint);
+	TestTrue(TEXT("Updated source-control diff Blueprint should compile cleanly after reload verification."), ReloadedBlueprint->IsUpToDate());
+	if (!ReloadedBlueprint->IsUpToDate())
+	{
+		return false;
+	}
+
+	const FString UpdatedSnapshot = NormalizeLineEndings(BuildGoldenAssetSnapshot(
+		ReloadedBlueprint,
+		UpdatedEventDryRunResult,
+		UpdatedConstructionDryRunResult,
+		Fixture));
+	const FString SourceControlDiff = NormalizeLineEndings(UKismetStringLibrary::DiffString(BaselineSnapshot, UpdatedSnapshot));
+	TestFalse(TEXT("Source-control diff coverage should report changes after the persisted update."), SourceControlDiff.IsEmpty());
+
+	const FVergilGraphDocument BaselineCombinedDocument = BuildCombinedDocument(BaselineEventDocument, BaselineConstructionDocument);
+	const FVergilGraphDocument UpdatedCombinedDocument = BuildCombinedDocument(UpdatedEventDocument, UpdatedConstructionDocument);
+	const FVergilDocumentDiff DocumentDiff = Vergil::DiffGraphDocuments(BaselineCombinedDocument, UpdatedCombinedDocument);
+	TestFalse(TEXT("Canonical document diff should report non-matching persisted source-control variants."), DocumentDiff.bDocumentsMatch);
+	TestEqual(TEXT("Source-control diff coverage should keep the update shape to modified entries only."), DocumentDiff.AddedCount, 0);
+	TestEqual(TEXT("Source-control diff coverage should keep the update shape to modified entries only."), DocumentDiff.RemovedCount, 0);
+	TestTrue(TEXT("Canonical document diff should include the updated BlueprintDescription metadata path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("metadata.BlueprintDescription") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated variable default path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("variables[0].defaultValue") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated variable tooltip path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("variables[0].metadata.Tooltip") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated component location path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("components[0].relativeTransform.relativeLocation.x") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated attach-socket path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("components[1].attachSocketName") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated hidden-in-game template property path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("components[1].templateProperties.HiddenInGame") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated cast-shadow template property path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("components[1].templateProperties.CastShadow") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated class-default path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("classDefaults.InitialLifeSpan") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated event-graph node position path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("nodes[1].position.x") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Canonical document diff should include the updated construction-script node position path."), DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("constructionScriptNodes[1].position.x") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+
+	const FString SourceControlDiffPath = GetSourceControlDiffPath();
+	FString ExpectedSourceControlDiff;
+	if (!FFileHelper::LoadFileToString(ExpectedSourceControlDiff, *SourceControlDiffPath))
+	{
+		WriteActualSourceControlDiff(SourceControlDiff);
+		AddError(FString::Printf(
+			TEXT("Source-control diff fixture is missing at '%s'. Wrote the current diff to '%s'."),
+			*SourceControlDiffPath,
+			*GetActualSourceControlDiffPath()));
+		return false;
+	}
+
+	ExpectedSourceControlDiff = NormalizeLineEndings(ExpectedSourceControlDiff);
+	if (ExpectedSourceControlDiff != SourceControlDiff)
+	{
+		WriteActualSourceControlDiff(SourceControlDiff);
+		AddError(FString::Printf(
+			TEXT("Source-control diff fixture mismatch. Expected '%s'; wrote actual diff to '%s'."),
+			*SourceControlDiffPath,
+			*GetActualSourceControlDiffPath()));
 		return false;
 	}
 

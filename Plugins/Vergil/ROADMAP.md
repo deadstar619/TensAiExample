@@ -592,7 +592,7 @@ Tickets:
 - [x] `VGR-9002` Add PIE runtime validation suites
 - `VGR-9003` Add large-graph performance benchmarks
 - [x] `VGR-9004` Add schema migration tests
-- `VGR-9005` Add source-control diff tests
+- [x] `VGR-9005` Add source-control diff tests
 - `VGR-9006` Add crash/recovery tests around compile/apply
 - [x] `VGR-9007` Add semantic versioning and migration docs
 - `VGR-9008` Add extension docs for custom handlers
@@ -618,6 +618,13 @@ Session note for `VGR-9002` (2026-03-07):
 - The event-flow suite compiles a transient Blueprint entirely through Vergil's document model, then proves `K2.Delay`, `K2.Call.K2_SetTimer`, `K2.CustomEvent.*`, `K2.BindDelegate.*`, and `K2.CallDelegate.*` produce real runtime side effects inside PIE by waiting on authored Blueprint state.
 - The world-mutation suite compiles a second transient Blueprint and proves `K2.AddComponentByClass` plus `K2.SpawnActor` create real runtime objects in the PIE world, with the authored Blueprint instance retaining the created component and spawned actor references for inspection.
 - `Build.bat` `Development` succeeded, targeted `Vergil.Scaffold.PIERuntime` passed `2/2`, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `99/99` with zero Vergil, Blueprint, or automation warnings in this workspace.
+
+Session note for `VGR-9005` (2026-03-07):
+
+- `Vergil.Scaffold.SourceControlDiff` now authors two persisted revisions of the same `/Game/Tests/BP_VergilGoldenAssetSourceControlDiff` Blueprint package path, saves and reloads each revision through Unreal's package path, native-compiles both reloaded revisions, and compares a deterministic `UKismetStringLibrary::DiffString(...)` output against the checked-in fixture at `Plugins/Vergil/Tests/GoldenAssets/BP_VergilGoldenAssetSourceControlDiff.diff.txt`.
+- The source-control diff fixture currently proves reviewed persisted changes across Blueprint metadata, variable defaults plus metadata, component transform and template properties, class defaults, primary event-graph layout, construction-script layout, and the resulting dry-run command-plan fingerprints.
+- The same test also cross-checks those persisted review-line changes against `Vergil.DocumentDiff`, asserting the update remains a modified-only canonical document diff with the expected metadata, variable, component, class-default, and node-position paths.
+- `Build.bat` `Development` succeeded, targeted `Vergil.Scaffold.SourceControlDiff` passed `1/1`, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `100/100` with zero Vergil, Blueprint, or automation warnings in this workspace.
 
 Session note for `VGR-9007` (2026-03-06):
 
@@ -651,13 +658,12 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9005`
-2. `VGR-9006`
-3. `VGR-9003`
-4. `VGR-9008`
-5. `VGR-9009`
+1. `VGR-9006`
+2. `VGR-9003`
+3. `VGR-9008`
+4. `VGR-9009`
 
-This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has both persisted save/reload/native-compile roundtrip coverage and checked-in golden snapshot coverage on the supported milestone-4 surface.
+This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

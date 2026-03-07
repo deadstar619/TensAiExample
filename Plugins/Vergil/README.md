@@ -30,6 +30,7 @@ Useful variants:
 
 - Run one test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.TimerDelegateExecution'`
 - Run the persisted golden-asset regression test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.GoldenAssetSnapshot'`
+- Run the persisted source-control diff regression test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.SourceControlDiff'`
 - Run the PIE runtime validation suites: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.PIERuntime'`
 - Summarize an existing log without re-running: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Get-VergilDiagnosticsSummary.ps1 -LogPath .\Saved\Logs\VergilAutomation_All.log`
 
@@ -65,7 +66,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored implemented interfaces now lower into Blueprint interface application for authored interface class paths.
 - Document-authored class defaults now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Document-authored construction script definitions now lower into construction-script graph authoring when the compile target graph is `UserConstructionScript`.
-- The current whole-asset authoring surface now has persisted save/reload/native-compile roundtrip coverage on a real `/Game/Tests/...` Blueprint package plus a checked-in golden snapshot fixture under `Plugins/Vergil/Tests/GoldenAssets/`.
+- The current whole-asset authoring surface now has persisted save/reload/native-compile roundtrip coverage on a real `/Game/Tests/...` Blueprint package plus checked-in golden snapshot and reviewed source-control diff fixtures under `Plugins/Vergil/Tests/GoldenAssets/`.
 - Legacy document schemas now have explicit model-level forward-migration helpers.
 - Structural validation now also rejects unsupported Blueprint metadata keys, empty variable metadata keys, whitespace-only typed object/class paths, invalid dispatcher parameter type shapes, and graph edges that reference pins outside their declared source/target nodes.
 - Direct command plans are now preflight-validated before any editor transaction starts, so malformed plans fail with diagnostics and execute zero commands.
@@ -78,7 +79,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-5008`, `VGR-6001`, `VGR-6002`, `VGR-6003`, `VGR-6004`, `VGR-6005`, `VGR-6006`, `VGR-6007`, `VGR-6008`, `VGR-7001`, `VGR-7002`, `VGR-7003`, `VGR-7004`, `VGR-7005`, `VGR-7006`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8004`, `VGR-8005`, `VGR-8006`, `VGR-8007`, `VGR-8008`, `VGR-9002`, `VGR-9004`, `VGR-9007`, and `VGR-9010` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-5008`, `VGR-6001`, `VGR-6002`, `VGR-6003`, `VGR-6004`, `VGR-6005`, `VGR-6006`, `VGR-6007`, `VGR-6008`, `VGR-7001`, `VGR-7002`, `VGR-7003`, `VGR-7004`, `VGR-7005`, `VGR-7006`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8004`, `VGR-8005`, `VGR-8006`, `VGR-8007`, `VGR-8008`, `VGR-9002`, `VGR-9004`, `VGR-9005`, `VGR-9007`, and `VGR-9010` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
@@ -98,6 +99,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored construction script definitions now have structural validation, deterministic command planning, editor execution, and headless automation coverage when targeting `UserConstructionScript`.
 - Whole-Blueprint authoring now also has persisted save/reload/native-compile roundtrip coverage plus checked-in golden snapshot coverage across the supported milestone-4 surfaces, including metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
+- Whole-Blueprint authoring now also has persisted source-control diff coverage: `Vergil.Scaffold.SourceControlDiff` compares two persisted revisions of the same `/Game/Tests/...` Blueprint package through a checked-in text diff fixture while cross-checking the changed review lines against `Vergil.DocumentDiff`'s modified canonical paths.
 - The scaffold now also has dedicated PIE runtime validation suites for real play-world behavior, covering latent event flow (`Delay`, function-name timers, and dispatcher signaling) plus runtime world mutation (`AddComponentByClass` and `SpawnActor`) under the same headless `Vergil.Scaffold` runner.
 - Vergil now has an explicit semantic-versioning and migration policy document, and the supported-contract manifest now reports the plugin semantic version, plugin descriptor version, and supported schema migration paths directly from code-backed helpers.
 - Schema migration helpers now exist for older documents, and the compiler now runs schema migration as its first pass so supported legacy documents upgrade automatically before validation and planning.
