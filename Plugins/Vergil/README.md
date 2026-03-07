@@ -29,6 +29,7 @@ powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilSca
 Useful variants:
 
 - Run one test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.TimerDelegateExecution'`
+- Run the persisted golden-asset regression test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.GoldenAssetSnapshot'`
 - Summarize an existing log without re-running: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Get-VergilDiagnosticsSummary.ps1 -LogPath .\Saved\Logs\VergilAutomation_All.log`
 
 The runner writes a headless automation log and prints a compile/apply/test summary from that log.
@@ -63,7 +64,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored implemented interfaces now lower into Blueprint interface application for authored interface class paths.
 - Document-authored class defaults now lower into post-compile Blueprint class default writes for authored property names and serialized values.
 - Document-authored construction script definitions now lower into construction-script graph authoring when the compile target graph is `UserConstructionScript`.
-- The current whole-asset authoring surface now has persisted save/reload/native-compile roundtrip coverage on a real `/Game/Tests/...` Blueprint package.
+- The current whole-asset authoring surface now has persisted save/reload/native-compile roundtrip coverage on a real `/Game/Tests/...` Blueprint package plus a checked-in golden snapshot fixture under `Plugins/Vergil/Tests/GoldenAssets/`.
 - Legacy document schemas now have explicit model-level forward-migration helpers.
 - Structural validation now also rejects unsupported Blueprint metadata keys, empty variable metadata keys, whitespace-only typed object/class paths, invalid dispatcher parameter type shapes, and graph edges that reference pins outside their declared source/target nodes.
 - Direct command plans are now preflight-validated before any editor transaction starts, so malformed plans fail with diagnostics and execute zero commands.
@@ -95,7 +96,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored implemented interfaces now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored construction script definitions now have structural validation, deterministic command planning, editor execution, and headless automation coverage when targeting `UserConstructionScript`.
-- Whole-Blueprint authoring now also has persisted save/reload/native-compile roundtrip coverage across the supported milestone-4 surfaces, including metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
+- Whole-Blueprint authoring now also has persisted save/reload/native-compile roundtrip coverage plus checked-in golden snapshot coverage across the supported milestone-4 surfaces, including metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
 - Vergil now has an explicit semantic-versioning and migration policy document, and the supported-contract manifest now reports the plugin semantic version, plugin descriptor version, and supported schema migration paths directly from code-backed helpers.
 - Schema migration helpers now exist for older documents, and the compiler now runs schema migration as its first pass so supported legacy documents upgrade automatically before validation and planning.
 - Every supported legacy schema starting version now also has headless end-to-end execution coverage, proving representative legacy documents survive migration, compile, and apply through the current `UE_5.7` pipeline.

@@ -1,0 +1,16 @@
+blueprintPath=/Game/Tests/BP_VergilGoldenAsset.BP_VergilGoldenAsset
+displayName=Vergil Golden Asset
+description=Golden asset snapshot coverage.
+category=Vergil|Golden
+hideCategories=Actor|Rendering
+variable=RoundtripFlag|type=bool|defaultOnCDO=true|category=State|tooltip=Persists across save and reload.
+function=ComputeStatus|pure=true|protected=true|input=real|output=bool
+macro=RouteTarget|execute=exec|target=object:/Script/Engine.Actor|then=exec|count=int
+component=Root|class=/Script/Engine.SceneComponent|parent=<none>|socket=<none>|location=25.0,10.0,5.0
+component=VisualMesh|class=/Script/Engine.StaticMeshComponent|parent=Root|socket=GripSocket|hiddenInGame=true|castShadow=false
+interfaces=/Script/VergilCore.VergilAutomationTestInterface
+classDefaults|replicates=true|initialLifeSpan=4.5
+eventGraph|beginPlayPos=0,0|sequencePos=320,0|edge=BeginPlay.Then->Sequence.Execute
+constructionGraph|entryPos=0,0|sequencePos=320,0|edge=UserConstructionScript.Then->Sequence.Execute
+eventDryRun|fingerprint=6214d19f|commands=22
+constructionDryRun|fingerprint=ff1fff36|commands=4

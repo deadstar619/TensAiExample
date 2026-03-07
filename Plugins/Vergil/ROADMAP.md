@@ -588,7 +588,7 @@ Goal:
 
 Tickets:
 
-- `VGR-9001` Add golden asset tests
+- [x] `VGR-9001` Add golden asset tests
 - `VGR-9002` Add PIE runtime validation suites
 - `VGR-9003` Add large-graph performance benchmarks
 - [x] `VGR-9004` Add schema migration tests
@@ -602,8 +602,15 @@ Tickets:
 Acceptance criteria:
 
 - CI catches regressions before manual testing
+- persisted whole-asset golden snapshots catch supported authoring regressions in reviewed fixture files
 - migrations are versioned and tested
 - performance is measured on large graphs
+
+Session note for `VGR-9001` (2026-03-07):
+
+- `Vergil.Scaffold.GoldenAssetSnapshot` now authors a persisted `/Game/Tests/BP_VergilGoldenAsset` Blueprint across the supported milestone-4 whole-asset surface, saves and reloads it through Unreal's package path, native-compiles the reloaded asset, and compares a deterministic plain-text snapshot against the checked-in fixture at `Plugins/Vergil/Tests/GoldenAssets/BP_VergilGoldenAsset.txt`.
+- The golden snapshot currently covers Blueprint metadata, variable defaults plus metadata, function and macro signatures, component hierarchy plus template properties, implemented interfaces, class defaults, the primary event graph, the construction script, and dry-run command-plan fingerprints after reload. On mismatch, the test writes the actual snapshot to `Saved/Vergil/GoldenAssets/BP_VergilGoldenAsset.actual.txt`.
+- `mcp__tensai__build_project` succeeded in `Development`, `Vergil.Scaffold.GoldenAssetSnapshot` passed repeatedly with stable output, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `98/98` in this workspace.
 
 Session note for `VGR-9007` (2026-03-06):
 
@@ -637,13 +644,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9001`
-2. `VGR-9002`
-3. `VGR-9005`
-4. `VGR-9006`
-5. `VGR-9003`
+1. `VGR-9002`
+2. `VGR-9005`
+3. `VGR-9006`
+4. `VGR-9003`
+5. `VGR-9008`
 
-This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has both persisted save/reload/native-compile roundtrip coverage and checked-in golden snapshot coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:
