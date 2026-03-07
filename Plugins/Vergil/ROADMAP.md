@@ -324,13 +324,19 @@ Tickets:
 - `VGR-5004` Add deterministic `SpawnActor`
 - `VGR-5005` Add timer families beyond current delegate-driven coverage
 - `VGR-5006` Add more flow-control families
-- `VGR-5007` Add select/switch diagnostics for unsupported type combinations
+- [x] `VGR-5007` Add select/switch diagnostics for unsupported type combinations
 - `VGR-5008` Document all supported node contracts
 
 Acceptance criteria:
 
 - common gameplay Blueprints can be authored without manual graph cleanup
 - every supported family has headless automation coverage
+
+Session note for `VGR-5007` (2026-03-06):
+
+- `UE_5.7` select behavior is now enforced explicitly: semantic validation plus direct command-plan preflight reject `K2.Select` index categories outside `bool`, `int`, or `enum` before any node creation or transaction work starts.
+- Apply-time pin-connection failures for `K2.Select`, `K2.SwitchInt`, `K2.SwitchString`, and `K2.SwitchEnum` now emit dedicated unsupported-type diagnostics instead of only falling back to generic schema rejection text.
+- `Vergil.Scaffold.SemanticValidationPass`, `Vergil.Scaffold.CommandPlanValidation`, and `Vergil.Scaffold.SelectSwitchTypeDiagnostics` now cover the compiler, direct-command, and editor-execution paths for these unsupported type combinations.
 
 ## Milestone 6: Advanced K2 Coverage
 Goal:
@@ -442,13 +448,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5007`
-2. `VGR-7001`
-3. `VGR-5001`
-4. `VGR-8001`
-5. `VGR-9004`
+1. `VGR-7001`
+2. `VGR-5001`
+3. `VGR-8001`
+4. `VGR-9004`
+5. `VGR-5002`
 
-This keeps pressure on remaining K2 breadth, higher-level inspection/tooling, and release hardening now that the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on remaining inspection/tooling gaps, the next highest-value K2 breadth items, and release hardening now that the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

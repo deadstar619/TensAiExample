@@ -74,6 +74,14 @@ namespace
 		return false;
 	}
 
+	bool IsSupportedSelectIndexPinCategory(const FString& CategoryValue)
+	{
+		const FString Category = CategoryValue.TrimStartAndEnd().ToLower();
+		return Category == TEXT("bool")
+			|| Category == TEXT("int")
+			|| Category == TEXT("enum");
+	}
+
 	bool ValidateNodeSemanticRequirements(const FVergilGraphNode& Node, FVergilCompilerContext& Context)
 	{
 		const FString DescriptorString = Node.Descriptor.ToString();
@@ -263,6 +271,16 @@ namespace
 				Context,
 				TEXT("MissingSelectValueCategory"),
 				TEXT("Select nodes require metadata ValuePinCategory."));
+
+			const FString IndexPinCategory = Node.Metadata.FindRef(TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
+			if (!IndexPinCategory.IsEmpty() && !IsSupportedSelectIndexPinCategory(IndexPinCategory))
+			{
+				AddNodeDiagnostic(
+					TEXT("UnsupportedSelectIndexTypeCombination"),
+					FString::Printf(
+						TEXT("Select nodes currently support IndexPinCategory values bool, int, or enum in UE 5.7; found '%s'."),
+						*IndexPinCategory));
+			}
 			return bIsValid;
 		}
 

@@ -104,6 +104,7 @@ This document describes the current scaffold contracts implemented in code today
 - Known descriptor families now validate their expected authored shape before planning. This includes descriptor suffixes for `K2.Event.*`, `K2.CustomEvent.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, delegate helper descriptors, and required metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.FormatText`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
 - `K2.Event.*` descriptors now validate against node kind `Event`, `K2.Call.*` against kind `Call`, `K2.VarGet.*` against kind `VariableGet`, and `K2.VarSet.*` against kind `VariableSet`, which prevents those authored nodes from silently falling through to generic planning.
 - When compiling `UserConstructionScript`, the only supported authored `K2.Event.*` descriptor is `K2.Event.UserConstructionScript`.
+- Under `UE_5.7`, `K2.Select` currently supports only `IndexPinCategory=bool`, `int`, or `enum`; unsupported authored index categories now fail during semantic validation and direct command-plan preflight instead of deferring to late execution.
 
 ## Symbol resolution contracts
 
@@ -296,10 +297,10 @@ This document describes the current scaffold contracts implemented in code today
 | `K2.Delay` | any | none | Lowers to `UKismetSystemLibrary::Delay`. |
 | `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class during type resolution and is normalized before planning. |
 | `K2.Reroute` | any | none | Creates a knot node. |
-| `K2.Select` | any | `IndexPinCategory`, `ValuePinCategory` | Optional `IndexObjectPath`, `ValueObjectPath`, and `NumOptions`. Enum index selects use `IndexObjectPath` for the enum, and explicit type metadata is resolved before planning. |
-| `K2.SwitchInt` | any | none | Planned exec output pins define the case labels and must parse as integers. |
-| `K2.SwitchString` | any | none | Planned exec output pins define the case labels. Optional `CaseSensitive` metadata configures comparison behavior. |
-| `K2.SwitchEnum` | any | `EnumPath` | Enum path must resolve to a `UEnum` during type resolution and is normalized before planning. |
+| `K2.Select` | any | `IndexPinCategory`, `ValuePinCategory` | `IndexPinCategory` currently supports only `bool`, `int`, or `enum` in `UE_5.7`. Optional `IndexObjectPath`, `ValueObjectPath`, and `NumOptions` refine the wildcard shape. Enum index selects use `IndexObjectPath` for the enum, explicit type metadata is resolved before planning, and unsupported index/value connections now fail with explicit apply-time diagnostics. |
+| `K2.SwitchInt` | any | none | Planned exec output pins define the case labels and must parse as integers. Unsupported selection-pin type combinations now fail with explicit apply-time diagnostics. |
+| `K2.SwitchString` | any | none | Planned exec output pins define the case labels. Optional `CaseSensitive` metadata configures comparison behavior, and unsupported selection-pin type combinations now fail with explicit apply-time diagnostics. |
+| `K2.SwitchEnum` | any | `EnumPath` | Enum path must resolve to a `UEnum` during type resolution and is normalized before planning. Unsupported selection-pin type combinations now fail with explicit apply-time diagnostics. |
 | `K2.FormatText` | any | `FormatPattern` | Creates a format text node and reconstructs argument pins from the format pattern. |
 | `K2.MakeStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct` during type resolution and is normalized before planning. |
 | `K2.BreakStruct` | any | `StructPath` | Struct path must resolve to a `UScriptStruct` during type resolution and is normalized before planning. |

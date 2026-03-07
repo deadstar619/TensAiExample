@@ -1394,6 +1394,27 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilGraphNode UnsupportedSelectNode;
+		UnsupportedSelectNode.Id = FGuid::NewGuid();
+		UnsupportedSelectNode.Kind = EVergilNodeKind::Custom;
+		UnsupportedSelectNode.Descriptor = TEXT("K2.Select");
+		UnsupportedSelectNode.Metadata.Add(TEXT("IndexPinCategory"), TEXT("string"));
+		UnsupportedSelectNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT("object"));
+		UnsupportedSelectNode.Metadata.Add(TEXT("ValueObjectPath"), AActor::StaticClass()->GetPathName());
+		UnsupportedSelectNode.Metadata.Add(TEXT("NumOptions"), TEXT("2"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_SelectIndexType");
+		Request.Document.Nodes.Add(UnsupportedSelectNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Unsupported select index categories should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Unsupported select index categories should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Unsupported select index categories should report an explicit diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSelectIndexTypeCombination")));
+	}
+
+	{
 		FVergilGraphNode InvalidConstructionEvent;
 		InvalidConstructionEvent.Id = FGuid::NewGuid();
 		InvalidConstructionEvent.Kind = EVergilNodeKind::Event;
@@ -5764,6 +5785,32 @@ bool FVergilCommandPlanValidationTest::RunTest(const FString& Parameters)
 		TestNull(TEXT("Duplicate pin validation should prevent the second comment creation."), EventGraph != nullptr ? FindGraphNodeByGuid<UEdGraphNode_Comment>(EventGraph, SecondNodeId) : nullptr);
 	}
 
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for select index preflight coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FVergilCompilerCommand InvalidSelectCommand;
+		InvalidSelectCommand.Type = EVergilCommandType::AddNode;
+		InvalidSelectCommand.GraphName = TEXT("EventGraph");
+		InvalidSelectCommand.NodeId = FGuid::NewGuid();
+		InvalidSelectCommand.Name = TEXT("Vergil.K2.Select");
+		InvalidSelectCommand.Attributes.Add(TEXT("IndexPinCategory"), TEXT("string"));
+		InvalidSelectCommand.Attributes.Add(TEXT("ValuePinCategory"), TEXT("object"));
+		InvalidSelectCommand.Attributes.Add(TEXT("ValueObjectPath"), AActor::StaticClass()->GetPathName());
+		InvalidSelectCommand.Attributes.Add(TEXT("NumOptions"), TEXT("2"));
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { InvalidSelectCommand });
+
+		TestFalse(TEXT("Unsupported select index categories should fail command-plan validation."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported select index categories should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Unsupported select index categories should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Unsupported select index categories should emit the dedicated preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSelectIndexTypeCombination")));
+	}
+
 	return true;
 }
 
@@ -6707,6 +6754,328 @@ bool FVergilSwitchEnumExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Switch enum should resolve the requested enum."), SwitchGraphNode->GetEnum() == MovementModeEnum);
 	TestTrue(TEXT("Getter should feed switch selection."), GetterPin != nullptr && GetterPin->LinkedTo.Contains(SwitchSelectionPin));
 	TestTrue(TEXT("Switch enum MOVE_None should link to call execute."), SwitchCaseNonePin != nullptr && SwitchCaseNonePin->LinkedTo.Contains(CallExecPin));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSelectSwitchTypeDiagnosticsTest,
+	"Vergil.Scaffold.SelectSwitchTypeDiagnostics",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilSelectSwitchTypeDiagnosticsTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for select mismatch coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FEdGraphPinType BoolType;
+		BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+		TestTrue(TEXT("TestFlag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TestFlag"), BoolType, TEXT("false")));
+
+		FEdGraphPinType IntType;
+		IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+		TestTrue(TEXT("Mode member variable should be added for select mismatch coverage."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Mode"), IntType, TEXT("0")));
+
+		FVergilGraphNode FlagGetterNode;
+		FlagGetterNode.Id = FGuid::NewGuid();
+		FlagGetterNode.Kind = EVergilNodeKind::VariableGet;
+		FlagGetterNode.Descriptor = TEXT("K2.VarGet.TestFlag");
+
+		FVergilGraphPin FlagGetterValue;
+		FlagGetterValue.Id = FGuid::NewGuid();
+		FlagGetterValue.Name = TEXT("TestFlag");
+		FlagGetterValue.Direction = EVergilPinDirection::Output;
+		FlagGetterNode.Pins.Add(FlagGetterValue);
+
+		FVergilGraphNode ModeGetterNode;
+		ModeGetterNode.Id = FGuid::NewGuid();
+		ModeGetterNode.Kind = EVergilNodeKind::VariableGet;
+		ModeGetterNode.Descriptor = TEXT("K2.VarGet.Mode");
+
+		FVergilGraphPin ModeGetterValue;
+		ModeGetterValue.Id = FGuid::NewGuid();
+		ModeGetterValue.Name = TEXT("Mode");
+		ModeGetterValue.Direction = EVergilPinDirection::Output;
+		ModeGetterNode.Pins.Add(ModeGetterValue);
+
+		FVergilGraphNode SelectNode;
+		SelectNode.Id = FGuid::NewGuid();
+		SelectNode.Kind = EVergilNodeKind::Custom;
+		SelectNode.Descriptor = TEXT("K2.Select");
+		SelectNode.Metadata.Add(TEXT("IndexPinCategory"), TEXT("bool"));
+		SelectNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT("object"));
+		SelectNode.Metadata.Add(TEXT("ValueObjectPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilGraphPin SelectIndexPin;
+		SelectIndexPin.Id = FGuid::NewGuid();
+		SelectIndexPin.Name = TEXT("Index");
+		SelectIndexPin.Direction = EVergilPinDirection::Input;
+		SelectNode.Pins.Add(SelectIndexPin);
+
+		FVergilGraphPin SelectOption0Pin;
+		SelectOption0Pin.Id = FGuid::NewGuid();
+		SelectOption0Pin.Name = TEXT("Option 0");
+		SelectOption0Pin.Direction = EVergilPinDirection::Input;
+		SelectNode.Pins.Add(SelectOption0Pin);
+
+		FVergilGraphPin SelectOption1Pin;
+		SelectOption1Pin.Id = FGuid::NewGuid();
+		SelectOption1Pin.Name = TEXT("Option 1");
+		SelectOption1Pin.Direction = EVergilPinDirection::Input;
+		SelectNode.Pins.Add(SelectOption1Pin);
+
+		FVergilGraphPin SelectReturnPin;
+		SelectReturnPin.Id = FGuid::NewGuid();
+		SelectReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		SelectReturnPin.Direction = EVergilPinDirection::Output;
+		SelectNode.Pins.Add(SelectReturnPin);
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilSelectTypeDiagnostics");
+		Document.Nodes = { FlagGetterNode, ModeGetterNode, SelectNode };
+
+		FVergilGraphEdge FlagToSelectIndex;
+		FlagToSelectIndex.Id = FGuid::NewGuid();
+		FlagToSelectIndex.SourceNodeId = FlagGetterNode.Id;
+		FlagToSelectIndex.SourcePinId = FlagGetterValue.Id;
+		FlagToSelectIndex.TargetNodeId = SelectNode.Id;
+		FlagToSelectIndex.TargetPinId = SelectIndexPin.Id;
+		Document.Edges.Add(FlagToSelectIndex);
+
+		FVergilGraphEdge ModeToSelectValue;
+		ModeToSelectValue.Id = FGuid::NewGuid();
+		ModeToSelectValue.SourceNodeId = ModeGetterNode.Id;
+		ModeToSelectValue.SourcePinId = ModeGetterValue.Id;
+		ModeToSelectValue.TargetNodeId = SelectNode.Id;
+		ModeToSelectValue.TargetPinId = SelectOption0Pin.Id;
+		Document.Edges.Add(ModeToSelectValue);
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+		TestFalse(TEXT("Unsupported select value connections should fail apply-time execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported select value connections should not report a successful apply."), Result.bApplied);
+		TestTrue(TEXT("Unsupported select value connections should report the dedicated diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSelectValueTypeCombination")));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for switch int mismatch coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FEdGraphPinType ArrayBoolType;
+		ArrayBoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+		ArrayBoolType.ContainerType = EPinContainerType::Array;
+		TestTrue(TEXT("Flags member variable should be added for switch int mismatch coverage."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Flags"), ArrayBoolType, FString()));
+
+		FVergilGraphNode GetterNode;
+		GetterNode.Id = FGuid::NewGuid();
+		GetterNode.Kind = EVergilNodeKind::VariableGet;
+		GetterNode.Descriptor = TEXT("K2.VarGet.Flags");
+
+		FVergilGraphPin GetterValue;
+		GetterValue.Id = FGuid::NewGuid();
+		GetterValue.Name = TEXT("Flags");
+		GetterValue.Direction = EVergilPinDirection::Output;
+		GetterNode.Pins.Add(GetterValue);
+
+		FVergilGraphNode SwitchNode;
+		SwitchNode.Id = FGuid::NewGuid();
+		SwitchNode.Kind = EVergilNodeKind::ControlFlow;
+		SwitchNode.Descriptor = TEXT("K2.SwitchInt");
+
+		FVergilGraphPin SwitchExecIn;
+		SwitchExecIn.Id = FGuid::NewGuid();
+		SwitchExecIn.Name = UEdGraphSchema_K2::PN_Execute;
+		SwitchExecIn.Direction = EVergilPinDirection::Input;
+		SwitchExecIn.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchExecIn);
+
+		FVergilGraphPin SwitchSelectionPin;
+		SwitchSelectionPin.Id = FGuid::NewGuid();
+		SwitchSelectionPin.Name = TEXT("Selection");
+		SwitchSelectionPin.Direction = EVergilPinDirection::Input;
+		SwitchNode.Pins.Add(SwitchSelectionPin);
+
+		FVergilGraphPin SwitchCase0Pin;
+		SwitchCase0Pin.Id = FGuid::NewGuid();
+		SwitchCase0Pin.Name = TEXT("0");
+		SwitchCase0Pin.Direction = EVergilPinDirection::Output;
+		SwitchCase0Pin.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchCase0Pin);
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilSwitchIntTypeDiagnostics");
+		Document.Nodes = { GetterNode, SwitchNode };
+
+		FVergilGraphEdge GetterToSelection;
+		GetterToSelection.Id = FGuid::NewGuid();
+		GetterToSelection.SourceNodeId = GetterNode.Id;
+		GetterToSelection.SourcePinId = GetterValue.Id;
+		GetterToSelection.TargetNodeId = SwitchNode.Id;
+		GetterToSelection.TargetPinId = SwitchSelectionPin.Id;
+		Document.Edges.Add(GetterToSelection);
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+		TestFalse(TEXT("Unsupported switch-int selection connections should fail apply-time execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported switch-int selection connections should not report a successful apply."), Result.bApplied);
+		TestTrue(TEXT("Unsupported switch-int selection connections should report the dedicated diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSwitchIntSelectionTypeCombination")));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for switch string mismatch coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FEdGraphPinType ArrayBoolType;
+		ArrayBoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+		ArrayBoolType.ContainerType = EPinContainerType::Array;
+		TestTrue(TEXT("Flags member variable should be added for switch string mismatch coverage."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Flags"), ArrayBoolType, FString()));
+
+		FVergilGraphNode GetterNode;
+		GetterNode.Id = FGuid::NewGuid();
+		GetterNode.Kind = EVergilNodeKind::VariableGet;
+		GetterNode.Descriptor = TEXT("K2.VarGet.Flags");
+
+		FVergilGraphPin GetterValue;
+		GetterValue.Id = FGuid::NewGuid();
+		GetterValue.Name = TEXT("Flags");
+		GetterValue.Direction = EVergilPinDirection::Output;
+		GetterNode.Pins.Add(GetterValue);
+
+		FVergilGraphNode SwitchNode;
+		SwitchNode.Id = FGuid::NewGuid();
+		SwitchNode.Kind = EVergilNodeKind::ControlFlow;
+		SwitchNode.Descriptor = TEXT("K2.SwitchString");
+
+		FVergilGraphPin SwitchExecIn;
+		SwitchExecIn.Id = FGuid::NewGuid();
+		SwitchExecIn.Name = UEdGraphSchema_K2::PN_Execute;
+		SwitchExecIn.Direction = EVergilPinDirection::Input;
+		SwitchExecIn.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchExecIn);
+
+		FVergilGraphPin SwitchSelectionPin;
+		SwitchSelectionPin.Id = FGuid::NewGuid();
+		SwitchSelectionPin.Name = TEXT("Selection");
+		SwitchSelectionPin.Direction = EVergilPinDirection::Input;
+		SwitchNode.Pins.Add(SwitchSelectionPin);
+
+		FVergilGraphPin SwitchCasePin;
+		SwitchCasePin.Id = FGuid::NewGuid();
+		SwitchCasePin.Name = TEXT("Ready");
+		SwitchCasePin.Direction = EVergilPinDirection::Output;
+		SwitchCasePin.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchCasePin);
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilSwitchStringTypeDiagnostics");
+		Document.Nodes = { GetterNode, SwitchNode };
+
+		FVergilGraphEdge GetterToSelection;
+		GetterToSelection.Id = FGuid::NewGuid();
+		GetterToSelection.SourceNodeId = GetterNode.Id;
+		GetterToSelection.SourcePinId = GetterValue.Id;
+		GetterToSelection.TargetNodeId = SwitchNode.Id;
+		GetterToSelection.TargetPinId = SwitchSelectionPin.Id;
+		Document.Edges.Add(GetterToSelection);
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+		TestFalse(TEXT("Unsupported switch-string selection connections should fail apply-time execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported switch-string selection connections should not report a successful apply."), Result.bApplied);
+		TestTrue(TEXT("Unsupported switch-string selection connections should report the dedicated diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSwitchStringSelectionTypeCombination")));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for switch enum mismatch coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FEdGraphPinType IntType;
+		IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+		TestTrue(TEXT("Mode member variable should be added for switch enum mismatch coverage."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Mode"), IntType, TEXT("0")));
+
+		FVergilGraphNode GetterNode;
+		GetterNode.Id = FGuid::NewGuid();
+		GetterNode.Kind = EVergilNodeKind::VariableGet;
+		GetterNode.Descriptor = TEXT("K2.VarGet.Mode");
+
+		FVergilGraphPin GetterValue;
+		GetterValue.Id = FGuid::NewGuid();
+		GetterValue.Name = TEXT("Mode");
+		GetterValue.Direction = EVergilPinDirection::Output;
+		GetterNode.Pins.Add(GetterValue);
+
+		FVergilGraphNode SwitchNode;
+		SwitchNode.Id = FGuid::NewGuid();
+		SwitchNode.Kind = EVergilNodeKind::ControlFlow;
+		SwitchNode.Descriptor = TEXT("K2.SwitchEnum");
+		SwitchNode.Metadata.Add(TEXT("EnumPath"), TEXT("/Script/Engine.EMovementMode"));
+
+		FVergilGraphPin SwitchExecIn;
+		SwitchExecIn.Id = FGuid::NewGuid();
+		SwitchExecIn.Name = UEdGraphSchema_K2::PN_Execute;
+		SwitchExecIn.Direction = EVergilPinDirection::Input;
+		SwitchExecIn.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchExecIn);
+
+		FVergilGraphPin SwitchSelectionPin;
+		SwitchSelectionPin.Id = FGuid::NewGuid();
+		SwitchSelectionPin.Name = TEXT("Selection");
+		SwitchSelectionPin.Direction = EVergilPinDirection::Input;
+		SwitchNode.Pins.Add(SwitchSelectionPin);
+
+		FVergilGraphPin SwitchCasePin;
+		SwitchCasePin.Id = FGuid::NewGuid();
+		SwitchCasePin.Name = TEXT("MOVE_None");
+		SwitchCasePin.Direction = EVergilPinDirection::Output;
+		SwitchCasePin.bIsExec = true;
+		SwitchNode.Pins.Add(SwitchCasePin);
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilSwitchEnumTypeDiagnostics");
+		Document.Nodes = { GetterNode, SwitchNode };
+
+		FVergilGraphEdge GetterToSelection;
+		GetterToSelection.Id = FGuid::NewGuid();
+		GetterToSelection.SourceNodeId = GetterNode.Id;
+		GetterToSelection.SourcePinId = GetterValue.Id;
+		GetterToSelection.TargetNodeId = SwitchNode.Id;
+		GetterToSelection.TargetPinId = SwitchSelectionPin.Id;
+		Document.Edges.Add(GetterToSelection);
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+		TestFalse(TEXT("Unsupported switch-enum selection connections should fail apply-time execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported switch-enum selection connections should not report a successful apply."), Result.bApplied);
+		TestTrue(TEXT("Unsupported switch-enum selection connections should report the dedicated diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedSwitchEnumSelectionTypeCombination")));
+	}
 
 	return true;
 }

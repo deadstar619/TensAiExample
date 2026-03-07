@@ -650,6 +650,14 @@ namespace
 		return true;
 	}
 
+	bool IsSupportedSelectIndexCategory(const FString& PinCategoryValue)
+	{
+		const FString PinCategory = PinCategoryValue.TrimStartAndEnd().ToLower();
+		return PinCategory == TEXT("bool")
+			|| PinCategory == TEXT("int")
+			|| PinCategory == TEXT("enum");
+	}
+
 	bool ValidateCommandVariableTypeShape(
 		const FVergilCompilerCommand& Command,
 		const FString& ContextLabel,
@@ -969,6 +977,198 @@ namespace
 		}
 
 		return bAllPinsResolved;
+	}
+
+	FString DescribeRawPinTypeForDiagnostic(
+		const FName Category,
+		const FName SubCategory,
+		const TWeakObjectPtr<UObject>& SubCategoryObject)
+	{
+		if (Category == UEdGraphSchema_K2::PC_Exec)
+		{
+			return TEXT("exec");
+		}
+
+		if ((Category == UEdGraphSchema_K2::PC_Byte || Category == TEXT("enum"))
+			&& SubCategoryObject.IsValid()
+			&& SubCategoryObject->IsA<UEnum>())
+		{
+			return FString::Printf(TEXT("enum '%s'"), *SubCategoryObject->GetPathName());
+		}
+
+		if ((Category == UEdGraphSchema_K2::PC_Object
+			|| Category == UEdGraphSchema_K2::PC_Class
+			|| Category == UEdGraphSchema_K2::PC_Struct
+			|| Category == TEXT("enum"))
+			&& SubCategoryObject.IsValid())
+		{
+			return FString::Printf(TEXT("%s '%s'"), *Category.ToString(), *SubCategoryObject->GetPathName());
+		}
+
+		if (!Category.IsNone())
+		{
+			FString Description = Category.ToString();
+			if (!SubCategory.IsNone())
+			{
+				Description += FString::Printf(TEXT(":%s"), *SubCategory.ToString());
+			}
+			return Description;
+		}
+
+		return TEXT("unknown");
+	}
+
+	FString DescribePinTypeForDiagnostic(const FEdGraphPinType& PinType)
+	{
+		const FString BaseType = DescribeRawPinTypeForDiagnostic(
+			PinType.PinCategory,
+			PinType.PinSubCategory,
+			PinType.PinSubCategoryObject);
+
+		if (PinType.ContainerType == EPinContainerType::Array)
+		{
+			return FString::Printf(TEXT("array<%s>"), *BaseType);
+		}
+
+		if (PinType.ContainerType == EPinContainerType::Set)
+		{
+			return FString::Printf(TEXT("set<%s>"), *BaseType);
+		}
+
+		if (PinType.ContainerType == EPinContainerType::Map)
+		{
+			const FString ValueType = DescribeRawPinTypeForDiagnostic(
+				PinType.PinValueType.TerminalCategory,
+				PinType.PinValueType.TerminalSubCategory,
+				PinType.PinValueType.TerminalSubCategoryObject);
+			return FString::Printf(TEXT("map<%s, %s>"), *BaseType, *ValueType);
+		}
+
+		return BaseType;
+	}
+
+	FString DescribePinForDiagnostic(const UEdGraphPin* Pin)
+	{
+		if (Pin == nullptr)
+		{
+			return TEXT("unknown pin");
+		}
+
+		FString NodeTitle;
+		if (const UEdGraphNode* const OwningNode = Pin->GetOwningNode())
+		{
+			NodeTitle = OwningNode->GetNodeTitle(ENodeTitleType::ListView).ToString();
+			if (NodeTitle.IsEmpty())
+			{
+				NodeTitle = OwningNode->GetClass()->GetName();
+			}
+		}
+		else
+		{
+			NodeTitle = TEXT("UnknownNode");
+		}
+
+		return FString::Printf(TEXT("pin '%s' on node '%s'"), *Pin->PinName.ToString(), *NodeTitle);
+	}
+
+	bool IsSelectOptionPin(const UK2Node_Select* SelectNode, const UEdGraphPin* Pin)
+	{
+		if (SelectNode == nullptr || Pin == nullptr)
+		{
+			return false;
+		}
+
+		TArray<UEdGraphPin*> OptionPins;
+		SelectNode->GetOptionPins(OptionPins);
+		return OptionPins.Contains(const_cast<UEdGraphPin*>(Pin));
+	}
+
+	FString BuildPinTypeMismatchDiagnosticMessage(
+		const TCHAR* ContextLabel,
+		const UEdGraphPin* ConstrainedPin,
+		const UEdGraphPin* ConnectedPin)
+	{
+		return FString::Printf(
+			TEXT("%s %s expects type %s, but %s has type %s."),
+			ContextLabel,
+			*DescribePinForDiagnostic(ConstrainedPin),
+			*DescribePinTypeForDiagnostic(ConstrainedPin->PinType),
+			*DescribePinForDiagnostic(ConnectedPin),
+			*DescribePinTypeForDiagnostic(ConnectedPin->PinType));
+	}
+
+	bool TryBuildSelectSwitchTypeMismatchDiagnostic(
+		const UEdGraphPin* SourcePin,
+		const UEdGraphPin* TargetPin,
+		FName& OutCode,
+		FString& OutMessage)
+	{
+		if (SourcePin == nullptr
+			|| TargetPin == nullptr
+			|| SourcePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
+			|| TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+		{
+			return false;
+		}
+
+		if (const UK2Node_SwitchInteger* const SwitchNode = Cast<UK2Node_SwitchInteger>(TargetPin->GetOwningNode()))
+		{
+			if (TargetPin == SwitchNode->GetSelectionPin() && TargetPin->PinType != SourcePin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSwitchIntSelectionTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Switch int selection"), TargetPin, SourcePin);
+				return true;
+			}
+		}
+
+		if (const UK2Node_SwitchString* const SwitchNode = Cast<UK2Node_SwitchString>(TargetPin->GetOwningNode()))
+		{
+			if (TargetPin == SwitchNode->GetSelectionPin() && TargetPin->PinType != SourcePin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSwitchStringSelectionTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Switch string selection"), TargetPin, SourcePin);
+				return true;
+			}
+		}
+
+		if (const UK2Node_SwitchEnum* const SwitchNode = Cast<UK2Node_SwitchEnum>(TargetPin->GetOwningNode()))
+		{
+			if (TargetPin == SwitchNode->GetSelectionPin() && TargetPin->PinType != SourcePin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSwitchEnumSelectionTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Switch enum selection"), TargetPin, SourcePin);
+				return true;
+			}
+		}
+
+		if (const UK2Node_Select* const SelectNode = Cast<UK2Node_Select>(TargetPin->GetOwningNode()))
+		{
+			if (TargetPin == SelectNode->GetIndexPin() && TargetPin->PinType != SourcePin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSelectIndexTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Select index"), TargetPin, SourcePin);
+				return true;
+			}
+
+			if (IsSelectOptionPin(SelectNode, TargetPin) && TargetPin->PinType != SourcePin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSelectValueTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Select value"), TargetPin, SourcePin);
+				return true;
+			}
+		}
+
+		if (const UK2Node_Select* const SelectNode = Cast<UK2Node_Select>(SourcePin->GetOwningNode()))
+		{
+			if (SourcePin == SelectNode->GetReturnValuePin() && SourcePin->PinType != TargetPin->PinType)
+			{
+				OutCode = TEXT("UnsupportedSelectValueTypeCombination");
+				OutMessage = BuildPinTypeMismatchDiagnosticMessage(TEXT("Select value"), SourcePin, TargetPin);
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	bool RefreshRegisteredPins(
@@ -3284,13 +3484,25 @@ namespace
 		}
 		else if (Command.Name == TEXT("Vergil.K2.Select"))
 		{
-			const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).ToLower();
+			const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
 			if (IndexCategory.IsEmpty())
 			{
 				Diagnostics.Add(FVergilDiagnostic::Make(
 					EVergilDiagnosticSeverity::Error,
 					TEXT("MissingSelectIndexCategory"),
 					TEXT("Select node execution requires attribute IndexPinCategory."),
+					Command.NodeId));
+				return false;
+			}
+
+			if (!IsSupportedSelectIndexCategory(IndexCategory))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("UnsupportedSelectIndexTypeCombination"),
+					FString::Printf(
+						TEXT("Select nodes currently support IndexPinCategory values bool, int, or enum in UE 5.7; found '%s'."),
+						*IndexCategory),
 					Command.NodeId));
 				return false;
 			}
@@ -4016,6 +4228,18 @@ namespace
 		const FPinConnectionResponse Response = Schema->CanCreateConnection(*SourcePinPtr, *TargetPinPtr);
 		if (Response.Response == ECanCreateConnectionResponse::CONNECT_RESPONSE_DISALLOW)
 		{
+			FName SpecializedCode = NAME_None;
+			FString SpecializedMessage;
+			if (TryBuildSelectSwitchTypeMismatchDiagnostic(*SourcePinPtr, *TargetPinPtr, SpecializedCode, SpecializedMessage))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					SpecializedCode,
+					SpecializedMessage,
+					Command.SourceNodeId));
+				return false;
+			}
+
 			Diagnostics.Add(FVergilDiagnostic::Make(
 				EVergilDiagnosticSeverity::Error,
 				TEXT("PinConnectionRejected"),
@@ -4543,7 +4767,7 @@ namespace
 				if (Command.Name == TEXT("Vergil.K2.Select"))
 				{
 					const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
-					if (!ValidateCommandTypeShape(
+					const bool bIndexTypeValid = ValidateCommandTypeShape(
 						GetCommandAttribute(Command, TEXT("IndexPinCategory")),
 						GetCommandAttribute(Command, TEXT("IndexObjectPath")),
 						TEXT("Select node index pin"),
@@ -4551,9 +4775,19 @@ namespace
 						TEXT("InvalidSelectIndexType"),
 						TEXT("SelectIndexObjectPathMissing"),
 						Command.NodeId,
-						Diagnostics))
+						Diagnostics);
+					if (!bIndexTypeValid)
 					{
 						bIsValid = false;
+					}
+					else if (!IsSupportedSelectIndexCategory(IndexCategory))
+					{
+						AddValidationError(
+							TEXT("UnsupportedSelectIndexTypeCombination"),
+							FString::Printf(
+								TEXT("Select nodes currently support IndexPinCategory values bool, int, or enum in UE 5.7; found '%s'."),
+								*IndexCategory),
+							Command.NodeId);
 					}
 
 					if (!ValidateCommandTypeShape(
@@ -5298,7 +5532,7 @@ bool FVergilCommandExecutor::Execute(
 	{
 		if (Diagnostic.Severity == EVergilDiagnosticSeverity::Error)
 		{
-			UE_LOG(LogVergil, Warning, TEXT("Vergil command execution failed with %d diagnostics."), Diagnostics.Num());
+			UE_LOG(LogVergil, Log, TEXT("Vergil command execution failed with %d diagnostics."), Diagnostics.Num());
 			for (const FVergilDiagnostic& EmittedDiagnostic : Diagnostics)
 			{
 				const TCHAR* SeverityLabel = TEXT("Info");
@@ -5313,8 +5547,8 @@ bool FVergilCommandExecutor::Execute(
 
 				UE_LOG(
 					LogVergil,
-					Warning,
-					TEXT("Vergil diagnostic [%s] %s: %s"),
+					Log,
+					TEXT("Vergil execution diagnostic [%s] %s: %s"),
 					SeverityLabel,
 					*EmittedDiagnostic.Code.ToString(),
 					*EmittedDiagnostic.Message);
