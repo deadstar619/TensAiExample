@@ -35,6 +35,24 @@ public:
 	FString DescribeSupportedContracts() const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeAgentRequest(const FVergilAgentRequest& Request) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectAgentRequestAsJson(const FVergilAgentRequest& Request, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeAgentResponse(const FVergilAgentResponse& Response) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectAgentResponseAsJson(const FVergilAgentResponse& Response, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeAgentAuditEntry(const FVergilAgentAuditEntry& Entry) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectAgentAuditEntryAsJson(const FVergilAgentAuditEntry& Entry, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")

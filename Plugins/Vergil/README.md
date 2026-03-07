@@ -38,13 +38,14 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - See [VERSIONING.md](VERSIONING.md) for the current semantic-versioning policy, schema-migration policy, and release-update checklist.
 - The current plugin semantic version is `0.1.0`, the document schema version is `3`, and supported document migrations are currently `1->2` and `2->3`.
 - `UVergilAgentSubsystem` contract inspection now exposes the plugin semantic version, plugin descriptor version, schema version, command-plan format version, and supported schema migration paths from code-backed data.
-- The current inspection JSON formats are `Vergil.GraphDocument`, `Vergil.Diagnostics`, and `Vergil.CompileResult`, each at version `1`.
+- The current inspection JSON formats are `Vergil.GraphDocument`, `Vergil.Diagnostics`, `Vergil.CompileResult`, `Vergil.AgentRequest`, `Vergil.AgentResponse`, and `Vergil.AgentAuditEntry`, each at version `1`.
 
 ## Current supported contracts
 
 - The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
 - `UVergilAgentSubsystem` now exposes read-only supported-contract inspection helpers backed by code, so callers can inspect the current plugin semantic version, schema migration paths, supported document fields, target graphs, metadata keys, command types, and descriptor contracts without scraping markdown.
 - `UVergilEditorSubsystem` and `UVergilAgentSubsystem` now also expose read-only inspection helpers for command plans, graph documents, diagnostics, and compile results, including deterministic JSON exports for the document, diagnostics, and compile-result surfaces.
+- `UVergilAgentSubsystem` now also exposes typed request/response/audit inspection helpers for the real agent-layer contract surface. `PlanDocument` requests wrap the canonical document plus target graph and compile flags, `ApplyCommandPlan` requests wrap an explicit command plan plus target Blueprint path and expected fingerprint, and responses wrap the existing `FVergilCompileResult` instead of inventing a second result shape.
 - Document-authored Blueprint metadata is now part of that supported contract surface for `BlueprintDisplayName`, `BlueprintDescription`, `BlueprintCategory`, and `HideCategories`.
 - Document-authored member variables are now part of that supported contract surface, including type/flag/metadata/default authoring.
 - Document-authored function definitions now lower into Blueprint function graph/signature authoring for function name, purity, access, and typed inputs/outputs. Function body authoring remains future work.
@@ -66,7 +67,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5007`, `VGR-7001`, `VGR-8005`, and `VGR-9007` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5007`, `VGR-7001`, `VGR-8001`, `VGR-8005`, and `VGR-9007` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
@@ -94,6 +95,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Command plans now normalize into deterministic execution-phase order before they are returned or applied, so compile output and direct `ExecuteCommandPlan` replay share the same visible ordering.
 - Command plans now also have stable debug printing plus JSON serialization/deserialization, and the editor subsystem can replay serialized command plans directly.
 - The explicit editor command surface now covers Blueprint metadata, function graphs, macro graphs, components, interfaces, class defaults, member renames, node moves/removals, and explicit compile commands. Document lowering now exists for Blueprint metadata, variables, dispatchers, function definitions, macro definitions, component hierarchy data, component template properties, class defaults, implemented interfaces, and construction-script graphs; the remaining asset-model slices are still future work.
+- The agent layer now has explicit versioned request/response/audit contracts for `PlanDocument` and `ApplyCommandPlan`, backed by deterministic JSON and human-readable inspection helpers on `UVergilAgentSubsystem`.
 - The agent subsystem now also exposes read-only inspection helpers for the code-backed supported-contract manifest, descriptor table, JSON manifest export, and a human-readable summary of the current contract surface.
 - `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
 

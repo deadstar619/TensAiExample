@@ -397,7 +397,7 @@ Goal:
 
 Tickets:
 
-- `VGR-8001` Define agent request/response contracts
+- [x] `VGR-8001` Define agent request/response contracts
 - `VGR-8002` Persist audit data instead of keeping it transient only
 - `VGR-8003` Add plan/apply separation
 - `VGR-8004` Add permission gates around write/apply actions
@@ -410,6 +410,12 @@ Acceptance criteria:
 
 - AI remains optional and non-authoritative
 - all apply operations are auditable and replayable
+
+Session note for `VGR-8001` (2026-03-07):
+
+- The agent module now defines explicit `PlanDocument` and `ApplyCommandPlan` request envelopes plus typed response and audit-entry contracts in `FVergilAgentRequest`, `FVergilAgentResponse`, and `FVergilAgentAuditEntry`, instead of treating agent work as only an unstructured summary blob plus transient state string.
+- The new versioned inspection formats are `Vergil.AgentRequest`, `Vergil.AgentResponse`, and `Vergil.AgentAuditEntry`, each at version `1`, with deterministic JSON and human-readable descriptions exposed through both the namespace helpers and `UVergilAgentSubsystem`.
+- `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing UTC timestamps before appending the transient audit trail, and `Vergil.Scaffold.AgentRequestResponseContracts` covers request/response/audit inspection parity plus audit normalization.
 
 Session note for `VGR-8005` (2026-03-06):
 
@@ -460,7 +466,7 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-8001`
+1. `VGR-8002`
 2. `VGR-9004`
 3. `VGR-5002`
 4. `VGR-7002`

@@ -2690,6 +2690,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.InspectorTooling",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAgentRequestResponseContractsTest,
+	"Vergil.Scaffold.AgentRequestResponseContracts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -3013,6 +3018,149 @@ bool FVergilInspectorToolingTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Serialized compile results should include the schema-migration diagnostic code."), NamespaceCompileResultJson.Contains(TEXT("SchemaMigrationApplied")));
 
 	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
+
+bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for agent contract inspection."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+
+	FVergilGraphDocument PlanDocument;
+	PlanDocument.SchemaVersion = Vergil::SchemaVersion;
+	PlanDocument.BlueprintPath = TEXT("/Game/Tests/BP_AgentRequestContract");
+	PlanDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Agent request contract"));
+
+	FVergilAgentRequest PlanRequest;
+	PlanRequest.Context.RequestId = FGuid::NewGuid();
+	PlanRequest.Context.Summary = TEXT("Plan the authored document.");
+	PlanRequest.Context.InputText = TEXT("Generate a dry-run command plan.");
+	PlanRequest.Context.Tags = { TEXT("Agent"), TEXT("Plan") };
+	PlanRequest.Operation = EVergilAgentOperation::PlanDocument;
+	PlanRequest.Plan.TargetBlueprintPath = TEXT("/Game/Tests/BP_AgentRequestContract");
+	PlanRequest.Plan.Document = PlanDocument;
+	PlanRequest.Plan.TargetGraphName = TEXT("EventGraph");
+	PlanRequest.Plan.bAutoLayout = false;
+	PlanRequest.Plan.bGenerateComments = false;
+
+	TestFalse(TEXT("PlanDocument requests should remain read-only."), PlanRequest.IsWriteRequest());
+	TestEqual(TEXT("Agent request format name should be versioned."), Vergil::GetAgentRequestFormatName(), FString(TEXT("Vergil.AgentRequest")));
+	TestEqual(TEXT("Agent request format version should remain 1."), Vergil::GetAgentRequestFormatVersion(), 1);
+
+	const FString NamespacePlanRequestDescription = Vergil::DescribeAgentRequest(PlanRequest);
+	const FString AgentPlanRequestDescription = AgentSubsystem->DescribeAgentRequest(PlanRequest);
+	TestEqual(TEXT("Agent request description should mirror the namespace helper."), AgentPlanRequestDescription, NamespacePlanRequestDescription);
+	TestTrue(TEXT("Plan request description should advertise the request format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.AgentRequest version=1")));
+	TestTrue(TEXT("Plan request description should include the plan summary."), NamespacePlanRequestDescription.Contains(TEXT("Plan the authored document.")));
+	TestTrue(TEXT("Plan request description should include the graph-document format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.GraphDocument version=1")));
+
+	const FString NamespacePlanRequestJson = Vergil::SerializeAgentRequest(PlanRequest, false);
+	const FString AgentPlanRequestJson = AgentSubsystem->InspectAgentRequestAsJson(PlanRequest, false);
+	TestEqual(TEXT("Agent request JSON should mirror the namespace helper."), AgentPlanRequestJson, NamespacePlanRequestJson);
+	TestTrue(TEXT("Plan request JSON should advertise the request format."), NamespacePlanRequestJson.Contains(TEXT("\"format\":\"Vergil.AgentRequest\"")));
+	TestTrue(TEXT("Plan request JSON should include the plan operation."), NamespacePlanRequestJson.Contains(TEXT("\"operation\":\"PlanDocument\"")));
+	TestTrue(TEXT("Plan request JSON should embed the graph-document payload."), NamespacePlanRequestJson.Contains(TEXT("\"document\":{\"format\":\"Vergil.GraphDocument\"")));
+	TestTrue(TEXT("Plan request JSON should include the read-only request classification."), NamespacePlanRequestJson.Contains(TEXT("\"writeRequest\":false")));
+
+	FVergilCompilerCommand ApplyMetadataCommand;
+	ApplyMetadataCommand.Type = EVergilCommandType::SetBlueprintMetadata;
+	ApplyMetadataCommand.Name = TEXT("BlueprintDescription");
+	ApplyMetadataCommand.StringValue = TEXT("Agent apply contract");
+
+	FVergilCompileResult ResponseResult;
+	ResponseResult.bSucceeded = true;
+	ResponseResult.Commands = { ApplyMetadataCommand };
+	ResponseResult.Diagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Info, TEXT("AgentContract"), TEXT("Agent contract result")));
+	ResponseResult.Statistics.TargetGraphName = TEXT("EventGraph");
+	ResponseResult.Statistics.RequestedSchemaVersion = Vergil::SchemaVersion;
+	ResponseResult.Statistics.EffectiveSchemaVersion = Vergil::SchemaVersion;
+	ResponseResult.Statistics.RebuildCommandStatistics(ResponseResult.Commands);
+
+	FVergilAgentRequest ApplyRequest;
+	ApplyRequest.Context.RequestId = FGuid::NewGuid();
+	ApplyRequest.Context.Summary = TEXT("Apply the normalized command plan.");
+	ApplyRequest.Context.InputText = TEXT("Replay the approved plan.");
+	ApplyRequest.Context.Tags = { TEXT("Agent"), TEXT("Apply") };
+	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
+	ApplyRequest.Apply.TargetBlueprintPath = TEXT("/Game/Tests/BP_AgentRequestContract");
+	ApplyRequest.Apply.Commands = ResponseResult.Commands;
+	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = ResponseResult.Statistics.CommandPlanFingerprint;
+
+	TestTrue(TEXT("ApplyCommandPlan requests should be treated as write requests."), ApplyRequest.IsWriteRequest());
+	TestTrue(TEXT("Apply payload should preserve the expected fingerprint."), ApplyRequest.Apply.ExpectedCommandPlanFingerprint == ResponseResult.Statistics.CommandPlanFingerprint);
+
+	const FString NamespaceApplyRequestJson = Vergil::SerializeAgentRequest(ApplyRequest, false);
+	TestTrue(TEXT("Apply request JSON should include the apply operation."), NamespaceApplyRequestJson.Contains(TEXT("\"operation\":\"ApplyCommandPlan\"")));
+	TestTrue(TEXT("Apply request JSON should include the expected fingerprint."), NamespaceApplyRequestJson.Contains(*FString::Printf(TEXT("\"expectedCommandPlanFingerprint\":\"%s\""), *ResponseResult.Statistics.CommandPlanFingerprint)));
+	TestTrue(TEXT("Apply request JSON should embed the command-plan payload."), NamespaceApplyRequestJson.Contains(TEXT("\"commandPlan\":{\"format\":\"Vergil.CommandPlan\"")));
+	TestTrue(TEXT("Apply request JSON should include the write-request classification."), NamespaceApplyRequestJson.Contains(TEXT("\"writeRequest\":true")));
+
+	FVergilAgentResponse Response;
+	Response.RequestId = PlanRequest.Context.RequestId;
+	Response.Operation = EVergilAgentOperation::PlanDocument;
+	Response.State = EVergilAgentExecutionState::Completed;
+	Response.Message = TEXT("Dry-run planning completed.");
+	Response.Result = ResponseResult;
+
+	TestEqual(TEXT("Agent response format name should be versioned."), Vergil::GetAgentResponseFormatName(), FString(TEXT("Vergil.AgentResponse")));
+	TestEqual(TEXT("Agent response format version should remain 1."), Vergil::GetAgentResponseFormatVersion(), 1);
+
+	const FString NamespaceResponseDescription = Vergil::DescribeAgentResponse(Response);
+	const FString AgentResponseDescription = AgentSubsystem->DescribeAgentResponse(Response);
+	TestEqual(TEXT("Agent response description should mirror the namespace helper."), AgentResponseDescription, NamespaceResponseDescription);
+	TestTrue(TEXT("Agent response description should advertise the response format."), NamespaceResponseDescription.Contains(TEXT("Vergil.AgentResponse version=1")));
+	TestTrue(TEXT("Agent response description should include the response message."), NamespaceResponseDescription.Contains(TEXT("Dry-run planning completed.")));
+	TestTrue(TEXT("Agent response description should include the nested compile-result format."), NamespaceResponseDescription.Contains(TEXT("Vergil.CompileResult version=1")));
+
+	const FString NamespaceResponseJson = Vergil::SerializeAgentResponse(Response, false);
+	const FString AgentResponseJson = AgentSubsystem->InspectAgentResponseAsJson(Response, false);
+	TestEqual(TEXT("Agent response JSON should mirror the namespace helper."), AgentResponseJson, NamespaceResponseJson);
+	TestTrue(TEXT("Agent response JSON should advertise the response format."), NamespaceResponseJson.Contains(TEXT("\"format\":\"Vergil.AgentResponse\"")));
+	TestTrue(TEXT("Agent response JSON should include the completed state."), NamespaceResponseJson.Contains(TEXT("\"state\":\"Completed\"")));
+	TestTrue(TEXT("Agent response JSON should embed the compile-result payload."), NamespaceResponseJson.Contains(TEXT("\"result\":{\"format\":\"Vergil.CompileResult\"")));
+
+	FVergilAgentAuditEntry AuditEntry;
+	AuditEntry.Request = ApplyRequest;
+	AuditEntry.Response.Message = TEXT("Apply request queued.");
+	AuditEntry.Response.State = EVergilAgentExecutionState::Pending;
+
+	AgentSubsystem->RecordAuditEntry(AuditEntry);
+	const TArray<FVergilAgentAuditEntry> AuditEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Recording one audit entry should store one normalized record."), AuditEntries.Num(), 1);
+	if (AuditEntries.Num() != 1)
+	{
+		return false;
+	}
+
+	const FVergilAgentAuditEntry& NormalizedAuditEntry = AuditEntries[0];
+	TestTrue(TEXT("Recorded audit entries should synthesize a timestamp when omitted."), !NormalizedAuditEntry.TimestampUtc.IsEmpty());
+	TestEqual(TEXT("Recorded audit entries should preserve the request id on the response."), NormalizedAuditEntry.Response.RequestId, ApplyRequest.Context.RequestId);
+	TestEqual(TEXT("Recorded audit entries should synthesize the response operation from the request."), NormalizedAuditEntry.Response.Operation, ApplyRequest.Operation);
+
+	TestEqual(TEXT("Agent audit-entry format name should be versioned."), Vergil::GetAgentAuditEntryFormatName(), FString(TEXT("Vergil.AgentAuditEntry")));
+	TestEqual(TEXT("Agent audit-entry format version should remain 1."), Vergil::GetAgentAuditEntryFormatVersion(), 1);
+
+	const FString NamespaceAuditDescription = Vergil::DescribeAgentAuditEntry(NormalizedAuditEntry);
+	const FString AgentAuditDescription = AgentSubsystem->DescribeAgentAuditEntry(NormalizedAuditEntry);
+	TestEqual(TEXT("Agent audit-entry description should mirror the namespace helper."), AgentAuditDescription, NamespaceAuditDescription);
+	TestTrue(TEXT("Agent audit-entry description should advertise the audit-entry format."), NamespaceAuditDescription.Contains(TEXT("Vergil.AgentAuditEntry version=1")));
+	TestTrue(TEXT("Agent audit-entry description should include the nested apply request operation."), NamespaceAuditDescription.Contains(TEXT("ApplyCommandPlan")));
+	TestTrue(TEXT("Agent audit-entry description should include the nested pending response state."), NamespaceAuditDescription.Contains(TEXT("state=Pending")));
+
+	const FString NamespaceAuditJson = Vergil::SerializeAgentAuditEntry(NormalizedAuditEntry, false);
+	const FString AgentAuditJson = AgentSubsystem->InspectAgentAuditEntryAsJson(NormalizedAuditEntry, false);
+	TestEqual(TEXT("Agent audit-entry JSON should mirror the namespace helper."), AgentAuditJson, NamespaceAuditJson);
+	TestTrue(TEXT("Agent audit-entry JSON should advertise the audit-entry format."), NamespaceAuditJson.Contains(TEXT("\"format\":\"Vergil.AgentAuditEntry\"")));
+	TestTrue(TEXT("Agent audit-entry JSON should embed the nested request payload."), NamespaceAuditJson.Contains(TEXT("\"request\":{\"format\":\"Vergil.AgentRequest\"")));
+	TestTrue(TEXT("Agent audit-entry JSON should embed the nested response payload."), NamespaceAuditJson.Contains(TEXT("\"response\":{\"format\":\"Vergil.AgentResponse\"")));
+
+	AgentSubsystem->ClearAuditTrail();
 	return true;
 }
 bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)

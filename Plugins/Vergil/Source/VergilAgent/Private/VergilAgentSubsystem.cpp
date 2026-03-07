@@ -2,6 +2,36 @@
 
 #include "VergilLog.h"
 
+namespace
+{
+	FVergilAgentAuditEntry NormalizeAuditEntry(const FVergilAgentAuditEntry& Entry)
+	{
+		FVergilAgentAuditEntry NormalizedEntry = Entry;
+
+		if (!NormalizedEntry.Request.Context.RequestId.IsValid())
+		{
+			NormalizedEntry.Request.Context.RequestId = FGuid::NewGuid();
+		}
+
+		if (!NormalizedEntry.Response.RequestId.IsValid())
+		{
+			NormalizedEntry.Response.RequestId = NormalizedEntry.Request.Context.RequestId;
+		}
+
+		if (NormalizedEntry.Response.Operation == EVergilAgentOperation::None)
+		{
+			NormalizedEntry.Response.Operation = NormalizedEntry.Request.Operation;
+		}
+
+		if (NormalizedEntry.TimestampUtc.IsEmpty())
+		{
+			NormalizedEntry.TimestampUtc = FDateTime::UtcNow().ToIso8601();
+		}
+
+		return NormalizedEntry;
+	}
+}
+
 void UVergilAgentSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -17,7 +47,7 @@ void UVergilAgentSubsystem::Deinitialize()
 
 void UVergilAgentSubsystem::RecordAuditEntry(const FVergilAgentAuditEntry& Entry)
 {
-	AuditTrail.Add(Entry);
+	AuditTrail.Add(NormalizeAuditEntry(Entry));
 
 	if (AuditTrail.Num() > MaxAuditEntries)
 	{
@@ -49,6 +79,36 @@ FString UVergilAgentSubsystem::InspectSupportedContractsAsJson(const bool bPrett
 FString UVergilAgentSubsystem::DescribeSupportedContracts() const
 {
 	return Vergil::DescribeSupportedContractManifest();
+}
+
+FString UVergilAgentSubsystem::DescribeAgentRequest(const FVergilAgentRequest& Request) const
+{
+	return Vergil::DescribeAgentRequest(Request);
+}
+
+FString UVergilAgentSubsystem::InspectAgentRequestAsJson(const FVergilAgentRequest& Request, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeAgentRequest(Request, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeAgentResponse(const FVergilAgentResponse& Response) const
+{
+	return Vergil::DescribeAgentResponse(Response);
+}
+
+FString UVergilAgentSubsystem::InspectAgentResponseAsJson(const FVergilAgentResponse& Response, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeAgentResponse(Response, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeAgentAuditEntry(const FVergilAgentAuditEntry& Entry) const
+{
+	return Vergil::DescribeAgentAuditEntry(Entry);
+}
+
+FString UVergilAgentSubsystem::InspectAgentAuditEntryAsJson(const FVergilAgentAuditEntry& Entry, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeAgentAuditEntry(Entry, bPrettyPrint);
 }
 
 FString UVergilAgentSubsystem::DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const
