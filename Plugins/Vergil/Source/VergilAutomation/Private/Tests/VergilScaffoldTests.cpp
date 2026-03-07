@@ -1265,6 +1265,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilLegacySchemaExecutionCoverageTest,
+	"Vergil.Scaffold.LegacySchemaExecutionCoverage",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilSemanticValidationPassTest,
 	"Vergil.Scaffold.SemanticValidationPass",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1374,6 +1379,301 @@ bool FVergilCompilerSchemaMigrationPassTest::RunTest(const FString& Parameters)
 	{
 		return Diagnostic.Code == TEXT("SchemaMigrationApplied");
 	}));
+
+	return true;
+}
+
+bool FVergilLegacySchemaExecutionCoverageTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem should be available for legacy schema execution coverage."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code)
+	{
+		return Diagnostics.ContainsByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	TArray<int32> SupportedLegacySchemaVersions;
+	for (int32 Version = 1; Version < Vergil::SchemaVersion; ++Version)
+	{
+		if (Vergil::CanMigrateSchemaVersion(Version))
+		{
+			SupportedLegacySchemaVersions.Add(Version);
+		}
+	}
+
+	TestTrue(TEXT("Release-hardening migration coverage should keep at least one supported legacy schema."), SupportedLegacySchemaVersions.Num() > 0);
+	if (SupportedLegacySchemaVersions.Num() == 0)
+	{
+		return false;
+	}
+
+	for (const int32 LegacySchemaVersion : SupportedLegacySchemaVersions)
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(*FString::Printf(TEXT("Schema %d execution coverage requires a transient Blueprint."), LegacySchemaVersion), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		const FString ExpectedDescription = FString::Printf(
+			TEXT("Legacy schema %d migrated through the current pipeline."),
+			LegacySchemaVersion);
+		const FName VariableName(*FString::Printf(TEXT("LegacyFlagV%d"), LegacySchemaVersion));
+		const FName FunctionName(*FString::Printf(TEXT("ComputeLegacyStatusV%d"), LegacySchemaVersion));
+		const FName MacroName(*FString::Printf(TEXT("LegacyRouteV%d"), LegacySchemaVersion));
+
+		FVergilFunctionDefinition LegacyFunction;
+		LegacyFunction.Name = FunctionName;
+		LegacyFunction.bPure = true;
+
+		FVergilFunctionParameterDefinition ThresholdInput;
+		ThresholdInput.Name = TEXT("Threshold");
+		ThresholdInput.Type.PinCategory = TEXT("float");
+		LegacyFunction.Inputs.Add(ThresholdInput);
+
+		FVergilFunctionParameterDefinition ResultOutput;
+		ResultOutput.Name = TEXT("Result");
+		ResultOutput.Type.PinCategory = TEXT("bool");
+		LegacyFunction.Outputs.Add(ResultOutput);
+
+		FVergilMacroDefinition LegacyMacro;
+		LegacyMacro.Name = MacroName;
+
+		FVergilMacroParameterDefinition ExecuteInput;
+		ExecuteInput.Name = TEXT("Execute");
+		ExecuteInput.bIsExec = true;
+		LegacyMacro.Inputs.Add(ExecuteInput);
+
+		FVergilMacroParameterDefinition ThenOutput;
+		ThenOutput.Name = TEXT("Then");
+		ThenOutput.bIsExec = true;
+		LegacyMacro.Outputs.Add(ThenOutput);
+
+		FVergilGraphNode BeginPlayNode;
+		BeginPlayNode.Id = FGuid::NewGuid();
+		BeginPlayNode.Kind = EVergilNodeKind::Event;
+		BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+		BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+		FVergilGraphPin BeginPlayThenPin;
+		BeginPlayThenPin.Id = FGuid::NewGuid();
+		BeginPlayThenPin.Name = TEXT("Then");
+		BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+		BeginPlayThenPin.bIsExec = true;
+		BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+		FVergilGraphNode SequenceNode;
+		SequenceNode.Id = FGuid::NewGuid();
+		SequenceNode.Kind = EVergilNodeKind::Custom;
+		SequenceNode.Descriptor = TEXT("K2.Sequence");
+		SequenceNode.Position = FVector2D(320.0f, 0.0f);
+
+		FVergilGraphPin SequenceExecPin;
+		SequenceExecPin.Id = FGuid::NewGuid();
+		SequenceExecPin.Name = TEXT("Execute");
+		SequenceExecPin.Direction = EVergilPinDirection::Input;
+		SequenceExecPin.bIsExec = true;
+		SequenceNode.Pins.Add(SequenceExecPin);
+
+		FVergilGraphEdge EventToSequenceEdge;
+		EventToSequenceEdge.Id = FGuid::NewGuid();
+		EventToSequenceEdge.SourceNodeId = BeginPlayNode.Id;
+		EventToSequenceEdge.SourcePinId = BeginPlayThenPin.Id;
+		EventToSequenceEdge.TargetNodeId = SequenceNode.Id;
+		EventToSequenceEdge.TargetPinId = SequenceExecPin.Id;
+
+		FVergilVariableDefinition LegacyVariable;
+		LegacyVariable.Name = VariableName;
+		LegacyVariable.Type.PinCategory = TEXT("bool");
+		LegacyVariable.DefaultValue = TEXT("true");
+
+		FVergilGraphDocument LegacyDocument;
+		LegacyDocument.SchemaVersion = LegacySchemaVersion;
+		LegacyDocument.BlueprintPath = FString::Printf(TEXT("/Game/Tests/BP_LegacySchemaExecution_%d"), LegacySchemaVersion);
+		LegacyDocument.Metadata.Add(TEXT("BlueprintDescription"), ExpectedDescription);
+		LegacyDocument.Variables.Add(LegacyVariable);
+		LegacyDocument.Functions.Add(LegacyFunction);
+		LegacyDocument.Macros.Add(LegacyMacro);
+		LegacyDocument.ClassDefaults.Add(TEXT("Replicates"), TEXT("True"));
+		LegacyDocument.ClassDefaults.Add(TEXT("InitialLifeSpan"), TEXT("3.5"));
+		LegacyDocument.Nodes = { BeginPlayNode, SequenceNode };
+		LegacyDocument.Edges.Add(EventToSequenceEdge);
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, LegacyDocument, false, false, true);
+
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d legacy documents should compile successfully through migration."), LegacySchemaVersion),
+			Result.bSucceeded);
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d legacy documents should apply successfully through migration."), LegacySchemaVersion),
+			Result.bApplied);
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d legacy documents should execute at least one command."), LegacySchemaVersion),
+			Result.ExecutedCommandCount > 0);
+		if (!Result.bSucceeded || !Result.bApplied)
+		{
+			return false;
+		}
+
+		TestEqual(
+			*FString::Printf(TEXT("Schema %d execution should preserve the requested schema version."), LegacySchemaVersion),
+			Result.Statistics.RequestedSchemaVersion,
+			LegacySchemaVersion);
+		TestEqual(
+			*FString::Printf(TEXT("Schema %d execution should report the current effective schema version."), LegacySchemaVersion),
+			Result.Statistics.EffectiveSchemaVersion,
+			Vergil::SchemaVersion);
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should record that apply was requested."), LegacySchemaVersion),
+			Result.Statistics.bApplyRequested);
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should record that execution was attempted."), LegacySchemaVersion),
+			Result.Statistics.bExecutionAttempted);
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should use the returned normalized command plan."), LegacySchemaVersion),
+			Result.Statistics.bExecutionUsedReturnedCommandPlan);
+		TestEqual(
+			*FString::Printf(TEXT("Schema %d execution should plan exactly once."), LegacySchemaVersion),
+			Result.Statistics.PlanningInvocationCount,
+			1);
+		TestEqual(
+			*FString::Printf(TEXT("Schema %d execution should apply exactly once."), LegacySchemaVersion),
+			Result.Statistics.ApplyInvocationCount,
+			1);
+		TestFalse(
+			*FString::Printf(TEXT("Schema %d execution should retain a command-plan fingerprint."), LegacySchemaVersion),
+			Result.Statistics.CommandPlanFingerprint.IsEmpty());
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should emit SchemaMigrationApplied."), LegacySchemaVersion),
+			ContainsDiagnostic(Result.Diagnostics, TEXT("SchemaMigrationApplied")));
+		TestFalse(
+			*FString::Printf(TEXT("Schema %d execution should not emit future-schema warnings."), LegacySchemaVersion),
+			ContainsDiagnostic(Result.Diagnostics, TEXT("SchemaVersionFuture")));
+
+		if (Result.PassRecords.Num() > 0)
+		{
+			TestEqual(
+				*FString::Printf(TEXT("Schema %d execution should still run the schema-migration compiler pass first."), LegacySchemaVersion),
+				Result.PassRecords[0].PassName,
+				FName(TEXT("SchemaMigration")));
+		}
+
+		TestEqual(
+			*FString::Printf(TEXT("Schema %d execution should apply Blueprint metadata after migration."), LegacySchemaVersion),
+			Blueprint->BlueprintDescription,
+			ExpectedDescription);
+
+		const FBPVariableDescription* const VariableDescription = FindBlueprintVariableDescription(Blueprint, VariableName);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should retain the authored variable."), LegacySchemaVersion),
+			VariableDescription);
+		if (VariableDescription == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated bool variable type."), LegacySchemaVersion),
+			VariableDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+
+		AActor* const BlueprintCDO = Blueprint->GeneratedClass != nullptr ? Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject()) : nullptr;
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should produce a generated class default object."), LegacySchemaVersion),
+			BlueprintCDO);
+		if (BlueprintCDO == nullptr || Blueprint->GeneratedClass == nullptr)
+		{
+			return false;
+		}
+
+		const FBoolProperty* const LegacyFlagProperty = FindFProperty<FBoolProperty>(Blueprint->GeneratedClass, VariableName);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should generate the migrated bool property."), LegacySchemaVersion),
+			LegacyFlagProperty);
+		if (LegacyFlagProperty == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated variable default value."), LegacySchemaVersion),
+			LegacyFlagProperty->GetPropertyValue_InContainer(BlueprintCDO));
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated Replicates class default."), LegacySchemaVersion),
+			BlueprintCDO->GetIsReplicated());
+		TestTrue(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated InitialLifeSpan class default."), LegacySchemaVersion),
+			FMath::IsNearlyEqual(BlueprintCDO->InitialLifeSpan, 3.5f));
+
+		UEdGraph* const FunctionGraph = FindBlueprintGraphByName(Blueprint, FunctionName);
+		UK2Node_FunctionEntry* const FunctionEntry = FindFunctionEntryNode(FunctionGraph);
+		UK2Node_FunctionResult* const FunctionResult = FindFunctionResultNode(FunctionGraph);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated function graph."), LegacySchemaVersion),
+			FunctionGraph);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated function entry node."), LegacySchemaVersion),
+			FunctionEntry);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated function result node."), LegacySchemaVersion),
+			FunctionResult);
+		if (FunctionEntry == nullptr || FunctionResult == nullptr)
+		{
+			return false;
+		}
+
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated function input pin."), LegacySchemaVersion),
+			FunctionEntry->FindPin(TEXT("Threshold")));
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated function output pin."), LegacySchemaVersion),
+			FunctionResult->FindPin(TEXT("Result")));
+
+		UEdGraph* const MacroGraph = FindBlueprintGraphByName(Blueprint, MacroName);
+		UK2Node_EditablePinBase* const MacroEntry = FindEditableGraphEntryNode(MacroGraph);
+		UK2Node_EditablePinBase* const MacroExit = FindEditableGraphResultNode(MacroGraph);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated macro graph."), LegacySchemaVersion),
+			MacroGraph);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated macro entry tunnel."), LegacySchemaVersion),
+			MacroEntry);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated macro exit tunnel."), LegacySchemaVersion),
+			MacroExit);
+		if (MacroEntry == nullptr || MacroExit == nullptr)
+		{
+			return false;
+		}
+
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated macro exec input pin."), LegacySchemaVersion),
+			MacroEntry->FindPin(TEXT("Execute")));
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should preserve the migrated macro exec output pin."), LegacySchemaVersion),
+			MacroExit->FindPin(TEXT("Then")));
+
+		UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+		UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+		UK2Node_ExecutionSequence* const SequenceGraphNode = FindGraphNodeByGuid<UK2Node_ExecutionSequence>(EventGraph, SequenceNode.Id);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should retain the migrated event graph."), LegacySchemaVersion),
+			EventGraph);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated BeginPlay event node."), LegacySchemaVersion),
+			EventNode);
+		TestNotNull(
+			*FString::Printf(TEXT("Schema %d execution should create the migrated sequence node."), LegacySchemaVersion),
+			SequenceGraphNode);
+	}
 
 	return true;
 }

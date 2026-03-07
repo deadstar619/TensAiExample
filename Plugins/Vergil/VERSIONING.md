@@ -47,6 +47,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Downgrades are not attempted.
 - Newer-than-compiler documents are not rewritten. They remain on their authored schema version and emit the existing future-schema warning.
 - Current migrations are additive. `1->2` formalized the expanded whole-asset surface, and `2->3` added Blueprint-level metadata without removing prior authored fields.
+- Supported migration paths should remain covered at the helper, compiler-pass, and end-to-end legacy execution levels so every supported legacy starting schema is exercised against the current pipeline.
 
 ## Version bump guidance
 
@@ -66,6 +67,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Update `Vergil::SemanticVersionMajor`, `SemanticVersionMinor`, and `SemanticVersionPatch`.
 - Keep `Vergil.uplugin` `VersionName` and `Version` aligned with `VergilVersion.h`.
 - If the document schema changed, update `Vergil::SchemaVersion`, add the forward migration step, and extend migration automation.
+- If supported migration paths changed, keep helper coverage, compiler-pass coverage, and end-to-end legacy execution coverage aligned with the new path set.
 - If graph-document, diagnostics, compile-result, agent request/response/audit inspection JSON, or the persisted agent audit-log wrapper changed incompatibly, update the corresponding version surface and extend inspection or persistence coverage.
 - If serialized command plans changed incompatibly, update the command-plan format version and deserializer coverage.
 - If the supported-contract manifest changed incompatibly, update its manifest version and inspection coverage.

@@ -439,7 +439,7 @@ Tickets:
 - `VGR-9001` Add golden asset tests
 - `VGR-9002` Add PIE runtime validation suites
 - `VGR-9003` Add large-graph performance benchmarks
-- `VGR-9004` Add schema migration tests
+- [x] `VGR-9004` Add schema migration tests
 - `VGR-9005` Add source-control diff tests
 - `VGR-9006` Add crash/recovery tests around compile/apply
 - [x] `VGR-9007` Add semantic versioning and migration docs
@@ -458,6 +458,12 @@ Session note for `VGR-9007` (2026-03-06):
 - `Vergil::GetSupportedSchemaMigrationPaths()` now exposes the exact forward migration steps implemented by the model layer, and `FVergilSupportedContractManifest` now reports plugin semantic version, descriptor version, and supported schema migration paths for agent/tool inspection.
 - `VERSIONING.md`, `README.md`, and `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now document semantic-versioning policy, migration rules, and the release-update checklist for schema, command-plan, and inspection-manifest version changes.
 
+Session note for `VGR-9004` (2026-03-07):
+
+- `Vergil.Scaffold.LegacySchemaExecutionCoverage` now iterates every supported legacy starting schema and proves representative legacy documents survive migration, compile, and apply through the current `UE_5.7` editor pipeline.
+- The release-hardening migration bar now covers three layers: model-level helper migration, compiler-pass migration, and end-to-end legacy execution after migration.
+- `README.md` and `VERSIONING.md` now explicitly call out that supported migration paths should stay aligned with end-to-end execution coverage, not just helper or planning coverage.
+
 ## Critical Path
 The main dependency chain is:
 
@@ -472,11 +478,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9004`
-2. `VGR-5002`
-3. `VGR-7002`
-4. `VGR-5003`
-5. `VGR-5004`
+1. `VGR-5002`
+2. `VGR-7002`
+3. `VGR-5003`
+4. `VGR-5004`
+5. `VGR-8003`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
