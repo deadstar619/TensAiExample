@@ -41,6 +41,25 @@ Important fields:
 - `sessionRoot`: folder for logs and per-iteration artifacts
 - `iteration`: current loop iteration
 
+## Watch live output
+
+To stream the active run like a terminal:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Tools\Watch-CodexRoadmapLoop.ps1
+```
+
+Useful options:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Tools\Watch-CodexRoadmapLoop.ps1 -Tail 120
+powershell -ExecutionPolicy Bypass -File .\Tools\Watch-CodexRoadmapLoop.ps1 -Stream stdout
+powershell -ExecutionPolicy Bypass -File .\Tools\Watch-CodexRoadmapLoop.ps1 -Stream launcher-stderr
+powershell -ExecutionPolicy Bypass -File .\Tools\Watch-CodexRoadmapLoop.ps1 -SessionRoot "C:\Unreal 5.7 Projects\TensAiExample\Saved\CodexAutomation\RoadmapLoop\<timestamp>"
+```
+
+Press `Ctrl+C` to stop watching. That stops the viewer only, not the detached roadmap loop.
+
 ## Stop
 
 ```powershell
@@ -63,7 +82,8 @@ Useful files:
 - `state.json`: latest loop state
 - `launcher.stdout.log` / `launcher.stderr.log`: detached PowerShell output
 - `iteration-###/prompt.txt`: exact prompt sent to Codex for that ticket
-- `iteration-###/codex.stdout.log`: Codex exec output
+- `iteration-###/codex.stdout.log`: Codex exec standard output
+- `iteration-###/codex.stderr.log`: Codex exec progress/output stream that is usually the best file to watch live
 - `iteration-###/last-message.txt`: Codex final message for that iteration
 
 ## Operating rules
