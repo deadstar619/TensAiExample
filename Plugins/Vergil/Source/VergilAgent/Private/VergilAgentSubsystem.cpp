@@ -91,18 +91,40 @@ namespace
 		return LoadObject<UBlueprint>(nullptr, *ObjectPath);
 	}
 
+	void NormalizeRequestContext(FVergilAgentRequestContext& Context)
+	{
+		if (!Context.RequestId.IsValid())
+		{
+			Context.RequestId = FGuid::NewGuid();
+		}
+
+		if (!Context.SessionId.IsValid())
+		{
+			Context.SessionId = Context.RequestId;
+		}
+
+		Context.WriteAuthorization.ApprovedBy = Context.WriteAuthorization.ApprovedBy.TrimStartAndEnd();
+		Context.WriteAuthorization.ApprovalNote = Context.WriteAuthorization.ApprovalNote.TrimStartAndEnd();
+	}
+
 	FVergilAgentAuditEntry NormalizeAuditEntry(const FVergilAgentAuditEntry& Entry)
 	{
 		FVergilAgentAuditEntry NormalizedEntry = Entry;
-
-		if (!NormalizedEntry.Request.Context.RequestId.IsValid())
-		{
-			NormalizedEntry.Request.Context.RequestId = FGuid::NewGuid();
-		}
+		NormalizeRequestContext(NormalizedEntry.Request.Context);
 
 		if (!NormalizedEntry.Response.RequestId.IsValid())
 		{
 			NormalizedEntry.Response.RequestId = NormalizedEntry.Request.Context.RequestId;
+		}
+
+		if (!NormalizedEntry.Response.SessionId.IsValid())
+		{
+			NormalizedEntry.Response.SessionId = NormalizedEntry.Request.Context.SessionId;
+		}
+
+		if (!NormalizedEntry.Response.ParentRequestId.IsValid() && NormalizedEntry.Request.Context.ParentRequestId.IsValid())
+		{
+			NormalizedEntry.Response.ParentRequestId = NormalizedEntry.Request.Context.ParentRequestId;
 		}
 
 		if (NormalizedEntry.Response.Operation == EVergilAgentOperation::None)
@@ -264,6 +286,8 @@ namespace
 	{
 		FVergilAgentResponse Response;
 		Response.RequestId = Request.Context.RequestId;
+		Response.SessionId = Request.Context.SessionId;
+		Response.ParentRequestId = Request.Context.ParentRequestId;
 		Response.Operation = Request.Operation;
 		return Response;
 	}
@@ -408,6 +432,23 @@ FVergilAgentRequest UVergilAgentSubsystem::MakeApplyRequestFromPlan(
 {
 	FVergilAgentRequest ApplyRequest;
 	ApplyRequest.Context = Context;
+
+	FGuid PlannedSessionId = PlannedRequest.Context.SessionId;
+	if (!PlannedSessionId.IsValid())
+	{
+		PlannedSessionId = PlannedRequest.Context.RequestId;
+	}
+
+	if (!ApplyRequest.Context.SessionId.IsValid() && PlannedSessionId.IsValid())
+	{
+		ApplyRequest.Context.SessionId = PlannedSessionId;
+	}
+
+	if (!ApplyRequest.Context.ParentRequestId.IsValid() && PlannedRequest.Context.RequestId.IsValid())
+	{
+		ApplyRequest.Context.ParentRequestId = PlannedRequest.Context.RequestId;
+	}
+
 	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
 	ApplyRequest.Apply.TargetBlueprintPath = NormalizeBlueprintReference(
 		!PlannedRequest.Plan.TargetBlueprintPath.IsEmpty()
@@ -621,15 +662,7 @@ void UVergilAgentSubsystem::TrimAuditTrailToMaxEntries()
 FVergilAgentRequest UVergilAgentSubsystem::NormalizeRequest(const FVergilAgentRequest& Request) const
 {
 	FVergilAgentRequest NormalizedRequest = Request;
-	if (!NormalizedRequest.Context.RequestId.IsValid())
-	{
-		NormalizedRequest.Context.RequestId = FGuid::NewGuid();
-	}
-
-	NormalizedRequest.Context.WriteAuthorization.ApprovedBy =
-		NormalizedRequest.Context.WriteAuthorization.ApprovedBy.TrimStartAndEnd();
-	NormalizedRequest.Context.WriteAuthorization.ApprovalNote =
-		NormalizedRequest.Context.WriteAuthorization.ApprovalNote.TrimStartAndEnd();
+	NormalizeRequestContext(NormalizedRequest.Context);
 
 	switch (NormalizedRequest.Operation)
 	{

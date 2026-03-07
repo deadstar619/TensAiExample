@@ -49,6 +49,12 @@ struct VERGILAGENT_API FVergilAgentRequestContext
 	FGuid RequestId;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid SessionId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid ParentRequestId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	FString Summary;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
@@ -131,6 +137,12 @@ struct VERGILAGENT_API FVergilAgentResponse
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	FGuid RequestId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid SessionId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid ParentRequestId;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	EVergilAgentOperation Operation = EVergilAgentOperation::None;

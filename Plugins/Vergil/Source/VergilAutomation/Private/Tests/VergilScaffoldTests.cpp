@@ -5538,6 +5538,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 
 	FVergilAgentRequest PlanRequest;
 	PlanRequest.Context.RequestId = FGuid::NewGuid();
+	PlanRequest.Context.SessionId = FGuid::NewGuid();
+	PlanRequest.Context.ParentRequestId = FGuid::NewGuid();
 	PlanRequest.Context.Summary = TEXT("Plan the authored document.");
 	PlanRequest.Context.InputText = TEXT("Generate a dry-run command plan.");
 	PlanRequest.Context.Tags = { TEXT("Agent"), TEXT("Plan") };
@@ -5548,15 +5550,20 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	PlanRequest.Plan.bAutoLayout = false;
 	PlanRequest.Plan.bGenerateComments = false;
 
+	const FString PlanSessionIdString = PlanRequest.Context.SessionId.ToString(EGuidFormats::DigitsWithHyphensLower);
+	const FString PlanParentRequestIdString = PlanRequest.Context.ParentRequestId.ToString(EGuidFormats::DigitsWithHyphensLower);
+
 	TestFalse(TEXT("PlanDocument requests should remain read-only."), PlanRequest.IsWriteRequest());
 	TestEqual(TEXT("Agent request format name should be versioned."), Vergil::GetAgentRequestFormatName(), FString(TEXT("Vergil.AgentRequest")));
-	TestEqual(TEXT("Agent request format version should remain 2."), Vergil::GetAgentRequestFormatVersion(), 2);
+	TestEqual(TEXT("Agent request format version should remain 3."), Vergil::GetAgentRequestFormatVersion(), 3);
 
 	const FString NamespacePlanRequestDescription = Vergil::DescribeAgentRequest(PlanRequest);
 	const FString AgentPlanRequestDescription = AgentSubsystem->DescribeAgentRequest(PlanRequest);
 	TestEqual(TEXT("Agent request description should mirror the namespace helper."), AgentPlanRequestDescription, NamespacePlanRequestDescription);
-	TestTrue(TEXT("Plan request description should advertise the request format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.AgentRequest version=2")));
+	TestTrue(TEXT("Plan request description should advertise the request format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.AgentRequest version=3")));
 	TestTrue(TEXT("Plan request description should include the plan summary."), NamespacePlanRequestDescription.Contains(TEXT("Plan the authored document.")));
+	TestTrue(TEXT("Plan request description should include the session id."), NamespacePlanRequestDescription.Contains(*PlanSessionIdString));
+	TestTrue(TEXT("Plan request description should include the parent request id."), NamespacePlanRequestDescription.Contains(*PlanParentRequestIdString));
 	TestTrue(TEXT("Plan request description should include the graph-document format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.GraphDocument version=1")));
 	TestTrue(TEXT("Plan request description should include the default write-authorization state."), NamespacePlanRequestDescription.Contains(TEXT("writeAuthorization: approved=false")));
 
@@ -5565,6 +5572,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Agent request JSON should mirror the namespace helper."), AgentPlanRequestJson, NamespacePlanRequestJson);
 	TestTrue(TEXT("Plan request JSON should advertise the request format."), NamespacePlanRequestJson.Contains(TEXT("\"format\":\"Vergil.AgentRequest\"")));
 	TestTrue(TEXT("Plan request JSON should include the plan operation."), NamespacePlanRequestJson.Contains(TEXT("\"operation\":\"PlanDocument\"")));
+	TestTrue(TEXT("Plan request JSON should include the session id."), NamespacePlanRequestJson.Contains(*FString::Printf(TEXT("\"sessionId\":\"%s\""), *PlanSessionIdString)));
+	TestTrue(TEXT("Plan request JSON should include the parent request id."), NamespacePlanRequestJson.Contains(*FString::Printf(TEXT("\"parentRequestId\":\"%s\""), *PlanParentRequestIdString)));
 	TestTrue(TEXT("Plan request JSON should embed the graph-document payload."), NamespacePlanRequestJson.Contains(TEXT("\"document\":{\"format\":\"Vergil.GraphDocument\"")));
 	TestTrue(TEXT("Plan request JSON should include the read-only request classification."), NamespacePlanRequestJson.Contains(TEXT("\"writeRequest\":false")));
 	TestTrue(TEXT("Plan request JSON should include the default write-authorization payload."), NamespacePlanRequestJson.Contains(TEXT("\"writeAuthorization\":{\"approved\":false")));
@@ -5585,6 +5594,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 
 	FVergilAgentRequest ApplyRequest;
 	ApplyRequest.Context.RequestId = FGuid::NewGuid();
+	ApplyRequest.Context.SessionId = PlanRequest.Context.SessionId;
+	ApplyRequest.Context.ParentRequestId = PlanRequest.Context.RequestId;
 	ApplyRequest.Context.Summary = TEXT("Apply the normalized command plan.");
 	ApplyRequest.Context.InputText = TEXT("Replay the approved plan.");
 	ApplyRequest.Context.Tags = { TEXT("Agent"), TEXT("Apply") };
@@ -5596,6 +5607,9 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	ApplyRequest.Apply.Commands = ResponseResult.Commands;
 	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = ResponseResult.Statistics.CommandPlanFingerprint;
 
+	const FString ApplySessionIdString = ApplyRequest.Context.SessionId.ToString(EGuidFormats::DigitsWithHyphensLower);
+	const FString ApplyParentRequestIdString = ApplyRequest.Context.ParentRequestId.ToString(EGuidFormats::DigitsWithHyphensLower);
+
 	TestTrue(TEXT("ApplyCommandPlan requests should be treated as write requests."), ApplyRequest.IsWriteRequest());
 	TestTrue(TEXT("Apply payload should preserve the expected fingerprint."), ApplyRequest.Apply.ExpectedCommandPlanFingerprint == ResponseResult.Statistics.CommandPlanFingerprint);
 	TestTrue(TEXT("Apply requests should preserve explicit write approval."), ApplyRequest.Context.WriteAuthorization.bApproved);
@@ -5604,6 +5618,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("Apply request description should include the explicit write approval."), NamespaceApplyRequestDescription.Contains(TEXT("writeAuthorization: approved=true approvedBy=Automation")));
 	const FString NamespaceApplyRequestJson = Vergil::SerializeAgentRequest(ApplyRequest, false);
 	TestTrue(TEXT("Apply request JSON should include the apply operation."), NamespaceApplyRequestJson.Contains(TEXT("\"operation\":\"ApplyCommandPlan\"")));
+	TestTrue(TEXT("Apply request JSON should include the shared session id."), NamespaceApplyRequestJson.Contains(*FString::Printf(TEXT("\"sessionId\":\"%s\""), *ApplySessionIdString)));
+	TestTrue(TEXT("Apply request JSON should include the plan parent request id."), NamespaceApplyRequestJson.Contains(*FString::Printf(TEXT("\"parentRequestId\":\"%s\""), *ApplyParentRequestIdString)));
 	TestTrue(TEXT("Apply request JSON should include the expected fingerprint."), NamespaceApplyRequestJson.Contains(*FString::Printf(TEXT("\"expectedCommandPlanFingerprint\":\"%s\""), *ResponseResult.Statistics.CommandPlanFingerprint)));
 	TestTrue(TEXT("Apply request JSON should embed the command-plan payload."), NamespaceApplyRequestJson.Contains(TEXT("\"commandPlan\":{\"format\":\"Vergil.CommandPlan\"")));
 	TestTrue(TEXT("Apply request JSON should include the write-request classification."), NamespaceApplyRequestJson.Contains(TEXT("\"writeRequest\":true")));
@@ -5611,18 +5627,22 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 
 	FVergilAgentResponse Response;
 	Response.RequestId = PlanRequest.Context.RequestId;
+	Response.SessionId = PlanRequest.Context.SessionId;
+	Response.ParentRequestId = PlanRequest.Context.ParentRequestId;
 	Response.Operation = EVergilAgentOperation::PlanDocument;
 	Response.State = EVergilAgentExecutionState::Completed;
 	Response.Message = TEXT("Dry-run planning completed.");
 	Response.Result = ResponseResult;
 
 	TestEqual(TEXT("Agent response format name should be versioned."), Vergil::GetAgentResponseFormatName(), FString(TEXT("Vergil.AgentResponse")));
-	TestEqual(TEXT("Agent response format version should remain 1."), Vergil::GetAgentResponseFormatVersion(), 1);
+	TestEqual(TEXT("Agent response format version should remain 2."), Vergil::GetAgentResponseFormatVersion(), 2);
 
 	const FString NamespaceResponseDescription = Vergil::DescribeAgentResponse(Response);
 	const FString AgentResponseDescription = AgentSubsystem->DescribeAgentResponse(Response);
 	TestEqual(TEXT("Agent response description should mirror the namespace helper."), AgentResponseDescription, NamespaceResponseDescription);
-	TestTrue(TEXT("Agent response description should advertise the response format."), NamespaceResponseDescription.Contains(TEXT("Vergil.AgentResponse version=1")));
+	TestTrue(TEXT("Agent response description should advertise the response format."), NamespaceResponseDescription.Contains(TEXT("Vergil.AgentResponse version=2")));
+	TestTrue(TEXT("Agent response description should include the session id."), NamespaceResponseDescription.Contains(*PlanSessionIdString));
+	TestTrue(TEXT("Agent response description should include the parent request id."), NamespaceResponseDescription.Contains(*PlanParentRequestIdString));
 	TestTrue(TEXT("Agent response description should include the response message."), NamespaceResponseDescription.Contains(TEXT("Dry-run planning completed.")));
 	TestTrue(TEXT("Agent response description should include the nested compile-result format."), NamespaceResponseDescription.Contains(TEXT("Vergil.CompileResult version=1")));
 
@@ -5630,6 +5650,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	const FString AgentResponseJson = AgentSubsystem->InspectAgentResponseAsJson(Response, false);
 	TestEqual(TEXT("Agent response JSON should mirror the namespace helper."), AgentResponseJson, NamespaceResponseJson);
 	TestTrue(TEXT("Agent response JSON should advertise the response format."), NamespaceResponseJson.Contains(TEXT("\"format\":\"Vergil.AgentResponse\"")));
+	TestTrue(TEXT("Agent response JSON should include the session id."), NamespaceResponseJson.Contains(*FString::Printf(TEXT("\"sessionId\":\"%s\""), *PlanSessionIdString)));
+	TestTrue(TEXT("Agent response JSON should include the parent request id."), NamespaceResponseJson.Contains(*FString::Printf(TEXT("\"parentRequestId\":\"%s\""), *PlanParentRequestIdString)));
 	TestTrue(TEXT("Agent response JSON should include the completed state."), NamespaceResponseJson.Contains(TEXT("\"state\":\"Completed\"")));
 	TestTrue(TEXT("Agent response JSON should embed the compile-result payload."), NamespaceResponseJson.Contains(TEXT("\"result\":{\"format\":\"Vergil.CompileResult\"")));
 
@@ -5649,15 +5671,19 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	const FVergilAgentAuditEntry& NormalizedAuditEntry = AuditEntries[0];
 	TestTrue(TEXT("Recorded audit entries should synthesize a timestamp when omitted."), !NormalizedAuditEntry.TimestampUtc.IsEmpty());
 	TestEqual(TEXT("Recorded audit entries should preserve the request id on the response."), NormalizedAuditEntry.Response.RequestId, ApplyRequest.Context.RequestId);
+	TestEqual(TEXT("Recorded audit entries should preserve the session id on the normalized response."), NormalizedAuditEntry.Response.SessionId, ApplyRequest.Context.SessionId);
+	TestEqual(TEXT("Recorded audit entries should preserve the parent request id on the normalized response."), NormalizedAuditEntry.Response.ParentRequestId, ApplyRequest.Context.ParentRequestId);
 	TestEqual(TEXT("Recorded audit entries should synthesize the response operation from the request."), NormalizedAuditEntry.Response.Operation, ApplyRequest.Operation);
 
 	TestEqual(TEXT("Agent audit-entry format name should be versioned."), Vergil::GetAgentAuditEntryFormatName(), FString(TEXT("Vergil.AgentAuditEntry")));
-	TestEqual(TEXT("Agent audit-entry format version should remain 1."), Vergil::GetAgentAuditEntryFormatVersion(), 1);
+	TestEqual(TEXT("Agent audit-entry format version should remain 2."), Vergil::GetAgentAuditEntryFormatVersion(), 2);
 
 	const FString NamespaceAuditDescription = Vergil::DescribeAgentAuditEntry(NormalizedAuditEntry);
 	const FString AgentAuditDescription = AgentSubsystem->DescribeAgentAuditEntry(NormalizedAuditEntry);
 	TestEqual(TEXT("Agent audit-entry description should mirror the namespace helper."), AgentAuditDescription, NamespaceAuditDescription);
-	TestTrue(TEXT("Agent audit-entry description should advertise the audit-entry format."), NamespaceAuditDescription.Contains(TEXT("Vergil.AgentAuditEntry version=1")));
+	TestTrue(TEXT("Agent audit-entry description should advertise the audit-entry format."), NamespaceAuditDescription.Contains(TEXT("Vergil.AgentAuditEntry version=2")));
+	TestTrue(TEXT("Agent audit-entry description should include the session id."), NamespaceAuditDescription.Contains(*ApplySessionIdString));
+	TestTrue(TEXT("Agent audit-entry description should include the parent request id."), NamespaceAuditDescription.Contains(*ApplyParentRequestIdString));
 	TestTrue(TEXT("Agent audit-entry description should include the nested apply request operation."), NamespaceAuditDescription.Contains(TEXT("ApplyCommandPlan")));
 	TestTrue(TEXT("Agent audit-entry description should include the nested pending response state."), NamespaceAuditDescription.Contains(TEXT("state=Pending")));
 
@@ -5667,6 +5693,8 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("Agent audit-entry JSON should advertise the audit-entry format."), NamespaceAuditJson.Contains(TEXT("\"format\":\"Vergil.AgentAuditEntry\"")));
 	TestTrue(TEXT("Agent audit-entry JSON should embed the nested request payload."), NamespaceAuditJson.Contains(TEXT("\"request\":{\"format\":\"Vergil.AgentRequest\"")));
 	TestTrue(TEXT("Agent audit-entry JSON should embed the nested response payload."), NamespaceAuditJson.Contains(TEXT("\"response\":{\"format\":\"Vergil.AgentResponse\"")));
+	TestTrue(TEXT("Agent audit-entry JSON should include the nested session id."), NamespaceAuditJson.Contains(*FString::Printf(TEXT("\"sessionId\":\"%s\""), *ApplySessionIdString)));
+	TestTrue(TEXT("Agent audit-entry JSON should include the nested parent request id."), NamespaceAuditJson.Contains(*FString::Printf(TEXT("\"parentRequestId\":\"%s\""), *ApplyParentRequestIdString)));
 
 	AgentSubsystem->ClearAuditTrail();
 	return true;
@@ -5700,6 +5728,8 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 
 	FVergilAgentAuditEntry PersistedEntry;
 	PersistedEntry.Request.Context.RequestId = FGuid::NewGuid();
+	PersistedEntry.Request.Context.SessionId = FGuid::NewGuid();
+	PersistedEntry.Request.Context.ParentRequestId = FGuid::NewGuid();
 	PersistedEntry.Request.Context.Summary = TEXT("Persist the audit entry.");
 	PersistedEntry.Request.Context.InputText = TEXT("Store the request and response to disk.");
 	PersistedEntry.Request.Context.Tags = { TEXT("Agent"), TEXT("Persistence") };
@@ -5710,6 +5740,8 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 	PersistedEntry.Request.Plan.bAutoLayout = false;
 	PersistedEntry.Request.Plan.bGenerateComments = false;
 	PersistedEntry.Response.RequestId = PersistedEntry.Request.Context.RequestId;
+	PersistedEntry.Response.SessionId = PersistedEntry.Request.Context.SessionId;
+	PersistedEntry.Response.ParentRequestId = PersistedEntry.Request.Context.ParentRequestId;
 	PersistedEntry.Response.Operation = EVergilAgentOperation::PlanDocument;
 	PersistedEntry.Response.State = EVergilAgentExecutionState::Completed;
 	PersistedEntry.Response.Message = TEXT("Planning completed and persisted.");
@@ -5726,6 +5758,9 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
+
+	TestEqual(TEXT("In-memory audit entries should preserve the session id."), InMemoryEntries[0].Request.Context.SessionId, PersistedEntry.Request.Context.SessionId);
+	TestEqual(TEXT("In-memory audit entries should preserve the parent request id."), InMemoryEntries[0].Request.Context.ParentRequestId, PersistedEntry.Request.Context.ParentRequestId);
 
 	TestTrue(TEXT("Recording an audit entry should write the persisted audit-log file."), IFileManager::Get().FileExists(*PersistencePath));
 	TestTrue(TEXT("Explicit audit-log flush should succeed."), AgentSubsystem->FlushAuditTrailToDisk());
@@ -5746,6 +5781,8 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 	}
 
 	TestEqual(TEXT("Reloaded audit entries should preserve the request id."), ReloadedEntries[0].Request.Context.RequestId, PersistedEntry.Request.Context.RequestId);
+	TestEqual(TEXT("Reloaded audit entries should preserve the session id."), ReloadedEntries[0].Request.Context.SessionId, PersistedEntry.Request.Context.SessionId);
+	TestEqual(TEXT("Reloaded audit entries should preserve the parent request id."), ReloadedEntries[0].Request.Context.ParentRequestId, PersistedEntry.Request.Context.ParentRequestId);
 	TestEqual(TEXT("Reloaded audit entries should preserve the response state."), ReloadedEntries[0].Response.State, EVergilAgentExecutionState::Completed);
 	TestEqual(TEXT("Reloaded audit entries should preserve the Blueprint path."), ReloadedEntries[0].Request.Plan.TargetBlueprintPath, PersistedDocument.BlueprintPath);
 
@@ -5759,6 +5796,7 @@ bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
 	if (EntriesAfterFailedReload.Num() == 1)
 	{
 		TestEqual(TEXT("Failed reloads should preserve the last in-memory request id."), EntriesAfterFailedReload[0].Request.Context.RequestId, PersistedEntry.Request.Context.RequestId);
+		TestEqual(TEXT("Failed reloads should preserve the last in-memory session id."), EntriesAfterFailedReload[0].Request.Context.SessionId, PersistedEntry.Request.Context.SessionId);
 	}
 
 	AgentSubsystem->ClearAuditTrail();
@@ -5794,6 +5832,7 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 
 	FVergilAgentRequest PlanRequest;
 	PlanRequest.Context.RequestId = FGuid::NewGuid();
+	PlanRequest.Context.SessionId = FGuid::NewGuid();
 	PlanRequest.Context.Summary = TEXT("Plan the requested document.");
 	PlanRequest.Context.InputText = TEXT("Produce a dry-run command plan only.");
 	PlanRequest.Context.Tags = { TEXT("Agent"), TEXT("Plan"), TEXT("Separation") };
@@ -5804,6 +5843,7 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 
 	const FVergilAgentResponse PlanResponse = AgentSubsystem->ExecuteRequest(PlanRequest);
 	TestEqual(TEXT("Plan execution should report the plan operation."), PlanResponse.Operation, EVergilAgentOperation::PlanDocument);
+	TestEqual(TEXT("Plan execution should preserve the request session id."), PlanResponse.SessionId, PlanRequest.Context.SessionId);
 	TestEqual(TEXT("Plan execution should complete successfully for a valid request."), PlanResponse.State, EVergilAgentExecutionState::Completed);
 	TestTrue(TEXT("Plan execution should return a successful dry-run compile result."), PlanResponse.Result.bSucceeded);
 	TestFalse(TEXT("Plan execution should remain read-only."), PlanResponse.Result.bApplied);
@@ -5824,6 +5864,8 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("Recorded plan audit entries should keep the plan operation."), AuditEntries[0].Request.Operation, EVergilAgentOperation::PlanDocument);
 	TestEqual(TEXT("Recorded plan audit entries should normalize the target Blueprint path from the document."), AuditEntries[0].Request.Plan.TargetBlueprintPath, PersistentBlueprint.PackagePath);
+	TestEqual(TEXT("Recorded plan audit entries should preserve the plan session id."), AuditEntries[0].Request.Context.SessionId, PlanRequest.Context.SessionId);
+	TestEqual(TEXT("Recorded plan audit entries should preserve the response session id."), AuditEntries[0].Response.SessionId, PlanRequest.Context.SessionId);
 	TestEqual(TEXT("Recorded plan audit entries should keep the response state."), AuditEntries[0].Response.State, EVergilAgentExecutionState::Completed);
 
 	FVergilAgentRequestContext RejectedApplyContext;
@@ -5834,6 +5876,8 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 
 	FVergilAgentRequest RejectedApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(RejectedApplyContext, PlanRequest, PlanResponse.Result);
 	TestEqual(TEXT("The helper should always produce an apply request operation."), RejectedApplyRequest.Operation, EVergilAgentOperation::ApplyCommandPlan);
+	TestEqual(TEXT("The helper should inherit the plan session id when the apply context omits it."), RejectedApplyRequest.Context.SessionId, PlanRequest.Context.SessionId);
+	TestEqual(TEXT("The helper should stamp the plan request id as the apply parent request id."), RejectedApplyRequest.Context.ParentRequestId, PlanRequest.Context.RequestId);
 	TestEqual(TEXT("The helper should carry the reviewed Blueprint path into the apply request."), RejectedApplyRequest.Apply.TargetBlueprintPath, PersistentBlueprint.PackagePath);
 	TestEqual(TEXT("The helper should carry the reviewed command count into the apply request."), RejectedApplyRequest.Apply.Commands.Num(), PlanResponse.Result.Commands.Num());
 	TestEqual(TEXT("The helper should carry the reviewed fingerprint into the apply request."), RejectedApplyRequest.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
@@ -5861,8 +5905,12 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 	ApplyContext.WriteAuthorization.ApprovalNote = TEXT("Plan/apply separation coverage");
 
 	const FVergilAgentRequest ApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(ApplyContext, PlanRequest, PlanResponse.Result);
+	TestEqual(TEXT("Approved apply requests should also inherit the plan session id by default."), ApplyRequest.Context.SessionId, PlanRequest.Context.SessionId);
+	TestEqual(TEXT("Approved apply requests should record the plan request id as their parent request id."), ApplyRequest.Context.ParentRequestId, PlanRequest.Context.RequestId);
 	const FVergilAgentResponse ApplyResponse = AgentSubsystem->ExecuteRequest(ApplyRequest);
 	TestEqual(TEXT("Apply execution should report the apply operation."), ApplyResponse.Operation, EVergilAgentOperation::ApplyCommandPlan);
+	TestEqual(TEXT("Apply execution should preserve the inherited session id."), ApplyResponse.SessionId, PlanRequest.Context.SessionId);
+	TestEqual(TEXT("Apply execution should preserve the parent request id."), ApplyResponse.ParentRequestId, PlanRequest.Context.RequestId);
 	TestEqual(TEXT("Apply execution should complete successfully for the reviewed plan."), ApplyResponse.State, EVergilAgentExecutionState::Completed);
 	TestTrue(TEXT("Apply execution should apply the returned command plan."), ApplyResponse.Result.bApplied);
 	TestTrue(TEXT("Apply execution should succeed."), ApplyResponse.Result.bSucceeded);
@@ -5878,7 +5926,11 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 	if (AuditEntries.Num() == 3)
 	{
 		TestEqual(TEXT("The second audit entry should record the rejected apply."), AuditEntries[1].Response.State, EVergilAgentExecutionState::Rejected);
+		TestEqual(TEXT("The second audit entry should preserve the inherited session id."), AuditEntries[1].Request.Context.SessionId, PlanRequest.Context.SessionId);
+		TestEqual(TEXT("The second audit entry should preserve the parent request id."), AuditEntries[1].Request.Context.ParentRequestId, PlanRequest.Context.RequestId);
 		TestEqual(TEXT("The third audit entry should record the successful apply."), AuditEntries[2].Response.State, EVergilAgentExecutionState::Completed);
+		TestEqual(TEXT("The third audit entry should preserve the inherited session id."), AuditEntries[2].Response.SessionId, PlanRequest.Context.SessionId);
+		TestEqual(TEXT("The third audit entry should preserve the parent request id."), AuditEntries[2].Response.ParentRequestId, PlanRequest.Context.RequestId);
 		TestEqual(TEXT("The third audit entry should preserve the approved fingerprint."), AuditEntries[2].Request.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
 	}
 

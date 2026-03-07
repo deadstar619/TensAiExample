@@ -525,7 +525,7 @@ Tickets:
 - [x] `VGR-8004` Add permission gates around write/apply actions
 - [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
 - [x] `VGR-8006` Add partial-apply recovery flows
-- `VGR-8007` Add provenance/session correlation IDs
+- [x] `VGR-8007` Add provenance/session correlation IDs
 - `VGR-8008` Keep agent orchestration separate from deterministic compile/execute logic
 
 Acceptance criteria:
@@ -568,6 +568,12 @@ Session note for `VGR-8006` (2026-03-07):
 - Failed apply execution now records partial-apply recovery state in `FVergilCompileResult.Statistics.TransactionAudit`, including whether recovery was required, whether Vergil attempted rollback through its recorded editor transaction, whether that rollback succeeded, and the failure snapshot captured before recovery.
 - `FVergilCommandExecutor::Execute(...)` now automatically undoes its own failed Vergil transaction with `bCanRedo=false` when the latest undo entry still matches the recorded apply transaction, so failed apply requests no longer silently leave half-applied Blueprint mutations behind.
 - `Vergil.Scaffold.PartialApplyRecovery` and `Vergil.Scaffold.AgentPartialApplyRecovery` now cover both direct editor execution and audited agent apply requests, proving a runtime failure after one successful mutation is rolled back and reported through the inspection/audit surface.
+
+Session note for `VGR-8007` (2026-03-07):
+
+- `FVergilAgentRequestContext` and `FVergilAgentResponse` now carry explicit `SessionId` and `ParentRequestId` fields alongside the per-request `RequestId`, so plan/apply orchestration can correlate one interaction end-to-end while still preserving request lineage for audited replay.
+- The versioned inspection payloads advanced to `Vergil.AgentRequest` `v3` plus `Vergil.AgentResponse` and `Vergil.AgentAuditEntry` `v2`, with deterministic JSON and human-readable descriptions now surfacing the new provenance ids through both the namespace helpers and `UVergilAgentSubsystem`.
+- `UVergilAgentSubsystem::ExecuteRequest(...)` now synthesizes missing session ids from the normalized request id, `MakeApplyRequestFromPlan(...)` inherits the plan session id and stamps the plan request id as the default apply parent id, and audit recording normalizes missing response correlation ids before persistence. `Vergil.Scaffold.AgentRequestResponseContracts`, `Vergil.Scaffold.AgentAuditPersistence`, and `Vergil.Scaffold.AgentPlanApplySeparation` now cover the full lineage behavior.
 
 ## Milestone 9: Studio-Grade Release Hardening
 Goal:
@@ -626,10 +632,10 @@ If those are weak, later coverage work will turn into one-off patches.
 Best next sprint from the current baseline:
 
 1. `VGR-9001`
-2. `VGR-8007`
-3. `VGR-8008`
-4. `VGR-9002`
-5. `VGR-9005`
+2. `VGR-8008`
+3. `VGR-9002`
+4. `VGR-9005`
+5. `VGR-9006`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

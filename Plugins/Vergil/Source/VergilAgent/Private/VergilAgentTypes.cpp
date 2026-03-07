@@ -7,11 +7,11 @@
 namespace
 {
 	inline constexpr TCHAR AgentRequestFormatName[] = TEXT("Vergil.AgentRequest");
-	inline constexpr int32 AgentRequestFormatVersion = 2;
+	inline constexpr int32 AgentRequestFormatVersion = 3;
 	inline constexpr TCHAR AgentResponseFormatName[] = TEXT("Vergil.AgentResponse");
-	inline constexpr int32 AgentResponseFormatVersion = 1;
+	inline constexpr int32 AgentResponseFormatVersion = 2;
 	inline constexpr TCHAR AgentAuditEntryFormatName[] = TEXT("Vergil.AgentAuditEntry");
-	inline constexpr int32 AgentAuditEntryFormatVersion = 1;
+	inline constexpr int32 AgentAuditEntryFormatVersion = 2;
 
 	const TCHAR* LexBoolString(const bool bValue)
 	{
@@ -21,6 +21,11 @@ namespace
 	FString LexGuidString(const FGuid& Value)
 	{
 		return Value.IsValid() ? Value.ToString(EGuidFormats::DigitsWithHyphensLower) : FString();
+	}
+
+	FString LexOptionalGuidString(const FGuid& Value)
+	{
+		return Value.IsValid() ? Value.ToString(EGuidFormats::DigitsWithHyphensLower) : FString(TEXT("<none>"));
 	}
 
 	FString LexOptionalNameString(const FName Value)
@@ -153,6 +158,8 @@ namespace
 	{
 		Writer.WriteObjectStart(TEXT("context"));
 		Writer.WriteValue(TEXT("requestId"), LexGuidString(Context.RequestId));
+		Writer.WriteValue(TEXT("sessionId"), LexGuidString(Context.SessionId));
+		Writer.WriteValue(TEXT("parentRequestId"), LexGuidString(Context.ParentRequestId));
 		Writer.WriteValue(TEXT("summary"), Context.Summary);
 		Writer.WriteValue(TEXT("inputText"), Context.InputText);
 		WriteNameArray(Writer, TEXT("tags"), Context.Tags);
@@ -216,6 +223,8 @@ namespace
 		Writer.WriteValue(TEXT("format"), AgentResponseFormatName);
 		Writer.WriteValue(TEXT("version"), AgentResponseFormatVersion);
 		Writer.WriteValue(TEXT("requestId"), LexGuidString(Response.RequestId));
+		Writer.WriteValue(TEXT("sessionId"), LexGuidString(Response.SessionId));
+		Writer.WriteValue(TEXT("parentRequestId"), LexGuidString(Response.ParentRequestId));
 		Writer.WriteValue(TEXT("operation"), LexAgentOperationString(Response.Operation));
 		Writer.WriteValue(TEXT("state"), LexAgentExecutionStateString(Response.State));
 		Writer.WriteValue(TEXT("message"), Response.Message);
@@ -253,8 +262,10 @@ FString FVergilAgentWriteAuthorization::ToDisplayString() const
 FString FVergilAgentRequestContext::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("requestId=%s tags=%d writeApproved=%s"),
-		RequestId.IsValid() ? *LexGuidString(RequestId) : TEXT("<none>"),
+		TEXT("requestId=%s sessionId=%s parentRequestId=%s tags=%d writeApproved=%s"),
+		*LexOptionalGuidString(RequestId),
+		*LexOptionalGuidString(SessionId),
+		*LexOptionalGuidString(ParentRequestId),
 		Tags.Num(),
 		LexBoolString(WriteAuthorization.bApproved));
 }
@@ -298,10 +309,12 @@ FString FVergilAgentRequest::ToDisplayString() const
 FString FVergilAgentResponse::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("%s version=%d requestId=%s operation=%s state=%s hasResult=%s"),
+		TEXT("%s version=%d requestId=%s sessionId=%s parentRequestId=%s operation=%s state=%s hasResult=%s"),
 		AgentResponseFormatName,
 		AgentResponseFormatVersion,
-		RequestId.IsValid() ? *LexGuidString(RequestId) : TEXT("<none>"),
+		*LexOptionalGuidString(RequestId),
+		*LexOptionalGuidString(SessionId),
+		*LexOptionalGuidString(ParentRequestId),
 		LexAgentOperationString(Operation),
 		LexAgentExecutionStateString(State),
 		LexBoolString(HasCompileResultPayload(Result)));
@@ -310,10 +323,13 @@ FString FVergilAgentResponse::ToDisplayString() const
 FString FVergilAgentAuditEntry::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("%s version=%d timestampUtc=%s"),
+		TEXT("%s version=%d timestampUtc=%s requestId=%s sessionId=%s parentRequestId=%s"),
 		AgentAuditEntryFormatName,
 		AgentAuditEntryFormatVersion,
-		TimestampUtc.IsEmpty() ? TEXT("<none>") : *TimestampUtc);
+		TimestampUtc.IsEmpty() ? TEXT("<none>") : *TimestampUtc,
+		*LexOptionalGuidString(Request.Context.RequestId),
+		*LexOptionalGuidString(Request.Context.SessionId),
+		*LexOptionalGuidString(Request.Context.ParentRequestId));
 }
 
 FString Vergil::GetAgentRequestFormatName()
@@ -333,6 +349,8 @@ FString Vergil::DescribeAgentRequest(const FVergilAgentRequest& Request)
 	Lines.Add(FString::Printf(TEXT("summary: %s"), Request.Context.Summary.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(Request.Context.Summary)));
 	Lines.Add(FString::Printf(TEXT("inputText: %s"), Request.Context.InputText.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(Request.Context.InputText)));
 	Lines.Add(FString::Printf(TEXT("tags: %s"), *JoinNameArray(Request.Context.Tags)));
+	Lines.Add(FString::Printf(TEXT("sessionId: %s"), *LexOptionalGuidString(Request.Context.SessionId)));
+	Lines.Add(FString::Printf(TEXT("parentRequestId: %s"), *LexOptionalGuidString(Request.Context.ParentRequestId)));
 	Lines.Add(FString::Printf(TEXT("writeAuthorization: %s"), *Request.Context.WriteAuthorization.ToDisplayString()));
 
 	switch (Request.Operation)
@@ -394,6 +412,8 @@ FString Vergil::DescribeAgentResponse(const FVergilAgentResponse& Response)
 {
 	TArray<FString> Lines;
 	Lines.Add(Response.ToDisplayString());
+	Lines.Add(FString::Printf(TEXT("sessionId: %s"), *LexOptionalGuidString(Response.SessionId)));
+	Lines.Add(FString::Printf(TEXT("parentRequestId: %s"), *LexOptionalGuidString(Response.ParentRequestId)));
 	Lines.Add(FString::Printf(TEXT("message: %s"), Response.Message.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(Response.Message)));
 
 	if (HasCompileResultPayload(Response.Result))
