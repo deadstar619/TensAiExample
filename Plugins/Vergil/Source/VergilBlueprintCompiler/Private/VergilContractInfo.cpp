@@ -210,6 +210,20 @@ namespace
 				{ TEXT("FactoryClassPath") },
 				TEXT("FactoryClassPath must resolve to the owner class of a static BlueprintInternalUseOnly factory function, and the descriptor suffix names that function. Under UE_5.7 this lowers to UK2Node_AsyncAction for generic UBlueprintAsyncActionBase factories that do not advertise HasDedicatedAsyncNode. The authored deterministic surface includes the visible factory input pins, Then/delegate exec outputs, and delegate payload outputs; hidden pins such as WorldContextObject remain engine-driven and are not part of the authored contract.")),
 			MakeDescriptorContract(
+				TEXT("K2.AIMoveTo"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				EventGraphOnly,
+				{},
+				TEXT("Under UE_5.7 this lowers through a dedicated specialized async-task handler to UK2Node_AIMoveTo, resolving UAIBlueprintHelperLibrary::CreateMoveToProxyObject instead of the generic async-action path. The authored deterministic surface includes the visible factory input pins plus Then, delegate exec outputs, and delegate payload outputs such as MovementResult; hidden pins such as WorldContextObject remain engine-driven and are not part of the authored contract.")),
+			MakeDescriptorContract(
+				TEXT("K2.PlayMontage"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				EventGraphOnly,
+				{},
+				TEXT("Under UE_5.7 this lowers through a dedicated specialized async-task handler to UK2Node_PlayMontage, resolving UPlayMontageCallbackProxy::CreateProxyObjectForPlayMontage instead of the generic async-action path. The authored deterministic surface includes the visible factory input pins plus Then, delegate exec outputs, and delegate payload outputs such as NotifyName.")),
+			MakeDescriptorContract(
 				TEXT("K2.LoadAsset"),
 				EVergilDescriptorMatchKind::Exact,
 				TEXT("any"),

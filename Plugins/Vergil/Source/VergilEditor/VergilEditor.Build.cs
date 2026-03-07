@@ -22,6 +22,10 @@ public class VergilEditor : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AIGraph",
+				"AIModule",
+				"AnimGraph",
+				"AnimGraphRuntime",
 				"BlueprintGraph",
 				"Kismet",
 				"Projects",

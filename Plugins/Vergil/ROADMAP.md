@@ -392,7 +392,7 @@ Tickets:
 - [x] `VGR-6002` Add interface call/message nodes
 - [x] `VGR-6003` Add object/class/soft-reference families
 - [x] `VGR-6004` Add async task node families where deterministic setup is possible
-- `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
+- [x] `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
 - `VGR-6006` Add a generic node-spawner path for arbitrary supported `UK2Node` classes
 - `VGR-6007` Build an explicit support matrix of generic vs specialized coverage
 - `VGR-6008` Add unsupported-node reporting that enumerates exact missing families
@@ -425,6 +425,12 @@ Session note for `VGR-6004` (2026-03-07):
 - `UE_5.7` deterministic support now exists for generic Blueprint async-action descriptors `K2.AsyncAction.*`, each using `FactoryClassPath` plus the descriptor suffix to resolve a static `BlueprintInternalUseOnly` factory function that returns `UBlueprintAsyncActionBase`.
 - Type resolution now normalizes `FactoryClassPath`, rejects dedicated async-node families that advertise `HasDedicatedAsyncNode`, validates the authored visible pin surface against the real generic `UK2Node_AsyncAction` shape, and keeps hidden pins such as `WorldContextObject` outside the authored deterministic contract.
 - Direct command-plan preflight and editor execution now materialize the real `UK2Node_AsyncAction` node class for supported generic factories, while `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.AsyncActionExecution` test now cover the manifest, markdown contract table, normalized planning, and end-to-end editor-authoring path for this async-action family.
+
+Session note for `VGR-6005` (2026-03-07):
+
+- `UE_5.7` deterministic support now also exists for specialized async-task families `K2.AIMoveTo` and `K2.PlayMontage`, each using an explicit dedicated handler instead of trying to force `HasDedicatedAsyncNode` factories through the generic `K2.AsyncAction.*` path.
+- Type resolution now resolves the backing factory functions `UAIBlueprintHelperLibrary::CreateMoveToProxyObject` and `UPlayMontageCallbackProxy::CreateProxyObjectForPlayMontage`, validates the authored visible pin surface against the real dedicated node classes, and rejects these latent families on `UserConstructionScript`.
+- Direct command-plan preflight and editor execution now materialize the real `UK2Node_AIMoveTo` and `UK2Node_PlayMontage` node classes, while `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.SpecializedAsyncTaskExecution` test now cover the manifest, markdown contract table, normalized planning, and end-to-end editor-authoring path for this specialized async-task family.
 
 ## Milestone 7: Editor Tooling
 Goal:
@@ -595,11 +601,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-6005`
-2. `VGR-6006`
-3. `VGR-7006`
-4. `VGR-9001`
-5. `VGR-6007`
+1. `VGR-6006`
+2. `VGR-7006`
+3. `VGR-9001`
+4. `VGR-6007`
+5. `VGR-6008`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

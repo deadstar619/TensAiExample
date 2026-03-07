@@ -1,5 +1,7 @@
 #include "VergilCommandExecutor.h"
 
+#include "Blueprint/AIBlueprintHelperLibrary.h"
+#include "Blueprint/AIAsyncTaskBlueprintProxy.h"
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
 #include "EdGraph/EdGraph.h"
@@ -11,6 +13,7 @@
 #include "Editor.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddComponentByClass.h"
+#include "K2Node_AIMoveTo.h"
 #include "K2Node_AddDelegate.h"
 #include "K2Node_AsyncAction.h"
 #include "K2Node_CallDelegate.h"
@@ -33,6 +36,7 @@
 #include "K2Node_MakeArray.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_Message.h"
+#include "K2Node_PlayMontage.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MakeMap.h"
@@ -54,6 +58,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "PlayMontageCallbackProxy.h"
 #include "Editor/Transactor.h"
 #include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
@@ -80,6 +85,8 @@ namespace
 	const FName ConvertAssetInputPinName(TEXT("Input"));
 	const FName ConvertAssetOutputPinName(TEXT("Output"));
 	const FName AsyncActionCommandName(TEXT("Vergil.K2.AsyncAction"));
+	const FName AIMoveToCommandName(TEXT("Vergil.K2.AIMoveTo"));
+	const FName PlayMontageCommandName(TEXT("Vergil.K2.PlayMontage"));
 	const FName AsyncActionFactoryClassMetadataName(TEXT("FactoryClassPath"));
 	const FName AsyncActionProxyPinName(TEXT("AsyncTaskProxy"));
 	const TCHAR* VergilTransactionContext = TEXT("Vergil");
@@ -139,6 +146,11 @@ namespace
 		FName OutputPinName;
 		bool bIsArray = false;
 		bool bIsClassAsset = false;
+	};
+
+	struct FVergilSpecializedAsyncTaskCommand
+	{
+		FName CommandName;
 	};
 
 	FString GetOptionalObjectPath(const UObject* Object)
@@ -313,6 +325,25 @@ namespace
 		return nullptr;
 	}
 
+	const FVergilSpecializedAsyncTaskCommand* FindSpecializedAsyncTaskCommand(const FName CommandName)
+	{
+		static const FVergilSpecializedAsyncTaskCommand Commands[] =
+		{
+			{ AIMoveToCommandName },
+			{ PlayMontageCommandName },
+		};
+
+		for (const FVergilSpecializedAsyncTaskCommand& Candidate : Commands)
+		{
+			if (Candidate.CommandName == CommandName)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
 	UClass* ResolveClassReference(const FString& Reference);
 
 	void AddUniqueSupportedPin(
@@ -349,7 +380,7 @@ namespace
 		}
 	}
 
-	void GatherHiddenAsyncActionPins(const UFunction* FactoryFunction, TSet<FName>& OutHiddenPins)
+	void GatherHiddenAsyncTaskPins(const UFunction* FactoryFunction, TSet<FName>& OutHiddenPins)
 	{
 		if (FactoryFunction == nullptr)
 		{
@@ -395,7 +426,7 @@ namespace
 		}
 	}
 
-	bool DoesAsyncActionHideThen(const UClass* ProxyClass)
+	bool DoesAsyncTaskHideThen(const UClass* ProxyClass)
 	{
 		for (const UStruct* TestStruct = ProxyClass; TestStruct != nullptr; TestStruct = TestStruct->GetSuperStruct())
 		{
@@ -408,7 +439,7 @@ namespace
 		return false;
 	}
 
-	bool DoesAsyncActionExposeProxy(const UClass* ProxyClass)
+	bool DoesAsyncTaskExposeProxy(const UClass* ProxyClass)
 	{
 		for (const UStruct* TestStruct = ProxyClass; TestStruct != nullptr; TestStruct = TestStruct->GetSuperStruct())
 		{
@@ -542,6 +573,135 @@ namespace
 					TEXT("Async-action factory function '%s::%s' returns '%s', which does not derive from UBlueprintAsyncActionBase."),
 					*FactoryClass->GetPathName(),
 					*Command.SecondaryName.ToString(),
+					*ReturnProperty->PropertyClass->GetPathName()),
+				Command.NodeId));
+			return false;
+		}
+
+		OutFactoryFunction = FactoryFunction;
+		OutProxyClass = ReturnProperty->PropertyClass;
+		return true;
+	}
+
+	bool ResolveSpecializedAsyncTaskFactory(
+		const FVergilCompilerCommand& Command,
+		const FVergilSpecializedAsyncTaskCommand& Descriptor,
+		UFunction*& OutFactoryFunction,
+		UClass*& OutProxyClass,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		OutFactoryFunction = nullptr;
+		OutProxyClass = nullptr;
+
+		UClass* FactoryClass = nullptr;
+		FName FactoryFunctionName = NAME_None;
+		UClass* ExpectedProxyClass = nullptr;
+
+		if (Descriptor.CommandName == AIMoveToCommandName)
+		{
+			FactoryClass = UAIBlueprintHelperLibrary::StaticClass();
+			FactoryFunctionName = GET_FUNCTION_NAME_CHECKED(UAIBlueprintHelperLibrary, CreateMoveToProxyObject);
+			ExpectedProxyClass = UAIAsyncTaskBlueprintProxy::StaticClass();
+		}
+		else if (Descriptor.CommandName == PlayMontageCommandName)
+		{
+			FactoryClass = UPlayMontageCallbackProxy::StaticClass();
+			FactoryFunctionName = GET_FUNCTION_NAME_CHECKED(UPlayMontageCallbackProxy, CreateProxyObjectForPlayMontage);
+			ExpectedProxyClass = UPlayMontageCallbackProxy::StaticClass();
+		}
+		else
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("UnsupportedSpecializedAsyncTaskCommand"),
+				FString::Printf(TEXT("'%s' is not a recognized specialized async-task command."), *Descriptor.CommandName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		UFunction* const FactoryFunction = FactoryClass != nullptr ? FactoryClass->FindFunctionByName(FactoryFunctionName) : nullptr;
+		if (FactoryFunction == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskFactoryFunctionNotFound"),
+				FString::Printf(
+					TEXT("%s requires factory function '%s::%s', but it was not found in UE_5.7."),
+					*Descriptor.CommandName.ToString(),
+					FactoryClass != nullptr ? *FactoryClass->GetPathName() : TEXT("<unknown>"),
+					*FactoryFunctionName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasAllFunctionFlags(FUNC_Static))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskFactoryFunctionNotStatic"),
+				FString::Printf(
+					TEXT("%s requires static factory function '%s::%s'."),
+					*Descriptor.CommandName.ToString(),
+					*FactoryClass->GetPathName(),
+					*FactoryFunctionName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasAllFunctionFlags(FUNC_BlueprintCallable))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskFactoryFunctionNotCallable"),
+				FString::Printf(
+					TEXT("%s requires BlueprintCallable factory function '%s::%s'."),
+					*Descriptor.CommandName.ToString(),
+					*FactoryClass->GetPathName(),
+					*FactoryFunctionName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasMetaData(TEXT("BlueprintInternalUseOnly")))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskFactoryFunctionNotBlueprintInternal"),
+				FString::Printf(
+					TEXT("%s requires BlueprintInternalUseOnly factory function '%s::%s'."),
+					*Descriptor.CommandName.ToString(),
+					*FactoryClass->GetPathName(),
+					*FactoryFunctionName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		const FObjectProperty* const ReturnProperty = CastField<FObjectProperty>(FactoryFunction->GetReturnProperty());
+		if (ReturnProperty == nullptr || ReturnProperty->PropertyClass == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskFactoryReturnInvalid"),
+				FString::Printf(
+					TEXT("%s requires factory function '%s::%s' to return an object proxy."),
+					*Descriptor.CommandName.ToString(),
+					*FactoryClass->GetPathName(),
+					*FactoryFunctionName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (ExpectedProxyClass != nullptr && !ReturnProperty->PropertyClass->IsChildOf(ExpectedProxyClass))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("SpecializedAsyncTaskProxyClassInvalid"),
+				FString::Printf(
+					TEXT("%s requires factory function '%s::%s' to return '%s', but UE_5.7 exposes '%s'."),
+					*Descriptor.CommandName.ToString(),
+					*FactoryClass->GetPathName(),
+					*FactoryFunctionName.ToString(),
+					*ExpectedProxyClass->GetPathName(),
 					*ReturnProperty->PropertyClass->GetPathName()),
 				Command.NodeId));
 			return false;
@@ -1555,13 +1715,13 @@ namespace
 		OutPins.Reset();
 		AddUniqueSupportedPin(OutPins, UEdGraphSchema_K2::PN_Execute, true, true);
 
-		const bool bHideThen = DoesAsyncActionHideThen(ProxyClass);
+		const bool bHideThen = DoesAsyncTaskHideThen(ProxyClass);
 		if (!bHideThen)
 		{
 			AddUniqueSupportedPin(OutPins, UEdGraphSchema_K2::PN_Then, false, true);
 		}
 
-		if (DoesAsyncActionExposeProxy(ProxyClass))
+		if (DoesAsyncTaskExposeProxy(ProxyClass))
 		{
 			AddUniqueSupportedPin(OutPins, AsyncActionProxyPinName, false, false);
 		}
@@ -1620,7 +1780,7 @@ namespace
 		if (FactoryFunction != nullptr)
 		{
 			TSet<FName> HiddenPins;
-			GatherHiddenAsyncActionPins(FactoryFunction, HiddenPins);
+			GatherHiddenAsyncTaskPins(FactoryFunction, HiddenPins);
 			for (TFieldIterator<FProperty> PropertyIt(FactoryFunction); PropertyIt && (PropertyIt->PropertyFlags & CPF_Parm); ++PropertyIt)
 			{
 				FProperty* const Parameter = *PropertyIt;
@@ -1648,7 +1808,7 @@ namespace
 		BuildAsyncActionSupportedPins(FactoryFunction, ProxyClass, SupportedPins);
 
 		TSet<FName> HiddenPins;
-		GatherHiddenAsyncActionPins(FactoryFunction, HiddenPins);
+		GatherHiddenAsyncTaskPins(FactoryFunction, HiddenPins);
 
 		bool bIsValid = true;
 		for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
@@ -1675,6 +1835,56 @@ namespace
 						*PlannedPin.Name.ToString())
 					: FString::Printf(
 						TEXT("Async action planned pin '%s' is not part of the deterministic UE_5.7 surface for factory '%s::%s'."),
+						*PlannedPin.Name.ToString(),
+						FactoryFunction != nullptr && FactoryFunction->GetOwnerClass() != nullptr ? *FactoryFunction->GetOwnerClass()->GetPathName() : TEXT("<unknown>"),
+						FactoryFunction != nullptr ? *FactoryFunction->GetFName().ToString() : TEXT("<unknown>")),
+				Command.NodeId));
+			bIsValid = false;
+		}
+
+		return bIsValid;
+	}
+
+	bool ValidateSpecializedAsyncTaskPlannedPins(
+		const FVergilCompilerCommand& Command,
+		const FVergilSpecializedAsyncTaskCommand& Descriptor,
+		const UFunction* FactoryFunction,
+		const UClass* ProxyClass,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		TArray<FVergilSupportedPinDescriptor> SupportedPins;
+		BuildAsyncActionSupportedPins(FactoryFunction, ProxyClass, SupportedPins);
+
+		TSet<FName> HiddenPins;
+		GatherHiddenAsyncTaskPins(FactoryFunction, HiddenPins);
+
+		bool bIsValid = true;
+		for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+		{
+			const FVergilSupportedPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&PlannedPin](const FVergilSupportedPinDescriptor& Candidate)
+			{
+				return Candidate.Name == PlannedPin.Name
+					&& Candidate.bIsInput == PlannedPin.bIsInput
+					&& Candidate.bIsExec == PlannedPin.bIsExec;
+			});
+
+			if (SupportedPin != nullptr)
+			{
+				continue;
+			}
+
+			const bool bTargetsHiddenPin = HiddenPins.Contains(PlannedPin.Name);
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				bTargetsHiddenPin ? TEXT("SpecializedAsyncTaskHiddenPinUnsupported") : TEXT("SpecializedAsyncTaskPinUnsupported"),
+				bTargetsHiddenPin
+					? FString::Printf(
+						TEXT("%s planned pin '%s' targets a hidden factory pin and is not part of the deterministic supported surface."),
+						*Descriptor.CommandName.ToString(),
+						*PlannedPin.Name.ToString())
+					: FString::Printf(
+						TEXT("%s planned pin '%s' is not part of the deterministic UE_5.7 surface for factory '%s::%s'."),
+						*Descriptor.CommandName.ToString(),
 						*PlannedPin.Name.ToString(),
 						FactoryFunction != nullptr && FactoryFunction->GetOwnerClass() != nullptr ? *FactoryFunction->GetOwnerClass()->GetPathName() : TEXT("<unknown>"),
 						FactoryFunction != nullptr ? *FactoryFunction->GetFName().ToString() : TEXT("<unknown>")),
@@ -4913,6 +5123,18 @@ namespace
 			FinalizePlacedNode(Graph, AsyncActionNode, Command.Position, Command.NodeId);
 			NewNode = AsyncActionNode;
 		}
+		else if (Command.Name == AIMoveToCommandName)
+		{
+			UK2Node_AIMoveTo* AIMoveToNode = NewObject<UK2Node_AIMoveTo>(Graph);
+			FinalizePlacedNode(Graph, AIMoveToNode, Command.Position, Command.NodeId);
+			NewNode = AIMoveToNode;
+		}
+		else if (Command.Name == PlayMontageCommandName)
+		{
+			UK2Node_PlayMontage* PlayMontageNode = NewObject<UK2Node_PlayMontage>(Graph);
+			FinalizePlacedNode(Graph, PlayMontageNode, Command.Position, Command.NodeId);
+			NewNode = PlayMontageNode;
+		}
 		else if (Command.Name == TEXT("Vergil.K2.SpawnActor"))
 		{
 			UClass* ActorClass = nullptr;
@@ -6725,6 +6947,32 @@ namespace
 					}
 
 					if (!ValidateAsyncActionPlannedPins(Command, FactoryFunction, ProxyClass, Diagnostics))
+					{
+						bIsValid = false;
+					}
+					break;
+				}
+
+				if (const FVergilSpecializedAsyncTaskCommand* const SpecializedAsyncTaskCommand = FindSpecializedAsyncTaskCommand(Command.Name))
+				{
+					if (GraphName == ConstructionScriptGraphName)
+					{
+						AddValidationError(
+							TEXT("ConstructionScriptSpecializedAsyncTaskUnsupported"),
+							FString::Printf(TEXT("%s is not supported on the UserConstructionScript graph because specialized async-task nodes are latent."), *Command.Name.ToString()),
+							Command.NodeId);
+						break;
+					}
+
+					UFunction* FactoryFunction = nullptr;
+					UClass* ProxyClass = nullptr;
+					if (!ResolveSpecializedAsyncTaskFactory(Command, *SpecializedAsyncTaskCommand, FactoryFunction, ProxyClass, Diagnostics))
+					{
+						bIsValid = false;
+						break;
+					}
+
+					if (!ValidateSpecializedAsyncTaskPlannedPins(Command, *SpecializedAsyncTaskCommand, FactoryFunction, ProxyClass, Diagnostics))
 					{
 						bIsValid = false;
 					}

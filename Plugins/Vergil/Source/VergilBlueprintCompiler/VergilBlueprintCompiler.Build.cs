@@ -19,6 +19,8 @@ public class VergilBlueprintCompiler : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AIModule",
+				"AnimGraphRuntime",
 				"BlueprintGraph",
 				"Json",
 				"Kismet",

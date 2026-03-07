@@ -1,8 +1,11 @@
 #include "Misc/AutomationTest.h"
 
+#include "Animation/AnimMontage.h"
+#include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "Editor.h"
 #include "HAL/FileManager.h"
 #include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EdGraphNode_Comment.h"
 #include "Engine/Blueprint.h"
@@ -13,6 +16,7 @@
 #include "GameFramework/Actor.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddComponentByClass.h"
+#include "K2Node_AIMoveTo.h"
 #include "K2Node_AddDelegate.h"
 #include "K2Node_AsyncAction.h"
 #include "K2Node_CallDelegate.h"
@@ -38,6 +42,7 @@
 #include "K2Node_MakeSet.h"
 #include "K2Node_MakeStruct.h"
 #include "K2Node_Message.h"
+#include "K2Node_PlayMontage.h"
 #include "K2Node_Tunnel.h"
 #include "K2Node_Select.h"
 #include "K2Node_Self.h"
@@ -57,6 +62,7 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "PackageTools.h"
+#include "PlayMontageCallbackProxy.h"
 #include "GameFramework/Pawn.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
@@ -3019,6 +3025,115 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		AsyncActionSuccessPin.Direction = EVergilPinDirection::Output;
 		AsyncActionNode.Pins.Add(AsyncActionSuccessPin);
 
+		FVergilGraphNode AIMoveToNode;
+		AIMoveToNode.Id = FGuid::NewGuid();
+		AIMoveToNode.Kind = EVergilNodeKind::Custom;
+		AIMoveToNode.Descriptor = TEXT("K2.AIMoveTo");
+
+		FVergilGraphPin AIMoveToExecutePin;
+		AIMoveToExecutePin.Id = FGuid::NewGuid();
+		AIMoveToExecutePin.Name = UEdGraphSchema_K2::PN_Execute;
+		AIMoveToExecutePin.Direction = EVergilPinDirection::Input;
+		AIMoveToExecutePin.bIsExec = true;
+		AIMoveToNode.Pins.Add(AIMoveToExecutePin);
+
+		FVergilGraphPin AIMoveToThenPin;
+		AIMoveToThenPin.Id = FGuid::NewGuid();
+		AIMoveToThenPin.Name = UEdGraphSchema_K2::PN_Then;
+		AIMoveToThenPin.Direction = EVergilPinDirection::Output;
+		AIMoveToThenPin.bIsExec = true;
+		AIMoveToNode.Pins.Add(AIMoveToThenPin);
+
+		FVergilGraphPin AIMoveToSuccessPin;
+		AIMoveToSuccessPin.Id = FGuid::NewGuid();
+		AIMoveToSuccessPin.Name = TEXT("OnSuccess");
+		AIMoveToSuccessPin.Direction = EVergilPinDirection::Output;
+		AIMoveToSuccessPin.bIsExec = true;
+		AIMoveToNode.Pins.Add(AIMoveToSuccessPin);
+
+		FVergilGraphPin AIMoveToFailPin;
+		AIMoveToFailPin.Id = FGuid::NewGuid();
+		AIMoveToFailPin.Name = TEXT("OnFail");
+		AIMoveToFailPin.Direction = EVergilPinDirection::Output;
+		AIMoveToFailPin.bIsExec = true;
+		AIMoveToNode.Pins.Add(AIMoveToFailPin);
+
+		FVergilGraphPin AIMoveToPawnPin;
+		AIMoveToPawnPin.Id = FGuid::NewGuid();
+		AIMoveToPawnPin.Name = TEXT("Pawn");
+		AIMoveToPawnPin.Direction = EVergilPinDirection::Input;
+		AIMoveToNode.Pins.Add(AIMoveToPawnPin);
+
+		FVergilGraphPin AIMoveToDestinationPin;
+		AIMoveToDestinationPin.Id = FGuid::NewGuid();
+		AIMoveToDestinationPin.Name = TEXT("Destination");
+		AIMoveToDestinationPin.Direction = EVergilPinDirection::Input;
+		AIMoveToNode.Pins.Add(AIMoveToDestinationPin);
+
+		FVergilGraphPin AIMoveToMovementResultPin;
+		AIMoveToMovementResultPin.Id = FGuid::NewGuid();
+		AIMoveToMovementResultPin.Name = TEXT("MovementResult");
+		AIMoveToMovementResultPin.Direction = EVergilPinDirection::Output;
+		AIMoveToNode.Pins.Add(AIMoveToMovementResultPin);
+
+		FVergilGraphNode PlayMontageNode;
+		PlayMontageNode.Id = FGuid::NewGuid();
+		PlayMontageNode.Kind = EVergilNodeKind::Custom;
+		PlayMontageNode.Descriptor = TEXT("K2.PlayMontage");
+
+		FVergilGraphPin PlayMontageExecutePin;
+		PlayMontageExecutePin.Id = FGuid::NewGuid();
+		PlayMontageExecutePin.Name = UEdGraphSchema_K2::PN_Execute;
+		PlayMontageExecutePin.Direction = EVergilPinDirection::Input;
+		PlayMontageExecutePin.bIsExec = true;
+		PlayMontageNode.Pins.Add(PlayMontageExecutePin);
+
+		FVergilGraphPin PlayMontageThenPin;
+		PlayMontageThenPin.Id = FGuid::NewGuid();
+		PlayMontageThenPin.Name = UEdGraphSchema_K2::PN_Then;
+		PlayMontageThenPin.Direction = EVergilPinDirection::Output;
+		PlayMontageThenPin.bIsExec = true;
+		PlayMontageNode.Pins.Add(PlayMontageThenPin);
+
+		FVergilGraphPin PlayMontageCompletedPin;
+		PlayMontageCompletedPin.Id = FGuid::NewGuid();
+		PlayMontageCompletedPin.Name = TEXT("OnCompleted");
+		PlayMontageCompletedPin.Direction = EVergilPinDirection::Output;
+		PlayMontageCompletedPin.bIsExec = true;
+		PlayMontageNode.Pins.Add(PlayMontageCompletedPin);
+
+		FVergilGraphPin PlayMontageInterruptedPin;
+		PlayMontageInterruptedPin.Id = FGuid::NewGuid();
+		PlayMontageInterruptedPin.Name = TEXT("OnInterrupted");
+		PlayMontageInterruptedPin.Direction = EVergilPinDirection::Output;
+		PlayMontageInterruptedPin.bIsExec = true;
+		PlayMontageNode.Pins.Add(PlayMontageInterruptedPin);
+
+		FVergilGraphPin PlayMontageNotifyBeginPin;
+		PlayMontageNotifyBeginPin.Id = FGuid::NewGuid();
+		PlayMontageNotifyBeginPin.Name = TEXT("OnNotifyBegin");
+		PlayMontageNotifyBeginPin.Direction = EVergilPinDirection::Output;
+		PlayMontageNotifyBeginPin.bIsExec = true;
+		PlayMontageNode.Pins.Add(PlayMontageNotifyBeginPin);
+
+		FVergilGraphPin PlayMontageMeshPin;
+		PlayMontageMeshPin.Id = FGuid::NewGuid();
+		PlayMontageMeshPin.Name = TEXT("InSkeletalMeshComponent");
+		PlayMontageMeshPin.Direction = EVergilPinDirection::Input;
+		PlayMontageNode.Pins.Add(PlayMontageMeshPin);
+
+		FVergilGraphPin PlayMontageAssetPin;
+		PlayMontageAssetPin.Id = FGuid::NewGuid();
+		PlayMontageAssetPin.Name = TEXT("MontageToPlay");
+		PlayMontageAssetPin.Direction = EVergilPinDirection::Input;
+		PlayMontageNode.Pins.Add(PlayMontageAssetPin);
+
+		FVergilGraphPin PlayMontageNotifyNamePin;
+		PlayMontageNotifyNamePin.Id = FGuid::NewGuid();
+		PlayMontageNotifyNamePin.Name = TEXT("NotifyName");
+		PlayMontageNotifyNamePin.Direction = EVergilPinDirection::Output;
+		PlayMontageNode.Pins.Add(PlayMontageNotifyNamePin);
+
 		FVergilGraphNode LoadAssetNode;
 		LoadAssetNode.Id = FGuid::NewGuid();
 		LoadAssetNode.Kind = EVergilNodeKind::Custom;
@@ -3311,7 +3426,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, ClassCastNode, GetClassDefaultsNode, AsyncActionNode, LoadAssetNode, LoadAssetClassNode, LoadAssetsNode, ConvertAssetNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
+		Request.Document.Nodes = { CastNode, ClassCastNode, GetClassDefaultsNode, AsyncActionNode, AIMoveToNode, PlayMontageNode, LoadAssetNode, LoadAssetClassNode, LoadAssetsNode, ConvertAssetNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
 
 		FVergilGraphEdge TransformToSpawn;
 		TransformToSpawn.Id = FGuid::NewGuid();
@@ -3408,6 +3523,20 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("AsyncAction should normalize FactoryClassPath into StringValue."), PlannedAsyncActionCommand->StringValue, AsyncActionHandleSaveGamePath);
 			TestEqual(TEXT("AsyncAction should carry the factory function name in SecondaryName."), PlannedAsyncActionCommand->SecondaryName, FName(TEXT("AsyncLoadGameFromSlot")));
 			TestEqual(TEXT("AsyncAction metadata should retain the normalized factory class path."), PlannedAsyncActionCommand->Attributes.FindRef(TEXT("FactoryClassPath")), AsyncActionHandleSaveGamePath);
+		}
+
+		const FVergilCompilerCommand* const PlannedAIMoveToCommand = FindNodeCommand(Result.Commands, AIMoveToNode.Id);
+		TestNotNull(TEXT("Resolved AI MoveTo nodes should still lower into AddNode commands."), PlannedAIMoveToCommand);
+		if (PlannedAIMoveToCommand != nullptr)
+		{
+			TestEqual(TEXT("AIMoveTo should lower into its dedicated command name."), PlannedAIMoveToCommand->Name, FName(TEXT("Vergil.K2.AIMoveTo")));
+		}
+
+		const FVergilCompilerCommand* const PlannedPlayMontageCommand = FindNodeCommand(Result.Commands, PlayMontageNode.Id);
+		TestNotNull(TEXT("Resolved PlayMontage nodes should still lower into AddNode commands."), PlannedPlayMontageCommand);
+		if (PlannedPlayMontageCommand != nullptr)
+		{
+			TestEqual(TEXT("PlayMontage should lower into its dedicated command name."), PlannedPlayMontageCommand->Name, FName(TEXT("Vergil.K2.PlayMontage")));
 		}
 
 		const FVergilCompilerCommand* const PlannedLoadAssetCommand = FindNodeCommand(Result.Commands, LoadAssetNode.Id);
@@ -12874,6 +13003,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.AsyncActionExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSpecializedAsyncTaskExecutionTest,
+	"Vergil.Scaffold.SpecializedAsyncTaskExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -15291,6 +15425,468 @@ bool FVergilAsyncActionExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Async-action bSuccess should feed the success setter value."), AsyncActionSuccessGraphPin != nullptr && AsyncActionSuccessGraphPin->LinkedTo.Contains(SetLastLoadSucceededValueGraphPin));
 	TestTrue(TEXT("Success setter Then should feed the save-game setter exec."), SetLastLoadSucceededThenGraphPin != nullptr && SetLastLoadSucceededThenGraphPin->LinkedTo.Contains(SetLoadedSaveGameExecGraphPin));
 	TestTrue(TEXT("Async-action SaveGame should feed the save-game setter value."), AsyncActionSaveGameGraphPin != nullptr && AsyncActionSaveGameGraphPin->LinkedTo.Contains(SetLoadedSaveGameValueGraphPin));
+
+	return true;
+}
+
+bool FVergilSpecializedAsyncTaskExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UScriptStruct* const VectorStruct = TBaseStructure<FVector>::Get();
+	TestNotNull(TEXT("Specialized async-task execution coverage requires FVector."), VectorStruct);
+	if (VectorStruct == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint(APawn::StaticClass());
+	TestNotNull(TEXT("Transient pawn test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType VectorType;
+	VectorType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+	VectorType.PinSubCategoryObject = VectorStruct;
+	TestTrue(TEXT("DesiredDestination member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("DesiredDestination"), VectorType, TEXT("(X=125.000000,Y=50.000000,Z=0.000000)")));
+
+	FEdGraphPinType SkeletalMeshComponentType;
+	SkeletalMeshComponentType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	SkeletalMeshComponentType.PinSubCategoryObject = USkeletalMeshComponent::StaticClass();
+	TestTrue(TEXT("MontageMeshComponent member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MontageMeshComponent"), SkeletalMeshComponentType, TEXT("None")));
+
+	FEdGraphPinType MontageType;
+	MontageType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	MontageType.PinSubCategoryObject = UAnimMontage::StaticClass();
+	TestTrue(TEXT("MontageAsset member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MontageAsset"), MontageType, TEXT("None")));
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("MoveIssued member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MoveIssued"), BoolType, TEXT("false")));
+	TestTrue(TEXT("MoveSucceeded member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MoveSucceeded"), BoolType, TEXT("false")));
+	TestTrue(TEXT("MoveFailed member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MoveFailed"), BoolType, TEXT("false")));
+	TestTrue(TEXT("MontageIssued member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MontageIssued"), BoolType, TEXT("false")));
+	TestTrue(TEXT("MontageCompleted member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MontageCompleted"), BoolType, TEXT("false")));
+	TestTrue(TEXT("MontageInterrupted member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("MontageInterrupted"), BoolType, TEXT("false")));
+
+	FEdGraphPinType NameType;
+	NameType.PinCategory = UEdGraphSchema_K2::PC_Name;
+	TestTrue(TEXT("LastMontageNotify member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastMontageNotify"), NameType, TEXT("None")));
+
+	struct FGetterNodeInfo
+	{
+		FVergilGraphNode Node;
+		FGuid ValuePinId;
+	};
+
+	auto MakeGetterNode = [](const FName VariableName, const FVector2D Position) -> FGetterNodeInfo
+	{
+		FGetterNodeInfo Result;
+		Result.Node.Id = FGuid::NewGuid();
+		Result.Node.Kind = EVergilNodeKind::VariableGet;
+		Result.Node.Descriptor = FName(*FString::Printf(TEXT("K2.VarGet.%s"), *VariableName.ToString()));
+		Result.Node.Position = Position;
+
+		FVergilGraphPin ValuePin;
+		ValuePin.Id = FGuid::NewGuid();
+		ValuePin.Name = VariableName;
+		ValuePin.Direction = EVergilPinDirection::Output;
+		Result.ValuePinId = ValuePin.Id;
+		Result.Node.Pins.Add(ValuePin);
+		return Result;
+	};
+
+	struct FSetterNodeInfo
+	{
+		FVergilGraphNode Node;
+		FGuid ExecPinId;
+		FGuid ThenPinId;
+		FGuid ValuePinId;
+	};
+
+	auto MakeSetterNode = [](const FName VariableName, const FVector2D Position, const FString& DefaultValue) -> FSetterNodeInfo
+	{
+		FSetterNodeInfo Result;
+		Result.Node.Id = FGuid::NewGuid();
+		Result.Node.Kind = EVergilNodeKind::VariableSet;
+		Result.Node.Descriptor = FName(*FString::Printf(TEXT("K2.VarSet.%s"), *VariableName.ToString()));
+		Result.Node.Position = Position;
+
+		FVergilGraphPin ExecPin;
+		ExecPin.Id = FGuid::NewGuid();
+		ExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+		ExecPin.Direction = EVergilPinDirection::Input;
+		ExecPin.bIsExec = true;
+		Result.ExecPinId = ExecPin.Id;
+		Result.Node.Pins.Add(ExecPin);
+
+		FVergilGraphPin ThenPin;
+		ThenPin.Id = FGuid::NewGuid();
+		ThenPin.Name = UEdGraphSchema_K2::PN_Then;
+		ThenPin.Direction = EVergilPinDirection::Output;
+		ThenPin.bIsExec = true;
+		Result.ThenPinId = ThenPin.Id;
+		Result.Node.Pins.Add(ThenPin);
+
+		FVergilGraphPin ValuePin;
+		ValuePin.Id = FGuid::NewGuid();
+		ValuePin.Name = VariableName;
+		ValuePin.Direction = EVergilPinDirection::Input;
+		ValuePin.DefaultValue = DefaultValue;
+		Result.ValuePinId = ValuePin.Id;
+		Result.Node.Pins.Add(ValuePin);
+
+		return Result;
+	};
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode SelfNode;
+	SelfNode.Id = FGuid::NewGuid();
+	SelfNode.Kind = EVergilNodeKind::Custom;
+	SelfNode.Descriptor = TEXT("K2.Self");
+	SelfNode.Position = FVector2D(260.0f, -200.0f);
+
+	FVergilGraphPin SelfValuePin;
+	SelfValuePin.Id = FGuid::NewGuid();
+	SelfValuePin.Name = UEdGraphSchema_K2::PN_Self;
+	SelfValuePin.Direction = EVergilPinDirection::Output;
+	SelfNode.Pins.Add(SelfValuePin);
+
+	const FGetterNodeInfo DestinationGetterNode = MakeGetterNode(TEXT("DesiredDestination"), FVector2D(260.0f, 40.0f));
+	const FGetterNodeInfo MontageMeshGetterNode = MakeGetterNode(TEXT("MontageMeshComponent"), FVector2D(980.0f, -220.0f));
+	const FGetterNodeInfo MontageAssetGetterNode = MakeGetterNode(TEXT("MontageAsset"), FVector2D(980.0f, 20.0f));
+
+	FVergilGraphNode AIMoveToNode;
+	AIMoveToNode.Id = FGuid::NewGuid();
+	AIMoveToNode.Kind = EVergilNodeKind::Custom;
+	AIMoveToNode.Descriptor = TEXT("K2.AIMoveTo");
+	AIMoveToNode.Position = FVector2D(560.0f, -20.0f);
+
+	FVergilGraphPin AIMoveToExecPin;
+	AIMoveToExecPin.Id = FGuid::NewGuid();
+	AIMoveToExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	AIMoveToExecPin.Direction = EVergilPinDirection::Input;
+	AIMoveToExecPin.bIsExec = true;
+	AIMoveToNode.Pins.Add(AIMoveToExecPin);
+
+	FVergilGraphPin AIMoveToThenPin;
+	AIMoveToThenPin.Id = FGuid::NewGuid();
+	AIMoveToThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	AIMoveToThenPin.Direction = EVergilPinDirection::Output;
+	AIMoveToThenPin.bIsExec = true;
+	AIMoveToNode.Pins.Add(AIMoveToThenPin);
+
+	FVergilGraphPin AIMoveToSuccessPin;
+	AIMoveToSuccessPin.Id = FGuid::NewGuid();
+	AIMoveToSuccessPin.Name = TEXT("OnSuccess");
+	AIMoveToSuccessPin.Direction = EVergilPinDirection::Output;
+	AIMoveToSuccessPin.bIsExec = true;
+	AIMoveToNode.Pins.Add(AIMoveToSuccessPin);
+
+	FVergilGraphPin AIMoveToFailPin;
+	AIMoveToFailPin.Id = FGuid::NewGuid();
+	AIMoveToFailPin.Name = TEXT("OnFail");
+	AIMoveToFailPin.Direction = EVergilPinDirection::Output;
+	AIMoveToFailPin.bIsExec = true;
+	AIMoveToNode.Pins.Add(AIMoveToFailPin);
+
+	FVergilGraphPin AIMoveToPawnPin;
+	AIMoveToPawnPin.Id = FGuid::NewGuid();
+	AIMoveToPawnPin.Name = TEXT("Pawn");
+	AIMoveToPawnPin.Direction = EVergilPinDirection::Input;
+	AIMoveToNode.Pins.Add(AIMoveToPawnPin);
+
+	FVergilGraphPin AIMoveToDestinationPin;
+	AIMoveToDestinationPin.Id = FGuid::NewGuid();
+	AIMoveToDestinationPin.Name = TEXT("Destination");
+	AIMoveToDestinationPin.Direction = EVergilPinDirection::Input;
+	AIMoveToNode.Pins.Add(AIMoveToDestinationPin);
+
+	FVergilGraphPin AIMoveToMovementResultPin;
+	AIMoveToMovementResultPin.Id = FGuid::NewGuid();
+	AIMoveToMovementResultPin.Name = TEXT("MovementResult");
+	AIMoveToMovementResultPin.Direction = EVergilPinDirection::Output;
+	AIMoveToNode.Pins.Add(AIMoveToMovementResultPin);
+
+	FVergilGraphNode PlayMontageNode;
+	PlayMontageNode.Id = FGuid::NewGuid();
+	PlayMontageNode.Kind = EVergilNodeKind::Custom;
+	PlayMontageNode.Descriptor = TEXT("K2.PlayMontage");
+	PlayMontageNode.Position = FVector2D(1280.0f, -20.0f);
+
+	FVergilGraphPin PlayMontageExecPin;
+	PlayMontageExecPin.Id = FGuid::NewGuid();
+	PlayMontageExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	PlayMontageExecPin.Direction = EVergilPinDirection::Input;
+	PlayMontageExecPin.bIsExec = true;
+	PlayMontageNode.Pins.Add(PlayMontageExecPin);
+
+	FVergilGraphPin PlayMontageThenPin;
+	PlayMontageThenPin.Id = FGuid::NewGuid();
+	PlayMontageThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	PlayMontageThenPin.Direction = EVergilPinDirection::Output;
+	PlayMontageThenPin.bIsExec = true;
+	PlayMontageNode.Pins.Add(PlayMontageThenPin);
+
+	FVergilGraphPin PlayMontageCompletedPin;
+	PlayMontageCompletedPin.Id = FGuid::NewGuid();
+	PlayMontageCompletedPin.Name = TEXT("OnCompleted");
+	PlayMontageCompletedPin.Direction = EVergilPinDirection::Output;
+	PlayMontageCompletedPin.bIsExec = true;
+	PlayMontageNode.Pins.Add(PlayMontageCompletedPin);
+
+	FVergilGraphPin PlayMontageInterruptedPin;
+	PlayMontageInterruptedPin.Id = FGuid::NewGuid();
+	PlayMontageInterruptedPin.Name = TEXT("OnInterrupted");
+	PlayMontageInterruptedPin.Direction = EVergilPinDirection::Output;
+	PlayMontageInterruptedPin.bIsExec = true;
+	PlayMontageNode.Pins.Add(PlayMontageInterruptedPin);
+
+	FVergilGraphPin PlayMontageNotifyBeginPin;
+	PlayMontageNotifyBeginPin.Id = FGuid::NewGuid();
+	PlayMontageNotifyBeginPin.Name = TEXT("OnNotifyBegin");
+	PlayMontageNotifyBeginPin.Direction = EVergilPinDirection::Output;
+	PlayMontageNotifyBeginPin.bIsExec = true;
+	PlayMontageNode.Pins.Add(PlayMontageNotifyBeginPin);
+
+	FVergilGraphPin PlayMontageMeshPin;
+	PlayMontageMeshPin.Id = FGuid::NewGuid();
+	PlayMontageMeshPin.Name = TEXT("InSkeletalMeshComponent");
+	PlayMontageMeshPin.Direction = EVergilPinDirection::Input;
+	PlayMontageNode.Pins.Add(PlayMontageMeshPin);
+
+	FVergilGraphPin PlayMontageAssetPin;
+	PlayMontageAssetPin.Id = FGuid::NewGuid();
+	PlayMontageAssetPin.Name = TEXT("MontageToPlay");
+	PlayMontageAssetPin.Direction = EVergilPinDirection::Input;
+	PlayMontageNode.Pins.Add(PlayMontageAssetPin);
+
+	FVergilGraphPin PlayMontageNotifyNamePin;
+	PlayMontageNotifyNamePin.Id = FGuid::NewGuid();
+	PlayMontageNotifyNamePin.Name = TEXT("NotifyName");
+	PlayMontageNotifyNamePin.Direction = EVergilPinDirection::Output;
+	PlayMontageNode.Pins.Add(PlayMontageNotifyNamePin);
+
+	const FSetterNodeInfo MoveIssuedSetterNode = MakeSetterNode(TEXT("MoveIssued"), FVector2D(900.0f, -220.0f), TEXT("true"));
+	const FSetterNodeInfo MoveSucceededSetterNode = MakeSetterNode(TEXT("MoveSucceeded"), FVector2D(900.0f, -20.0f), TEXT("true"));
+	const FSetterNodeInfo MoveFailedSetterNode = MakeSetterNode(TEXT("MoveFailed"), FVector2D(900.0f, 180.0f), TEXT("true"));
+	const FSetterNodeInfo MontageIssuedSetterNode = MakeSetterNode(TEXT("MontageIssued"), FVector2D(1620.0f, -220.0f), TEXT("true"));
+	const FSetterNodeInfo MontageCompletedSetterNode = MakeSetterNode(TEXT("MontageCompleted"), FVector2D(1620.0f, -20.0f), TEXT("true"));
+	const FSetterNodeInfo MontageInterruptedSetterNode = MakeSetterNode(TEXT("MontageInterrupted"), FVector2D(1620.0f, 180.0f), TEXT("true"));
+	const FSetterNodeInfo LastMontageNotifySetterNode = MakeSetterNode(TEXT("LastMontageNotify"), FVector2D(1980.0f, 180.0f), TEXT("None"));
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilSpecializedAsyncTaskExecution");
+	Document.Nodes =
+	{
+		BeginPlayNode,
+		SelfNode,
+		DestinationGetterNode.Node,
+		MontageMeshGetterNode.Node,
+		MontageAssetGetterNode.Node,
+		AIMoveToNode,
+		PlayMontageNode,
+		MoveIssuedSetterNode.Node,
+		MoveSucceededSetterNode.Node,
+		MoveFailedSetterNode.Node,
+		MontageIssuedSetterNode.Node,
+		MontageCompletedSetterNode.Node,
+		MontageInterruptedSetterNode.Node,
+		LastMontageNotifySetterNode.Node
+	};
+
+	auto AddEdge = [&Document](const FGuid SourceNodeId, const FGuid SourcePinId, const FGuid TargetNodeId, const FGuid TargetPinId)
+	{
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNodeId;
+		Edge.SourcePinId = SourcePinId;
+		Edge.TargetNodeId = TargetNodeId;
+		Edge.TargetPinId = TargetPinId;
+		Document.Edges.Add(Edge);
+	};
+
+	AddEdge(BeginPlayNode.Id, BeginPlayThenPin.Id, AIMoveToNode.Id, AIMoveToExecPin.Id);
+	AddEdge(SelfNode.Id, SelfValuePin.Id, AIMoveToNode.Id, AIMoveToPawnPin.Id);
+	AddEdge(DestinationGetterNode.Node.Id, DestinationGetterNode.ValuePinId, AIMoveToNode.Id, AIMoveToDestinationPin.Id);
+	AddEdge(AIMoveToNode.Id, AIMoveToThenPin.Id, MoveIssuedSetterNode.Node.Id, MoveIssuedSetterNode.ExecPinId);
+	AddEdge(AIMoveToNode.Id, AIMoveToSuccessPin.Id, MoveSucceededSetterNode.Node.Id, MoveSucceededSetterNode.ExecPinId);
+	AddEdge(AIMoveToNode.Id, AIMoveToFailPin.Id, MoveFailedSetterNode.Node.Id, MoveFailedSetterNode.ExecPinId);
+	AddEdge(MoveIssuedSetterNode.Node.Id, MoveIssuedSetterNode.ThenPinId, PlayMontageNode.Id, PlayMontageExecPin.Id);
+	AddEdge(MontageMeshGetterNode.Node.Id, MontageMeshGetterNode.ValuePinId, PlayMontageNode.Id, PlayMontageMeshPin.Id);
+	AddEdge(MontageAssetGetterNode.Node.Id, MontageAssetGetterNode.ValuePinId, PlayMontageNode.Id, PlayMontageAssetPin.Id);
+	AddEdge(PlayMontageNode.Id, PlayMontageThenPin.Id, MontageIssuedSetterNode.Node.Id, MontageIssuedSetterNode.ExecPinId);
+	AddEdge(PlayMontageNode.Id, PlayMontageCompletedPin.Id, MontageCompletedSetterNode.Node.Id, MontageCompletedSetterNode.ExecPinId);
+	AddEdge(PlayMontageNode.Id, PlayMontageInterruptedPin.Id, MontageInterruptedSetterNode.Node.Id, MontageInterruptedSetterNode.ExecPinId);
+	AddEdge(PlayMontageNode.Id, PlayMontageNotifyBeginPin.Id, LastMontageNotifySetterNode.Node.Id, LastMontageNotifySetterNode.ExecPinId);
+	AddEdge(PlayMontageNode.Id, PlayMontageNotifyNamePin.Id, LastMontageNotifySetterNode.Node.Id, LastMontageNotifySetterNode.ValuePinId);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Specialized async-task document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Specialized async-task document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Specialized async-task document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const AIMoveToCommand = FindNodeCommand(Result.Commands, AIMoveToNode.Id);
+	TestNotNull(TEXT("AI MoveTo should lower into an AddNode command."), AIMoveToCommand);
+	if (AIMoveToCommand != nullptr)
+	{
+		TestEqual(TEXT("AI MoveTo should lower into its dedicated command name."), AIMoveToCommand->Name, FName(TEXT("Vergil.K2.AIMoveTo")));
+		TestTrue(TEXT("AI MoveTo planned pins should include OnSuccess."), ContainsPlannedPin(*AIMoveToCommand, TEXT("OnSuccess"), false, true));
+		TestTrue(TEXT("AI MoveTo planned pins should include Destination."), ContainsPlannedPin(*AIMoveToCommand, TEXT("Destination"), true, false));
+	}
+
+	const FVergilCompilerCommand* const PlayMontageCommand = FindNodeCommand(Result.Commands, PlayMontageNode.Id);
+	TestNotNull(TEXT("Play Montage should lower into an AddNode command."), PlayMontageCommand);
+	if (PlayMontageCommand != nullptr)
+	{
+		TestEqual(TEXT("Play Montage should lower into its dedicated command name."), PlayMontageCommand->Name, FName(TEXT("Vergil.K2.PlayMontage")));
+		TestTrue(TEXT("Play Montage planned pins should include OnNotifyBegin."), ContainsPlannedPin(*PlayMontageCommand, TEXT("OnNotifyBegin"), false, true));
+		TestTrue(TEXT("Play Montage planned pins should include NotifyName."), ContainsPlannedPin(*PlayMontageCommand, TEXT("NotifyName"), false, false));
+	}
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after specialized async-task execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_Self* const SelfGraphNode = FindGraphNodeByGuid<UK2Node_Self>(EventGraph, SelfNode.Id);
+	UK2Node_VariableGet* const DestinationGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, DestinationGetterNode.Node.Id);
+	UK2Node_VariableGet* const MontageMeshGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, MontageMeshGetterNode.Node.Id);
+	UK2Node_VariableGet* const MontageAssetGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, MontageAssetGetterNode.Node.Id);
+	UK2Node_AIMoveTo* const AIMoveToGraphNode = FindGraphNodeByGuid<UK2Node_AIMoveTo>(EventGraph, AIMoveToNode.Id);
+	UK2Node_PlayMontage* const PlayMontageGraphNode = FindGraphNodeByGuid<UK2Node_PlayMontage>(EventGraph, PlayMontageNode.Id);
+	UK2Node_VariableSet* const MoveIssuedSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MoveIssuedSetterNode.Node.Id);
+	UK2Node_VariableSet* const MoveSucceededSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MoveSucceededSetterNode.Node.Id);
+	UK2Node_VariableSet* const MoveFailedSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MoveFailedSetterNode.Node.Id);
+	UK2Node_VariableSet* const MontageIssuedSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MontageIssuedSetterNode.Node.Id);
+	UK2Node_VariableSet* const MontageCompletedSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MontageCompletedSetterNode.Node.Id);
+	UK2Node_VariableSet* const MontageInterruptedSetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, MontageInterruptedSetterNode.Node.Id);
+	UK2Node_VariableSet* const LastMontageNotifySetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, LastMontageNotifySetterNode.Node.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventNode);
+	TestNotNull(TEXT("Self node should exist."), SelfGraphNode);
+	TestNotNull(TEXT("Destination getter node should exist."), DestinationGetterGraphNode);
+	TestNotNull(TEXT("Montage mesh getter node should exist."), MontageMeshGetterGraphNode);
+	TestNotNull(TEXT("Montage asset getter node should exist."), MontageAssetGetterGraphNode);
+	TestNotNull(TEXT("AI MoveTo node should exist."), AIMoveToGraphNode);
+	TestNotNull(TEXT("Play Montage node should exist."), PlayMontageGraphNode);
+	TestNotNull(TEXT("MoveIssued setter node should exist."), MoveIssuedSetterGraphNode);
+	TestNotNull(TEXT("MoveSucceeded setter node should exist."), MoveSucceededSetterGraphNode);
+	TestNotNull(TEXT("MoveFailed setter node should exist."), MoveFailedSetterGraphNode);
+	TestNotNull(TEXT("MontageIssued setter node should exist."), MontageIssuedSetterGraphNode);
+	TestNotNull(TEXT("MontageCompleted setter node should exist."), MontageCompletedSetterGraphNode);
+	TestNotNull(TEXT("MontageInterrupted setter node should exist."), MontageInterruptedSetterGraphNode);
+	TestNotNull(TEXT("LastMontageNotify setter node should exist."), LastMontageNotifySetterGraphNode);
+	if (EventNode == nullptr
+		|| SelfGraphNode == nullptr
+		|| DestinationGetterGraphNode == nullptr
+		|| MontageMeshGetterGraphNode == nullptr
+		|| MontageAssetGetterGraphNode == nullptr
+		|| AIMoveToGraphNode == nullptr
+		|| PlayMontageGraphNode == nullptr
+		|| MoveIssuedSetterGraphNode == nullptr
+		|| MoveSucceededSetterGraphNode == nullptr
+		|| MoveFailedSetterGraphNode == nullptr
+		|| MontageIssuedSetterGraphNode == nullptr
+		|| MontageCompletedSetterGraphNode == nullptr
+		|| MontageInterruptedSetterGraphNode == nullptr
+		|| LastMontageNotifySetterGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SelfGraphValuePin = SelfGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const DestinationGetterGraphValuePin = DestinationGetterGraphNode->FindPin(TEXT("DesiredDestination"));
+	UEdGraphPin* const MontageMeshGetterGraphValuePin = MontageMeshGetterGraphNode->FindPin(TEXT("MontageMeshComponent"));
+	UEdGraphPin* const MontageAssetGetterGraphValuePin = MontageAssetGetterGraphNode->FindPin(TEXT("MontageAsset"));
+	UEdGraphPin* const AIMoveToExecGraphPin = AIMoveToGraphNode->GetExecPin();
+	UEdGraphPin* const AIMoveToThenGraphPin = AIMoveToGraphNode->GetThenPin();
+	UEdGraphPin* const AIMoveToSuccessGraphPin = AIMoveToGraphNode->FindPin(TEXT("OnSuccess"));
+	UEdGraphPin* const AIMoveToFailGraphPin = AIMoveToGraphNode->FindPin(TEXT("OnFail"));
+	UEdGraphPin* const AIMoveToPawnGraphPin = AIMoveToGraphNode->FindPin(TEXT("Pawn"));
+	UEdGraphPin* const AIMoveToDestinationGraphPin = AIMoveToGraphNode->FindPin(TEXT("Destination"));
+	UEdGraphPin* const AIMoveToMovementResultGraphPin = AIMoveToGraphNode->FindPin(TEXT("MovementResult"));
+	UEdGraphPin* const AIMoveToWorldContextGraphPin = AIMoveToGraphNode->FindPin(TEXT("WorldContextObject"));
+	UEdGraphPin* const PlayMontageExecGraphPin = PlayMontageGraphNode->GetExecPin();
+	UEdGraphPin* const PlayMontageThenGraphPin = PlayMontageGraphNode->GetThenPin();
+	UEdGraphPin* const PlayMontageCompletedGraphPin = PlayMontageGraphNode->FindPin(TEXT("OnCompleted"));
+	UEdGraphPin* const PlayMontageInterruptedGraphPin = PlayMontageGraphNode->FindPin(TEXT("OnInterrupted"));
+	UEdGraphPin* const PlayMontageNotifyBeginGraphPin = PlayMontageGraphNode->FindPin(TEXT("OnNotifyBegin"));
+	UEdGraphPin* const PlayMontageMeshGraphPin = PlayMontageGraphNode->FindPin(TEXT("InSkeletalMeshComponent"));
+	UEdGraphPin* const PlayMontageAssetGraphPin = PlayMontageGraphNode->FindPin(TEXT("MontageToPlay"));
+	UEdGraphPin* const PlayMontageNotifyNameGraphPin = PlayMontageGraphNode->FindPin(TEXT("NotifyName"));
+	UEdGraphPin* const MoveIssuedSetterExecGraphPin = MoveIssuedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const MoveIssuedSetterThenGraphPin = MoveIssuedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const MoveSucceededSetterExecGraphPin = MoveSucceededSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const MoveFailedSetterExecGraphPin = MoveFailedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const MontageIssuedSetterExecGraphPin = MontageIssuedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const MontageCompletedSetterExecGraphPin = MontageCompletedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const MontageInterruptedSetterExecGraphPin = MontageInterruptedSetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const LastMontageNotifySetterExecGraphPin = LastMontageNotifySetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const LastMontageNotifySetterValueGraphPin = LastMontageNotifySetterGraphNode->FindPin(TEXT("LastMontageNotify"));
+
+	TestTrue(TEXT("Destination getter should remain pure."), DestinationGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("Montage mesh getter should remain pure."), MontageMeshGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("Montage asset getter should remain pure."), MontageAssetGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("AI MoveTo node should resolve UAIBlueprintHelperLibrary::CreateMoveToProxyObject."), AIMoveToGraphNode->GetFactoryFunction() == UAIBlueprintHelperLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UAIBlueprintHelperLibrary, CreateMoveToProxyObject)));
+	TestTrue(TEXT("Play Montage node should resolve UPlayMontageCallbackProxy::CreateProxyObjectForPlayMontage."), PlayMontageGraphNode->GetFactoryFunction() == UPlayMontageCallbackProxy::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UPlayMontageCallbackProxy, CreateProxyObjectForPlayMontage)));
+	TestTrue(TEXT("AI MoveTo should still create a hidden WorldContextObject pin."), AIMoveToWorldContextGraphPin != nullptr && AIMoveToWorldContextGraphPin->bHidden);
+	TestTrue(TEXT("AI MoveTo should expose MovementResult."), AIMoveToMovementResultGraphPin != nullptr);
+	TestTrue(TEXT("Play Montage should expose NotifyName."), PlayMontageNotifyNameGraphPin != nullptr);
+	TestTrue(TEXT("Event should feed AI MoveTo exec."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(AIMoveToExecGraphPin));
+	TestTrue(TEXT("Self should feed AI MoveTo Pawn."), SelfGraphValuePin != nullptr && SelfGraphValuePin->LinkedTo.Contains(AIMoveToPawnGraphPin));
+	TestTrue(TEXT("Destination getter should feed AI MoveTo Destination."), DestinationGetterGraphValuePin != nullptr && DestinationGetterGraphValuePin->LinkedTo.Contains(AIMoveToDestinationGraphPin));
+	TestTrue(TEXT("AI MoveTo Then should feed MoveIssued setter exec."), AIMoveToThenGraphPin != nullptr && AIMoveToThenGraphPin->LinkedTo.Contains(MoveIssuedSetterExecGraphPin));
+	TestTrue(TEXT("AI MoveTo OnSuccess should feed MoveSucceeded setter exec."), AIMoveToSuccessGraphPin != nullptr && AIMoveToSuccessGraphPin->LinkedTo.Contains(MoveSucceededSetterExecGraphPin));
+	TestTrue(TEXT("AI MoveTo OnFail should feed MoveFailed setter exec."), AIMoveToFailGraphPin != nullptr && AIMoveToFailGraphPin->LinkedTo.Contains(MoveFailedSetterExecGraphPin));
+	TestTrue(TEXT("MoveIssued setter Then should feed Play Montage exec."), MoveIssuedSetterThenGraphPin != nullptr && MoveIssuedSetterThenGraphPin->LinkedTo.Contains(PlayMontageExecGraphPin));
+	TestTrue(TEXT("Montage mesh getter should feed Play Montage component."), MontageMeshGetterGraphValuePin != nullptr && MontageMeshGetterGraphValuePin->LinkedTo.Contains(PlayMontageMeshGraphPin));
+	TestTrue(TEXT("Montage asset getter should feed Play Montage asset."), MontageAssetGetterGraphValuePin != nullptr && MontageAssetGetterGraphValuePin->LinkedTo.Contains(PlayMontageAssetGraphPin));
+	TestTrue(TEXT("Play Montage Then should feed MontageIssued setter exec."), PlayMontageThenGraphPin != nullptr && PlayMontageThenGraphPin->LinkedTo.Contains(MontageIssuedSetterExecGraphPin));
+	TestTrue(TEXT("Play Montage OnCompleted should feed MontageCompleted setter exec."), PlayMontageCompletedGraphPin != nullptr && PlayMontageCompletedGraphPin->LinkedTo.Contains(MontageCompletedSetterExecGraphPin));
+	TestTrue(TEXT("Play Montage OnInterrupted should feed MontageInterrupted setter exec."), PlayMontageInterruptedGraphPin != nullptr && PlayMontageInterruptedGraphPin->LinkedTo.Contains(MontageInterruptedSetterExecGraphPin));
+	TestTrue(TEXT("Play Montage OnNotifyBegin should feed LastMontageNotify setter exec."), PlayMontageNotifyBeginGraphPin != nullptr && PlayMontageNotifyBeginGraphPin->LinkedTo.Contains(LastMontageNotifySetterExecGraphPin));
+	TestTrue(TEXT("Play Montage NotifyName should feed LastMontageNotify setter value."), PlayMontageNotifyNameGraphPin != nullptr && PlayMontageNotifyNameGraphPin->LinkedTo.Contains(LastMontageNotifySetterValueGraphPin));
 
 	return true;
 }

@@ -9,6 +9,10 @@ public class VergilAutomation : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AIGraph",
+				"AIModule",
+				"AnimGraph",
+				"AnimGraphRuntime",
 				"BlueprintGraph",
 				"Core",
 				"CoreUObject",
