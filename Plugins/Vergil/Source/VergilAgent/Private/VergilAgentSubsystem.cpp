@@ -18,7 +18,18 @@ namespace
 	inline constexpr TCHAR PersistedAuditTrailFormatName[] = TEXT("Vergil.AgentAuditLog");
 	inline constexpr int32 PersistedAuditTrailFormatVersion = 1;
 	inline constexpr TCHAR PersistedAuditTrailRelativePath[] = TEXT("Vergil/AgentAuditTrail.json");
-	inline constexpr TCHAR DefaultTargetGraphName[] = TEXT("EventGraph");
+	inline const FName DefaultTargetGraphName(TEXT("EventGraph"));
+
+	FName ResolveDefaultTargetGraphName()
+	{
+		const UVergilDeveloperSettings* const Settings = GetDefault<UVergilDeveloperSettings>();
+		if (Settings != nullptr && !Settings->DefaultTargetGraphName.IsNone())
+		{
+			return Settings->DefaultTargetGraphName;
+		}
+
+		return DefaultTargetGraphName;
+	}
 
 	FString TrimOptionalPath(const FString& Path)
 	{
@@ -641,7 +652,7 @@ FVergilAgentRequest UVergilAgentSubsystem::NormalizeRequest(const FVergilAgentRe
 
 		if (NormalizedRequest.Plan.TargetGraphName.IsNone())
 		{
-			NormalizedRequest.Plan.TargetGraphName = FName(DefaultTargetGraphName);
+			NormalizedRequest.Plan.TargetGraphName = ResolveDefaultTargetGraphName();
 		}
 		break;
 	}

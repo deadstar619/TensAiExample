@@ -436,6 +436,51 @@ namespace
 		bool bReady = false;
 	};
 
+	struct FScopedVergilCompileSettingsOverride final
+	{
+		FScopedVergilCompileSettingsOverride()
+			: Settings(GetMutableDefault<UVergilDeveloperSettings>())
+		{
+			if (Settings != nullptr)
+			{
+				OriginalDefaultTargetGraphName = Settings->DefaultTargetGraphName;
+				OriginalDefaultAutoLayoutEnabled = Settings->bDefaultAutoLayoutEnabled;
+				OriginalDefaultAutoLayout = Settings->DefaultAutoLayout;
+				OriginalDefaultCommentGenerationEnabled = Settings->bDefaultCommentGenerationEnabled;
+				OriginalDefaultCommentGeneration = Settings->DefaultCommentGeneration;
+				OriginalTreatStructuralWarningsAsErrors = Settings->bTreatStructuralWarningsAsErrors;
+				bReady = true;
+			}
+		}
+
+		~FScopedVergilCompileSettingsOverride()
+		{
+			if (Settings != nullptr && bReady)
+			{
+				Settings->DefaultTargetGraphName = OriginalDefaultTargetGraphName;
+				Settings->bDefaultAutoLayoutEnabled = OriginalDefaultAutoLayoutEnabled;
+				Settings->DefaultAutoLayout = OriginalDefaultAutoLayout;
+				Settings->bDefaultCommentGenerationEnabled = OriginalDefaultCommentGenerationEnabled;
+				Settings->DefaultCommentGeneration = OriginalDefaultCommentGeneration;
+				Settings->bTreatStructuralWarningsAsErrors = OriginalTreatStructuralWarningsAsErrors;
+			}
+		}
+
+		bool IsReady() const
+		{
+			return bReady;
+		}
+
+		UVergilDeveloperSettings* Settings = nullptr;
+		FName OriginalDefaultTargetGraphName = TEXT("EventGraph");
+		bool OriginalDefaultAutoLayoutEnabled = true;
+		FVergilAutoLayoutSettings OriginalDefaultAutoLayout;
+		bool OriginalDefaultCommentGenerationEnabled = true;
+		FVergilCommentGenerationSettings OriginalDefaultCommentGeneration;
+		bool OriginalTreatStructuralWarningsAsErrors = false;
+		bool bReady = false;
+	};
+
 	FName MakeCastResultPinName(UClass* TargetClass)
 	{
 		check(TargetClass != nullptr);
@@ -8493,9 +8538,184 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilDeveloperSettingsDefaultsTest,
+	"Vergil.Scaffold.DeveloperSettingsDefaults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilStructuralWarningStrictValidationTest,
+	"Vergil.Scaffold.StructuralWarningStrictValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilAutoLayoutExecutionTest,
 	"Vergil.Scaffold.AutoLayoutExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilDeveloperSettingsDefaultsTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FScopedVergilCompileSettingsOverride SettingsOverride;
+	TestTrue(TEXT("Vergil developer settings override should be available."), SettingsOverride.IsReady());
+	if (!SettingsOverride.IsReady() || SettingsOverride.Settings == nullptr)
+	{
+		return false;
+	}
+
+	SettingsOverride.Settings->DefaultTargetGraphName = TEXT("UserConstructionScript");
+	SettingsOverride.Settings->bDefaultAutoLayoutEnabled = false;
+	SettingsOverride.Settings->DefaultAutoLayout.Origin = FVector2D(144.0f, -32.0f);
+	SettingsOverride.Settings->DefaultAutoLayout.HorizontalSpacing = 448.0f;
+	SettingsOverride.Settings->DefaultAutoLayout.VerticalSpacing = 208.0f;
+	SettingsOverride.Settings->DefaultAutoLayout.CommentPadding = 84.0f;
+	SettingsOverride.Settings->bDefaultCommentGenerationEnabled = false;
+	SettingsOverride.Settings->DefaultCommentGeneration.DefaultWidth = 620.0f;
+	SettingsOverride.Settings->DefaultCommentGeneration.DefaultHeight = 180.0f;
+	SettingsOverride.Settings->DefaultCommentGeneration.DefaultFontSize = 24;
+	SettingsOverride.Settings->DefaultCommentGeneration.DefaultColor = FLinearColor(FColor(0x11, 0x77, 0xAA, 0xFF));
+	SettingsOverride.Settings->DefaultCommentGeneration.bShowBubbleWhenZoomed = false;
+	SettingsOverride.Settings->DefaultCommentGeneration.bColorBubble = true;
+	SettingsOverride.Settings->DefaultCommentGeneration.MoveMode = EVergilCommentMoveMode::NoGroupMovement;
+	SettingsOverride.Settings->bTreatStructuralWarningsAsErrors = true;
+
+	FVergilGraphDocument DefaultDocument;
+	DefaultDocument.BlueprintPath = TEXT("/Temp/BP_VergilDeveloperSettingsDefaults");
+
+	const FVergilCompileRequest DefaultRequest = EditorSubsystem->MakeDefaultCompileRequest(Blueprint, DefaultDocument);
+	TestEqual(TEXT("Default compile requests should use the configured target graph."), DefaultRequest.TargetGraphName, FName(TEXT("UserConstructionScript")));
+	TestFalse(TEXT("Default compile requests should use the configured auto-layout enabled flag."), DefaultRequest.bAutoLayout);
+	TestEqual(TEXT("Default compile requests should use the configured auto-layout origin."), DefaultRequest.AutoLayout.Origin, FVector2D(144.0f, -32.0f));
+	TestEqual(TEXT("Default compile requests should use the configured auto-layout horizontal spacing."), DefaultRequest.AutoLayout.HorizontalSpacing, 448.0f);
+	TestEqual(TEXT("Default compile requests should use the configured auto-layout vertical spacing."), DefaultRequest.AutoLayout.VerticalSpacing, 208.0f);
+	TestEqual(TEXT("Default compile requests should use the configured comment padding."), DefaultRequest.AutoLayout.CommentPadding, 84.0f);
+	TestFalse(TEXT("Default compile requests should use the configured comment-generation enabled flag."), DefaultRequest.bGenerateComments);
+	TestEqual(TEXT("Default compile requests should use the configured comment width."), DefaultRequest.CommentGeneration.DefaultWidth, 620.0f);
+	TestEqual(TEXT("Default compile requests should use the configured comment height."), DefaultRequest.CommentGeneration.DefaultHeight, 180.0f);
+	TestEqual(TEXT("Default compile requests should use the configured comment font size."), DefaultRequest.CommentGeneration.DefaultFontSize, 24);
+	TestEqual(TEXT("Default compile requests should use the configured comment color."), DefaultRequest.CommentGeneration.DefaultColor.ToFColor(true), FColor(0x11, 0x77, 0xAA, 0xFF));
+	TestFalse(TEXT("Default compile requests should use the configured comment zoom-bubble setting."), DefaultRequest.CommentGeneration.bShowBubbleWhenZoomed);
+	TestTrue(TEXT("Default compile requests should use the configured comment bubble-color setting."), DefaultRequest.CommentGeneration.bColorBubble);
+	TestEqual(TEXT("Default compile requests should use the configured comment move mode."), DefaultRequest.CommentGeneration.MoveMode, EVergilCommentMoveMode::NoGroupMovement);
+	TestTrue(TEXT("Default compile requests should use the configured structural-warning strictness flag."), DefaultRequest.bTreatStructuralWarningsAsErrors);
+
+	const FVergilCompileRequest OverrideRequest = EditorSubsystem->MakeCompileRequest(Blueprint, DefaultDocument, TEXT("EventGraph"), true, true);
+	TestEqual(TEXT("Explicit compile requests should preserve the requested target graph override."), OverrideRequest.TargetGraphName, FName(TEXT("EventGraph")));
+	TestTrue(TEXT("Explicit compile requests should preserve the requested auto-layout override."), OverrideRequest.bAutoLayout);
+	TestTrue(TEXT("Explicit compile requests should preserve the requested comment-generation override."), OverrideRequest.bGenerateComments);
+	TestEqual(TEXT("Explicit compile requests should still seed the configured auto-layout settings."), OverrideRequest.AutoLayout.HorizontalSpacing, 448.0f);
+	TestEqual(TEXT("Explicit compile requests should still seed the configured comment-generation settings."), OverrideRequest.CommentGeneration.DefaultWidth, 620.0f);
+	TestTrue(TEXT("Explicit compile requests should still carry the configured structural-warning strictness flag."), OverrideRequest.bTreatStructuralWarningsAsErrors);
+
+	FVergilGraphNode ConstructionNode;
+	ConstructionNode.Id = FGuid::NewGuid();
+	ConstructionNode.Kind = EVergilNodeKind::Custom;
+	ConstructionNode.Descriptor = TEXT("K2.Self");
+	ConstructionNode.Position = FVector2D(96.0f, 64.0f);
+
+	FVergilGraphDocument ConstructionDocument;
+	ConstructionDocument.BlueprintPath = TEXT("/Temp/BP_VergilDeveloperSettingsConstructionDefault");
+	ConstructionDocument.ConstructionScriptNodes.Add(ConstructionNode);
+
+	const FVergilCompileResult CompileResult = EditorSubsystem->CompileDocument(Blueprint, ConstructionDocument, false, false, false);
+	TestTrue(TEXT("CompileDocument should still succeed when the configured default target graph is the construction script."), CompileResult.bSucceeded);
+	TestEqual(TEXT("CompileDocument should use the configured default target graph when none is passed explicitly."), CompileResult.Statistics.TargetGraphName, FName(TEXT("UserConstructionScript")));
+	TestNotNull(
+		TEXT("CompileDocument should plan construction-script commands through the configured default graph."),
+		CompileResult.Commands.FindByPredicate([ConstructionNode](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode
+				&& Command.GraphName == TEXT("UserConstructionScript")
+				&& Command.NodeId == ConstructionNode.Id;
+		}));
+
+	return true;
+}
+
+bool FVergilStructuralWarningStrictValidationTest::RunTest(const FString& Parameters)
+{
+	auto ContainsDiagnostic = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code, const EVergilDiagnosticSeverity Severity)
+	{
+		return Diagnostics.ContainsByPredicate([Code, Severity](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code && Diagnostic.Severity == Severity;
+		});
+	};
+
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilComponentDefinition Component;
+	Component.Name = TEXT("InheritedChild");
+	Component.ComponentClassPath = USceneComponent::StaticClass()->GetClassPathName().ToString();
+	Component.ParentComponentName = TEXT("MissingInheritedParent");
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilStructuralWarningStrictValidation");
+	Document.Components.Add(Component);
+
+	{
+		FScopedVergilCompileSettingsOverride SettingsOverride;
+		TestTrue(TEXT("Vergil developer settings override should be available."), SettingsOverride.IsReady());
+		if (!SettingsOverride.IsReady() || SettingsOverride.Settings == nullptr)
+		{
+			return false;
+		}
+
+		SettingsOverride.Settings->bTreatStructuralWarningsAsErrors = false;
+
+		const FVergilCompileRequest Request = EditorSubsystem->MakeDefaultCompileRequest(Blueprint, Document);
+		const FVergilCompileResult Result = EditorSubsystem->CompileRequest(Request, false);
+
+		TestTrue(TEXT("Missing component parents should remain warnings by default."), Result.bSucceeded);
+		TestTrue(TEXT("Default validation should preserve the warning severity."), ContainsDiagnostic(Result.Diagnostics, TEXT("ComponentParentMissing"), EVergilDiagnosticSeverity::Warning));
+	}
+
+	{
+		FScopedVergilCompileSettingsOverride SettingsOverride;
+		TestTrue(TEXT("Vergil developer settings override should be available."), SettingsOverride.IsReady());
+		if (!SettingsOverride.IsReady() || SettingsOverride.Settings == nullptr)
+		{
+			return false;
+		}
+
+		SettingsOverride.Settings->bTreatStructuralWarningsAsErrors = true;
+
+		const FVergilCompileRequest Request = EditorSubsystem->MakeDefaultCompileRequest(Blueprint, Document);
+		const FVergilCompileResult Result = EditorSubsystem->CompileRequest(Request, false);
+
+		TestFalse(TEXT("Strict structural validation should fail missing component parents."), Result.bSucceeded);
+		TestEqual(TEXT("Strict structural validation should stop in the structural-validation pass."), Result.Statistics.FailedPassName, FName(TEXT("StructuralValidation")));
+		TestEqual(TEXT("Strict structural validation should preserve schema migration as the last completed pass."), Result.Statistics.LastCompletedPassName, FName(TEXT("SchemaMigration")));
+		TestEqual(TEXT("Strict structural validation should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Strict structural validation should promote the component-parent diagnostic to an error."), ContainsDiagnostic(Result.Diagnostics, TEXT("ComponentParentMissing"), EVergilDiagnosticSeverity::Error));
+	}
+
+	return true;
+}
 
 bool FVergilCommentExecutionTest::RunTest(const FString& Parameters)
 {

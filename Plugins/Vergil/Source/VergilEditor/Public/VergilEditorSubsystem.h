@@ -19,6 +19,9 @@ public:
 	virtual void Deinitialize() override;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FVergilCompileRequest MakeDefaultCompileRequest(UBlueprint* Blueprint, const FVergilGraphDocument& Document) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FVergilCompileRequest MakeCompileRequest(
 		UBlueprint* Blueprint,
 		const FVergilGraphDocument& Document,

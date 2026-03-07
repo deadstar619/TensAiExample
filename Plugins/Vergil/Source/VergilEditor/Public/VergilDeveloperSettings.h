@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "VergilCompilerTypes.h"
 #include "VergilPermissionTypes.h"
 #include "VergilDeveloperSettings.generated.h"
 
@@ -26,9 +27,21 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Compiler")
 	bool bEnableExperimentalCompilerPasses = false;
 
-	UPROPERTY(Config, EditAnywhere, Category = "Layout", meta = (ClampMin = "64.0"))
-	float DefaultNodeSpacing = 320.0f;
+	UPROPERTY(Config, EditAnywhere, Category = "Compiler")
+	FName DefaultTargetGraphName = TEXT("EventGraph");
 
-	UPROPERTY(Config, EditAnywhere, Category = "Layout", meta = (ClampMin = "16.0"))
-	float DefaultCommentPadding = 96.0f;
+	UPROPERTY(Config, EditAnywhere, Category = "Compiler")
+	bool bDefaultAutoLayoutEnabled = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Layout", meta = (ShowOnlyInnerProperties))
+	FVergilAutoLayoutSettings DefaultAutoLayout;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Compiler")
+	bool bDefaultCommentGenerationEnabled = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Comments", meta = (ShowOnlyInnerProperties))
+	FVergilCommentGenerationSettings DefaultCommentGeneration;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Validation")
+	bool bTreatStructuralWarningsAsErrors = false;
 };

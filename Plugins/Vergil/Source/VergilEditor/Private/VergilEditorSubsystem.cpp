@@ -7,27 +7,55 @@
 
 namespace
 {
+	inline const FName DefaultTargetGraphName(TEXT("EventGraph"));
+
+	FName ResolveConfiguredTargetGraphName(const UVergilDeveloperSettings* Settings, const FName RequestedTargetGraphName)
+	{
+		if (!RequestedTargetGraphName.IsNone())
+		{
+			return RequestedTargetGraphName;
+		}
+
+		if (Settings != nullptr && !Settings->DefaultTargetGraphName.IsNone())
+		{
+			return Settings->DefaultTargetGraphName;
+		}
+
+		return DefaultTargetGraphName;
+	}
+
 	FVergilCompileRequest BuildCompileRequest(
 		UBlueprint* Blueprint,
 		const FVergilGraphDocument& Document,
 		const FName TargetGraphName,
-		const bool bAutoLayout,
-		const bool bGenerateComments)
+		const TOptional<bool> bAutoLayoutOverride,
+		const TOptional<bool> bGenerateCommentsOverride)
 	{
 		const UVergilDeveloperSettings* const Settings = GetDefault<UVergilDeveloperSettings>();
 
 		FVergilCompileRequest Request;
 		Request.TargetBlueprint = Blueprint;
 		Request.Document = Document;
-		Request.TargetGraphName = TargetGraphName;
-		Request.bAutoLayout = bAutoLayout;
+		Request.TargetGraphName = ResolveConfiguredTargetGraphName(Settings, TargetGraphName);
 		if (Settings != nullptr)
 		{
-			Request.AutoLayout.HorizontalSpacing = Settings->DefaultNodeSpacing;
-			Request.AutoLayout.VerticalSpacing = Settings->DefaultNodeSpacing;
-			Request.AutoLayout.CommentPadding = Settings->DefaultCommentPadding;
+			Request.bAutoLayout = Settings->bDefaultAutoLayoutEnabled;
+			Request.AutoLayout = Settings->DefaultAutoLayout;
+			Request.bGenerateComments = Settings->bDefaultCommentGenerationEnabled;
+			Request.CommentGeneration = Settings->DefaultCommentGeneration;
+			Request.bTreatStructuralWarningsAsErrors = Settings->bTreatStructuralWarningsAsErrors;
 		}
-		Request.bGenerateComments = bGenerateComments;
+
+		if (bAutoLayoutOverride.IsSet())
+		{
+			Request.bAutoLayout = bAutoLayoutOverride.GetValue();
+		}
+
+		if (bGenerateCommentsOverride.IsSet())
+		{
+			Request.bGenerateComments = bGenerateCommentsOverride.GetValue();
+		}
+
 		return Request;
 	}
 
@@ -152,6 +180,11 @@ void UVergilEditorSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+FVergilCompileRequest UVergilEditorSubsystem::MakeDefaultCompileRequest(UBlueprint* Blueprint, const FVergilGraphDocument& Document) const
+{
+	return BuildCompileRequest(Blueprint, Document, NAME_None, TOptional<bool>(), TOptional<bool>());
+}
+
 FVergilCompileRequest UVergilEditorSubsystem::MakeCompileRequest(
 	UBlueprint* Blueprint,
 	const FVergilGraphDocument& Document,
@@ -159,7 +192,12 @@ FVergilCompileRequest UVergilEditorSubsystem::MakeCompileRequest(
 	const bool bAutoLayout,
 	const bool bGenerateComments) const
 {
-	return BuildCompileRequest(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments);
+	return BuildCompileRequest(
+		Blueprint,
+		Document,
+		TargetGraphName,
+		TOptional<bool>(bAutoLayout),
+		TOptional<bool>(bGenerateComments));
 }
 
 FVergilCompileResult UVergilEditorSubsystem::CompileRequest(const FVergilCompileRequest& Request, const bool bApplyCommands) const
@@ -187,7 +225,7 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocument(
 	return CompileDocumentToGraph(
 		Blueprint,
 		Document,
-		TEXT("EventGraph"),
+		NAME_None,
 		bAutoLayout,
 		bGenerateComments,
 		bApplyCommands);
@@ -231,7 +269,7 @@ FVergilCommandPlanPreview UVergilEditorSubsystem::PreviewDocument(
 	const bool bAutoLayout,
 	const bool bGenerateComments) const
 {
-	return PreviewDocumentToGraph(Blueprint, Document, TEXT("EventGraph"), bAutoLayout, bGenerateComments);
+	return PreviewDocumentToGraph(Blueprint, Document, NAME_None, bAutoLayout, bGenerateComments);
 }
 
 FVergilCommandPlanPreview UVergilEditorSubsystem::PreviewDocumentToGraph(

@@ -233,6 +233,9 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileRequest
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil", meta = (ScriptName = "CommentGenerationSettings"))
 	FVergilCommentGenerationSettings CommentGeneration;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil|Validation")
+	bool bTreatStructuralWarningsAsErrors = false;
 };
 
 USTRUCT(BlueprintType)

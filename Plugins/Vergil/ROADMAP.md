@@ -297,7 +297,7 @@ Session note for `VGR-4007` (2026-03-06):
 
 Session note for `VGR-4008` (2026-03-06):
 
-- `UVergilEditorSubsystem` now exposes `CompileDocumentToGraph(...)`, which forwards the requested target graph into `FVergilCompileRequest` while preserving the existing `CompileDocument(...)` default to `EventGraph`.
+- `UVergilEditorSubsystem` now exposes `CompileDocumentToGraph(...)`, which forwards the requested target graph into `FVergilCompileRequest` while preserving `CompileDocument(...)` as the simpler no-graph helper. `VGR-7006` later made that helper use the configured developer-settings default graph instead of hard-coding `EventGraph`.
 - The command executor now resolves `UserConstructionScript` through Unreal's dedicated construction-script graph helpers, creates it through the construction-script utility path when required, and reuses the graph's existing function-entry node for authored `K2.Event.UserConstructionScript` entries instead of spawning a regular override event node.
 - New `Vergil.Scaffold.ConstructionScriptAuthoringExecution` coverage exists alongside the earlier model/planning tests, and `mcp__tensai__build_project` plus the documented headless scaffold runner re-verified cleanly in this workspace.
 
@@ -462,7 +462,7 @@ Tickets:
 - [x] `VGR-7003` Add explicit comment generation pass API
 - [x] `VGR-7004` Add document diff and command-plan preview tooling
 - [x] `VGR-7005` Add stronger undo/redo transaction auditing
-- `VGR-7006` Expand developer settings for compiler/layout/validation behavior
+- [x] `VGR-7006` Expand developer settings for compiler/layout/validation behavior
 - [x] `VGR-7007` Add runtime/reflection inspection/discovery utilities
 
 Acceptance criteria:
@@ -499,6 +499,12 @@ Session note for `VGR-7005` (2026-03-07):
 - `FVergilCompileResult.Statistics` now carries a code-backed `TransactionAudit` payload for apply paths, capturing whether Vergil opened a scoped editor transaction plus before/after undo-stack snapshots including queue length, undo count, next undo/redo transaction ids, titles, contexts, primary objects, and target-Blueprint undo-buffer presence.
 - `FVergilCommandExecutor::Execute(...)` now opens editor transactions with the explicit Vergil context and primary Blueprint object instead of the anonymous scoped-transaction path, which makes the resulting undo entry auditable through the returned compile/apply result and the editor's own undo history.
 - `Vergil.Scaffold.CompileResultMetadata` now asserts the new audit surface, and `Vergil.Scaffold.TransactionAudit` now proves the recorded transaction can be undone and redone end to end under the `UE_5.7` editor pipeline.
+
+Session note for `VGR-7006` (2026-03-07):
+
+- `UVergilDeveloperSettings` now carries the default compile target graph, full auto-layout defaults, full comment-generation defaults, and a `bTreatStructuralWarningsAsErrors` toggle. `UVergilEditorSubsystem` now also exposes `MakeDefaultCompileRequest(...)` and uses the configured default graph for `CompileDocument(...)` / `PreviewDocument(...)` when callers omit an explicit graph.
+- `FVergilCompileRequest` now carries `bTreatStructuralWarningsAsErrors`, and the compiler promotes structural-validation warnings to errors before later passes when that strictness is enabled, so projects can tighten validation behavior without disabling any of the existing safety checks.
+- `Vergil.Scaffold.DeveloperSettingsDefaults` plus `Vergil.Scaffold.StructuralWarningStrictValidation` now cover seeded request defaults, configured construction-script default targeting, and warning-to-error structural-validation behavior.
 
 Session note for `VGR-7007` (2026-03-07):
 
@@ -619,11 +625,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7006`
-2. `VGR-9001`
-3. `VGR-8007`
-4. `VGR-8008`
-5. `VGR-9002`
+1. `VGR-9001`
+2. `VGR-8007`
+3. `VGR-8008`
+4. `VGR-9002`
+5. `VGR-9005`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

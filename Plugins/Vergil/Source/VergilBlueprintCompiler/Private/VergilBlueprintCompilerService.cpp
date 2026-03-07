@@ -6,6 +6,33 @@
 #include "VergilCompilerTypes.h"
 #include "VergilLog.h"
 
+namespace
+{
+	bool HasErrorDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		return Algo::AnyOf(Diagnostics, [](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+		});
+	}
+
+	bool PromoteDiagnosticsToErrors(TArray<FVergilDiagnostic>& Diagnostics, const int32 StartIndex)
+	{
+		bool bPromotedAnyWarnings = false;
+		for (int32 DiagnosticIndex = FMath::Max(StartIndex, 0); DiagnosticIndex < Diagnostics.Num(); ++DiagnosticIndex)
+		{
+			FVergilDiagnostic& Diagnostic = Diagnostics[DiagnosticIndex];
+			if (Diagnostic.Severity == EVergilDiagnosticSeverity::Warning)
+			{
+				Diagnostic.Severity = EVergilDiagnosticSeverity::Error;
+				bPromotedAnyWarnings = true;
+			}
+		}
+
+		return bPromotedAnyWarnings;
+	}
+}
+
 FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompileRequest& Request, FVergilGraphDocument* OutEffectiveDocument) const
 {
 	FVergilCompileResult Result;
@@ -57,7 +84,21 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	for (const TSharedRef<IVergilCompilerPass, ESPMode::ThreadSafe>& Pass : Passes)
 	{
 		const FName PassName = Pass->GetPassName();
-		const bool bPassSucceeded = Pass->Run(Request, Context, Result);
+		const int32 InitialDiagnosticCount = Result.Diagnostics.Num();
+		bool bPassSucceeded = Pass->Run(Request, Context, Result);
+
+		if (PassName == TEXT("StructuralValidation") && Request.bTreatStructuralWarningsAsErrors)
+		{
+			const bool bPromotedWarnings = PromoteDiagnosticsToErrors(Result.Diagnostics, InitialDiagnosticCount);
+			if (bPromotedWarnings)
+			{
+				bPassSucceeded = false;
+			}
+			else if (!bPassSucceeded && !HasErrorDiagnostics(Result.Diagnostics))
+			{
+				bPassSucceeded = false;
+			}
+		}
 
 		FVergilCompilePassRecord PassRecord;
 		PassRecord.PassName = PassName;
@@ -79,12 +120,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 
 		if (!bPassSucceeded)
 		{
-			const bool bHasErrorDiagnostics = Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
-			{
-				return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
-			});
-
-			if (bHasErrorDiagnostics)
+			if (HasErrorDiagnostics(Result.Diagnostics))
 			{
 				UE_LOG(
 					LogVergil,
@@ -107,10 +143,7 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	Result.Statistics.bCommandPlanNormalized = true;
 	Result.Statistics.RebuildCommandStatistics(Result.Commands);
 
-	Result.bSucceeded = !Algo::AnyOf(Result.Diagnostics, [](const FVergilDiagnostic& Diagnostic)
-	{
-		return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
-	});
+	Result.bSucceeded = !HasErrorDiagnostics(Result.Diagnostics);
 
 	if (!Result.bSucceeded)
 	{
