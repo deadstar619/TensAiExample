@@ -188,9 +188,20 @@ This document describes the current scaffold contracts implemented in code today
 - `FVergilNodeLoweringPass` now runs after type resolution and before connection legality, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, and final command planning.
 - The node-lowering pass resolves handlers against the normalized working document and emits node-scoped `AddNode` and `SetNodeMetadata` commands into the compiler context before the final plan is assembled.
 - Supported `UK2Node`-backed `AddNode` commands now share a generic editor-side node-spawner path with per-family validation and setup hooks, instead of re-implementing each `UK2Node` instantiation branch independently.
+- `IVergilNodeHandler` plus `FVergilNodeRegistry` is the supported extension seam for new node families. Exact one-descriptor handlers should register directly, while prefix or predicate families should register as fallbacks through `CanHandle(...)`.
+- New handler work should update both the supported descriptor table and the node-support matrix, so the code-backed manifest, markdown docs, and unsupported-family diagnostics stay aligned.
 - Comment and generic metadata-lowering commands are emitted in deterministic key order.
 - Comment nodes are now reserved for the explicit comment post-pass and do not lower through the core node-lowering stage.
 - Failed node lowering stops compilation before later connection legality validation, post-compile finalize lowering, comment post-pass lowering, layout post-pass lowering, or final command planning, so handler failures now return zero planned commands.
+
+## Custom handler extension workflow
+
+- New descriptor families should choose one explicit node-support path first: `GenericNodeSpawner`, `SpecializedHandler`, `DirectLowering`, or intentionally `Unsupported`.
+- `GenericNodeSpawner` is the preferred path when the executor can still instantiate a real `UK2Node` through the shared spawner with deterministic validation and setup hooks.
+- `SpecializedHandler` is for families that still end in a `UK2Node` but need family-specific resolution before the shared spawner can safely instantiate the node.
+- `DirectLowering` is for families such as events, interface messages, macro instances, variable helpers, and delegate/finalize flows where the deterministic contract is not just "spawn one engine node class."
+- Unsupported known families should still be represented in the node-support matrix so failures name the exact missing family instead of collapsing to anonymous generic fallback errors.
+- See [EXTENDING_NODE_HANDLERS.md](EXTENDING_NODE_HANDLERS.md) for the step-by-step extension checklist covering compiler handlers, executor work, manifest updates, and required automation.
 
 ## Connection legality contracts
 

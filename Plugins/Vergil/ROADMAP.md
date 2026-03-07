@@ -595,7 +595,7 @@ Tickets:
 - [x] `VGR-9005` Add source-control diff tests
 - [x] `VGR-9006` Add crash/recovery tests around compile/apply
 - [x] `VGR-9007` Add semantic versioning and migration docs
-- `VGR-9008` Add extension docs for custom handlers
+- [x] `VGR-9008` Add extension docs for custom handlers
 - `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
 - [x] `VGR-9010` Add runtime-safe automation fixtures
 
@@ -638,6 +638,12 @@ Session note for `VGR-9007` (2026-03-06):
 - `Vergil::GetSupportedSchemaMigrationPaths()` now exposes the exact forward migration steps implemented by the model layer, and `FVergilSupportedContractManifest` now reports plugin semantic version, descriptor version, and supported schema migration paths for agent/tool inspection.
 - `VERSIONING.md`, `README.md`, and `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now document semantic-versioning policy, migration rules, and the release-update checklist for schema, command-plan, and inspection-manifest version changes.
 
+Session note for `VGR-9008` (2026-03-07):
+
+- `EXTENDING_NODE_HANDLERS.md` now documents the supported custom-handler workflow around `IVergilNodeHandler` and `FVergilNodeRegistry`, including how new families should choose between the shared generic node spawner, a specialized handler, direct lowering, or an intentionally unsupported manifest row.
+- `README.md` and `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now link that guide back to the code-backed node-support matrix and the existing node-lowering contracts, so extension work has one explicit checklist covering manifest updates, earlier-pass normalization, executor integration, diagnostics, and automation.
+- `Vergil.Scaffold.SupportedNodeContractDocs` re-verified cleanly after the doc updates in this workspace.
+
 Session note for `VGR-9004` (2026-03-07):
 
 - `Vergil.Scaffold.LegacySchemaExecutionCoverage` now iterates every supported legacy starting schema and proves representative legacy documents survive migration, compile, and apply through the current `UE_5.7` editor pipeline.
@@ -664,9 +670,8 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9008`
-2. `VGR-9009`
-3. `VGR-9003`
+1. `VGR-9009`
+2. `VGR-9003`
 
 This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus restart-boundary failed-apply recovery coverage and checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
 
