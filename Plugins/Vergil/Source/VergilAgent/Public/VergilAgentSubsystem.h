@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
 #include "VergilContractInfo.h"
+#include "VergilCompilerTypes.h"
 #include "VergilAgentTypes.h"
 #include "VergilAgentSubsystem.generated.h"
 
@@ -32,6 +33,30 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString DescribeSupportedContracts() const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectCommandPlanAsJson(const TArray<FVergilCompilerCommand>& Commands, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeDocument(const FVergilGraphDocument& Document) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectDocumentAsJson(const FVergilGraphDocument& Document, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectDiagnosticsAsJson(const TArray<FVergilDiagnostic>& Diagnostics, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeCompileResult(const FVergilCompileResult& Result) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectCompileResultAsJson(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
 	void ClearAuditTrail();

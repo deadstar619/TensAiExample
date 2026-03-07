@@ -2628,6 +2628,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.SupportedContractInspection",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilInspectorToolingTest,
+	"Vergil.Scaffold.InspectorTooling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -2804,6 +2809,155 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilInspectorToolingTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem should be available for inspection tooling."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for inspection tooling."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphNode InspectNode;
+	InspectNode.Id = FGuid::NewGuid();
+	InspectNode.Kind = EVergilNodeKind::Custom;
+	InspectNode.Descriptor = TEXT("Test.Special");
+	InspectNode.Position = FVector2D(128.0f, 96.0f);
+	InspectNode.Metadata.Add(TEXT("InspectorKey"), TEXT("InspectorValue"));
+
+	FVergilGraphPin InspectOutputPin;
+	InspectOutputPin.Id = FGuid::NewGuid();
+	InspectOutputPin.Name = TEXT("Result");
+	InspectOutputPin.Direction = EVergilPinDirection::Output;
+	InspectOutputPin.TypeName = TEXT("bool");
+	InspectNode.Pins.Add(InspectOutputPin);
+
+	FVergilVariableDefinition InspectVariable;
+	InspectVariable.Name = TEXT("Counter");
+	InspectVariable.Type.PinCategory = TEXT("int");
+	InspectVariable.Flags.bInstanceEditable = true;
+	InspectVariable.Category = TEXT("State");
+	InspectVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Inspector variable"));
+	InspectVariable.DefaultValue = TEXT("7");
+
+	FVergilGraphDocument InspectDocument;
+	InspectDocument.SchemaVersion = 1;
+	InspectDocument.BlueprintPath = TEXT("/Game/Tests/BP_InspectorTooling");
+	InspectDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Inspector path"));
+	InspectDocument.Variables.Add(InspectVariable);
+	InspectDocument.Nodes.Add(InspectNode);
+	InspectDocument.Tags.Add(TEXT("Smoke"));
+
+	const FString NamespaceDocumentDescription = Vergil::DescribeGraphDocument(InspectDocument);
+	const FString EditorDocumentDescription = EditorSubsystem->DescribeDocument(InspectDocument);
+	const FString AgentDocumentDescription = AgentSubsystem->DescribeDocument(InspectDocument);
+	TestEqual(TEXT("Editor document inspection should mirror the namespace helper."), EditorDocumentDescription, NamespaceDocumentDescription);
+	TestEqual(TEXT("Agent document inspection should mirror the namespace helper."), AgentDocumentDescription, NamespaceDocumentDescription);
+	TestTrue(TEXT("Document inspection should advertise the document format label."), EditorDocumentDescription.Contains(TEXT("Vergil.GraphDocument version=1")));
+	TestTrue(TEXT("Document inspection should include Blueprint metadata values."), EditorDocumentDescription.Contains(TEXT("BlueprintDescription=\"Inspector path\"")));
+	TestTrue(TEXT("Document inspection should include authored variable names."), EditorDocumentDescription.Contains(TEXT("Counter")));
+	TestTrue(TEXT("Document inspection should include authored node descriptors."), EditorDocumentDescription.Contains(TEXT("Test.Special")));
+
+	const FString NamespaceDocumentJson = Vergil::SerializeGraphDocument(InspectDocument, false);
+	const FString EditorDocumentJson = EditorSubsystem->SerializeDocument(InspectDocument, false);
+	const FString AgentDocumentJson = AgentSubsystem->InspectDocumentAsJson(InspectDocument, false);
+	TestEqual(TEXT("Editor document JSON should mirror the namespace helper."), EditorDocumentJson, NamespaceDocumentJson);
+	TestEqual(TEXT("Agent document JSON should mirror the namespace helper."), AgentDocumentJson, NamespaceDocumentJson);
+	TestTrue(TEXT("Serialized documents should advertise the document format marker."), NamespaceDocumentJson.Contains(TEXT("\"format\":\"Vergil.GraphDocument\"")));
+	TestTrue(TEXT("Serialized documents should include Blueprint metadata."), NamespaceDocumentJson.Contains(TEXT("\"BlueprintDescription\":\"Inspector path\"")));
+	TestTrue(TEXT("Serialized documents should include authored node metadata."), NamespaceDocumentJson.Contains(TEXT("\"InspectorKey\":\"InspectorValue\"")));
+
+	FVergilCompilerCommand InspectMetadataCommand;
+	InspectMetadataCommand.Type = EVergilCommandType::SetBlueprintMetadata;
+	InspectMetadataCommand.Name = TEXT("BlueprintDescription");
+	InspectMetadataCommand.StringValue = TEXT("Inspector command plan");
+
+	FVergilCompilerCommand InspectCompileCommand;
+	InspectCompileCommand.Type = EVergilCommandType::CompileBlueprint;
+
+	const TArray<FVergilCompilerCommand> InspectCommands = { InspectMetadataCommand, InspectCompileCommand };
+	const FString NamespaceCommandPlanDescription = Vergil::DescribeCommandPlan(InspectCommands);
+	TestTrue(TEXT("Command-plan inspection should include indexed output."), NamespaceCommandPlanDescription.Contains(TEXT("0: SetBlueprintMetadata")));
+	TestEqual(TEXT("Editor command-plan inspection should mirror the namespace helper."), EditorSubsystem->DescribeCommandPlan(InspectCommands), NamespaceCommandPlanDescription);
+	TestEqual(TEXT("Agent command-plan inspection should mirror the namespace helper."), AgentSubsystem->DescribeCommandPlan(InspectCommands), NamespaceCommandPlanDescription);
+
+	const FString NamespaceCommandPlanJson = Vergil::SerializeCommandPlan(InspectCommands, false);
+	TestEqual(TEXT("Editor command-plan JSON should mirror the namespace helper."), EditorSubsystem->SerializeCommandPlan(InspectCommands, false), NamespaceCommandPlanJson);
+	TestEqual(TEXT("Agent command-plan JSON should mirror the namespace helper."), AgentSubsystem->InspectCommandPlanAsJson(InspectCommands, false), NamespaceCommandPlanJson);
+	TestTrue(TEXT("Serialized command plans should advertise the command-plan format marker."), NamespaceCommandPlanJson.Contains(TEXT("\"format\":\"Vergil.CommandPlan\"")));
+
+	TArray<FVergilDiagnostic> InspectDiagnostics;
+	const FGuid WarningSourceId = FGuid::NewGuid();
+	InspectDiagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Info, TEXT("InspectorInfo"), TEXT("Informational inspector diagnostic")));
+	InspectDiagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Warning, TEXT("InspectorWarning"), TEXT("Warning inspector diagnostic"), WarningSourceId));
+
+	const FString NamespaceDiagnosticsDescription = Vergil::DescribeDiagnostics(InspectDiagnostics);
+	const FString EditorDiagnosticsDescription = EditorSubsystem->DescribeDiagnostics(InspectDiagnostics);
+	const FString AgentDiagnosticsDescription = AgentSubsystem->DescribeDiagnostics(InspectDiagnostics);
+	TestEqual(TEXT("Editor diagnostic inspection should mirror the namespace helper."), EditorDiagnosticsDescription, NamespaceDiagnosticsDescription);
+	TestEqual(TEXT("Agent diagnostic inspection should mirror the namespace helper."), AgentDiagnosticsDescription, NamespaceDiagnosticsDescription);
+	TestTrue(TEXT("Diagnostic inspection should include the warning code."), NamespaceDiagnosticsDescription.Contains(TEXT("InspectorWarning")));
+	TestTrue(TEXT("Diagnostic inspection should include the warning source id."), NamespaceDiagnosticsDescription.Contains(WarningSourceId.ToString(EGuidFormats::DigitsWithHyphensLower)));
+
+	const FString NamespaceDiagnosticsJson = Vergil::SerializeDiagnostics(InspectDiagnostics, false);
+	const FString EditorDiagnosticsJson = EditorSubsystem->SerializeDiagnostics(InspectDiagnostics, false);
+	const FString AgentDiagnosticsJson = AgentSubsystem->InspectDiagnosticsAsJson(InspectDiagnostics, false);
+	TestEqual(TEXT("Editor diagnostic JSON should mirror the namespace helper."), EditorDiagnosticsJson, NamespaceDiagnosticsJson);
+	TestEqual(TEXT("Agent diagnostic JSON should mirror the namespace helper."), AgentDiagnosticsJson, NamespaceDiagnosticsJson);
+	TestTrue(TEXT("Serialized diagnostics should advertise the diagnostics format marker."), NamespaceDiagnosticsJson.Contains(TEXT("\"format\":\"Vergil.Diagnostics\"")));
+	TestTrue(TEXT("Serialized diagnostics should include the warning source id."), NamespaceDiagnosticsJson.Contains(WarningSourceId.ToString(EGuidFormats::DigitsWithHyphensLower)));
+
+	FVergilNodeRegistry::Get().Reset();
+	FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestSpecificNodeHandler, ESPMode::ThreadSafe>());
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created for compile-result inspection."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FVergilCompileResult CompileResult = EditorSubsystem->CompileDocument(Blueprint, InspectDocument, false, false, false);
+	TestTrue(TEXT("Inspector-tooling compile should succeed."), CompileResult.bSucceeded);
+	TestFalse(TEXT("Inspector-tooling compile should remain a dry run."), CompileResult.bApplied);
+	TestTrue(TEXT("Inspector-tooling compile should plan commands."), CompileResult.Commands.Num() > 0);
+	TestTrue(TEXT("Inspector-tooling compile should record pass data."), CompileResult.PassRecords.Num() > 0);
+	TestTrue(TEXT("Inspector-tooling compile should include schema migration diagnostics."), CompileResult.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Code == TEXT("SchemaMigrationApplied");
+	}));
+
+	const FString NamespaceCompileResultDescription = Vergil::DescribeCompileResult(CompileResult);
+	const FString EditorCompileResultDescription = EditorSubsystem->DescribeCompileResult(CompileResult);
+	const FString AgentCompileResultDescription = AgentSubsystem->DescribeCompileResult(CompileResult);
+	TestEqual(TEXT("Editor compile-result inspection should mirror the namespace helper."), EditorCompileResultDescription, NamespaceCompileResultDescription);
+	TestEqual(TEXT("Agent compile-result inspection should mirror the namespace helper."), AgentCompileResultDescription, NamespaceCompileResultDescription);
+	TestTrue(TEXT("Compile-result inspection should advertise the compile-result format marker."), NamespaceCompileResultDescription.Contains(TEXT("Vergil.CompileResult version=1")));
+	TestTrue(TEXT("Compile-result inspection should include compile summary text."), NamespaceCompileResultDescription.Contains(TEXT("compileSummary: Compile")));
+	TestTrue(TEXT("Compile-result inspection should include the schema-migration diagnostic."), NamespaceCompileResultDescription.Contains(TEXT("SchemaMigrationApplied")));
+	TestTrue(TEXT("Compile-result inspection should include planned command text."), NamespaceCompileResultDescription.Contains(TEXT("AddNode")));
+
+	const FString NamespaceCompileResultJson = Vergil::SerializeCompileResult(CompileResult, false);
+	const FString EditorCompileResultJson = EditorSubsystem->SerializeCompileResult(CompileResult, false);
+	const FString AgentCompileResultJson = AgentSubsystem->InspectCompileResultAsJson(CompileResult, false);
+	TestEqual(TEXT("Editor compile-result JSON should mirror the namespace helper."), EditorCompileResultJson, NamespaceCompileResultJson);
+	TestEqual(TEXT("Agent compile-result JSON should mirror the namespace helper."), AgentCompileResultJson, NamespaceCompileResultJson);
+	TestTrue(TEXT("Serialized compile results should advertise the compile-result format marker."), NamespaceCompileResultJson.Contains(TEXT("\"format\":\"Vergil.CompileResult\"")));
+	TestTrue(TEXT("Serialized compile results should embed diagnostics in the structured inspector payload."), NamespaceCompileResultJson.Contains(TEXT("\"diagnostics\":{\"format\":\"Vergil.Diagnostics\"")));
+	TestTrue(TEXT("Serialized compile results should embed the command-plan payload."), NamespaceCompileResultJson.Contains(TEXT("\"commandPlan\":{\"format\":\"Vergil.CommandPlan\"")));
+	TestTrue(TEXT("Serialized compile results should include pass records."), NamespaceCompileResultJson.Contains(TEXT("\"passRecords\"")));
+	TestTrue(TEXT("Serialized compile results should include the schema-migration diagnostic code."), NamespaceCompileResultJson.Contains(TEXT("SchemaMigrationApplied")));
+
+	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
 bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 {
 	FVergilNodeRegistry::Get().Reset();

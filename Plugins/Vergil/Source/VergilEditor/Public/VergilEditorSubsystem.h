@@ -35,6 +35,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FString SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, bool bPrettyPrint = true) const;
 
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeDocument(const FVergilGraphDocument& Document) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString SerializeDocument(const FVergilGraphDocument& Document, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString SerializeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeCompileResult(const FVergilCompileResult& Result) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString SerializeCompileResult(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Vergil")
 	FVergilCompileResult ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const;
 

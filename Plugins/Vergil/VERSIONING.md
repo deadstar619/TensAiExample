@@ -1,6 +1,6 @@
 # Vergil Versioning and Migration
 
-Vergil tracks the plugin release, document schema, serialized command-plan format, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
+Vergil tracks the plugin release, document schema, serialized command-plan format, document/diagnostic/compile-result inspection formats, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
 
 ## Current version surfaces
 
@@ -12,6 +12,12 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
   Source of truth: `Vergil::SchemaVersion`
 - Supported document schema migration steps: `1->2`, `2->3`
   Source of truth: `Vergil::GetSupportedSchemaMigrationPaths()`
+- Graph-document inspection format: `Vergil.GraphDocument` version `1`
+  Source of truth: `Vergil::GetDocumentInspectionFormatName()` and `Vergil::GetDocumentInspectionFormatVersion()`
+- Diagnostics inspection format: `Vergil.Diagnostics` version `1`
+  Source of truth: `Vergil::GetDiagnosticsInspectionFormatName()` and `Vergil::GetDiagnosticsInspectionFormatVersion()`
+- Compile-result inspection format: `Vergil.CompileResult` version `1`
+  Source of truth: `Vergil::GetCompileResultInspectionFormatName()` and `Vergil::GetCompileResultInspectionFormatVersion()`
 - Command-plan serialization format: `Vergil.CommandPlan` version `1`
   Source of truth: `Vergil::GetCommandPlanFormatName()` and `Vergil::GetCommandPlanFormatVersion()`
 - Supported-contract inspection manifest: `Vergil.ContractManifest` version `1`
@@ -22,7 +28,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - `MAJOR` changes when Vergil breaks a previously supported public contract in a way that older callers cannot consume without code or data changes.
 - `MINOR` changes when Vergil adds backward-compatible capabilities such as new supported document fields, descriptor families, command types, or inspection data.
 - `PATCH` changes when Vergil only fixes behavior, diagnostics, tests, tooling, or documentation without expanding or breaking the supported serialized contract surface.
-- Schema, command-plan, and inspection-manifest version numbers are not replacements for semantic versioning. They only version their own serialized formats.
+- Schema, command-plan, inspection, and inspection-manifest version numbers are not replacements for semantic versioning. They only version their own serialized formats.
 
 ## Migration policy
 
@@ -39,6 +45,9 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Bump the plugin semantic version for every release-facing change.
 - Bump the schema version only when the persisted `FVergilGraphDocument` contract changes.
 - Add an explicit migration step and automation coverage whenever a new schema version is introduced and legacy documents should continue working.
+- Bump the graph-document inspection format version only for incompatible `Vergil.GraphDocument` JSON shape changes.
+- Bump the diagnostics inspection format version only for incompatible `Vergil.Diagnostics` JSON shape changes.
+- Bump the compile-result inspection format version only for incompatible `Vergil.CompileResult` JSON shape changes.
 - Bump the command-plan format version only for incompatible serialized command-plan changes.
 - Bump the inspection-manifest version only for incompatible `Vergil.ContractManifest` JSON shape changes. Additive fields may remain on the same manifest version.
 
@@ -47,6 +56,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Update `Vergil::SemanticVersionMajor`, `SemanticVersionMinor`, and `SemanticVersionPatch`.
 - Keep `Vergil.uplugin` `VersionName` and `Version` aligned with `VergilVersion.h`.
 - If the document schema changed, update `Vergil::SchemaVersion`, add the forward migration step, and extend migration automation.
+- If graph-document, diagnostics, or compile-result inspection JSON changed incompatibly, update the corresponding inspection format version helper and extend inspection coverage.
 - If serialized command plans changed incompatibly, update the command-plan format version and deserializer coverage.
 - If the supported-contract manifest changed incompatibly, update its manifest version and inspection coverage.
 - Update `README.md`, `SUPPORTED_DESCRIPTOR_CONTRACTS.md`, and `ROADMAP.md` when the public versioning or migration contract changes.

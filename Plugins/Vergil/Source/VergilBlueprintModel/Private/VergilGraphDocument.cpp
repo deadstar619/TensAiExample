@@ -1,7 +1,816 @@
 #include "VergilGraphDocument.h"
 
+#include "Policies/CondensedJsonPrintPolicy.h"
+#include "Policies/PrettyJsonPrintPolicy.h"
+#include "Serialization/JsonWriter.h"
+
 namespace
 {
+	inline constexpr TCHAR DocumentInspectionFormatName[] = TEXT("Vergil.GraphDocument");
+	inline constexpr int32 DocumentInspectionFormatVersion = 1;
+
+	const TCHAR* LexBoolString(const bool bValue)
+	{
+		return bValue ? TEXT("true") : TEXT("false");
+	}
+
+	FString LexNameString(const FName Value)
+	{
+		return Value.IsNone() ? FString() : Value.ToString();
+	}
+
+	FString LexGuidString(const FGuid& Value)
+	{
+		return Value.IsValid() ? Value.ToString(EGuidFormats::DigitsWithHyphensLower) : FString();
+	}
+
+	FString LexOptionalNameString(const FName Value)
+	{
+		return Value.IsNone() ? FString(TEXT("<none>")) : Value.ToString();
+	}
+
+	FString EscapeDisplayValue(const FString& Value)
+	{
+		FString EscapedValue = Value;
+		EscapedValue.ReplaceInline(TEXT("\r"), TEXT("\\r"));
+		EscapedValue.ReplaceInline(TEXT("\n"), TEXT("\\n"));
+		return EscapedValue;
+	}
+
+	const TCHAR* LexPinDirectionString(const EVergilPinDirection Direction)
+	{
+		switch (Direction)
+		{
+		case EVergilPinDirection::Input:
+			return TEXT("Input");
+
+		case EVergilPinDirection::Output:
+			return TEXT("Output");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* LexNodeKindString(const EVergilNodeKind Kind)
+	{
+		switch (Kind)
+		{
+		case EVergilNodeKind::Event:
+			return TEXT("Event");
+
+		case EVergilNodeKind::Call:
+			return TEXT("Call");
+
+		case EVergilNodeKind::VariableGet:
+			return TEXT("VariableGet");
+
+		case EVergilNodeKind::VariableSet:
+			return TEXT("VariableSet");
+
+		case EVergilNodeKind::ControlFlow:
+			return TEXT("ControlFlow");
+
+		case EVergilNodeKind::Macro:
+			return TEXT("Macro");
+
+		case EVergilNodeKind::Comment:
+			return TEXT("Comment");
+
+		case EVergilNodeKind::Native:
+			return TEXT("Native");
+
+		case EVergilNodeKind::Custom:
+			return TEXT("Custom");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* LexVariableContainerTypeString(const EVergilVariableContainerType ContainerType)
+	{
+		switch (ContainerType)
+		{
+		case EVergilVariableContainerType::None:
+			return TEXT("None");
+
+		case EVergilVariableContainerType::Array:
+			return TEXT("Array");
+
+		case EVergilVariableContainerType::Set:
+			return TEXT("Set");
+
+		case EVergilVariableContainerType::Map:
+			return TEXT("Map");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* LexFunctionAccessSpecifierString(const EVergilFunctionAccessSpecifier AccessSpecifier)
+	{
+		switch (AccessSpecifier)
+		{
+		case EVergilFunctionAccessSpecifier::Public:
+			return TEXT("Public");
+
+		case EVergilFunctionAccessSpecifier::Protected:
+			return TEXT("Protected");
+
+		case EVergilFunctionAccessSpecifier::Private:
+			return TEXT("Private");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	FString DescribeNameValueMap(const TMap<FName, FString>& Values)
+	{
+		if (Values.Num() == 0)
+		{
+			return TEXT("{}");
+		}
+
+		TArray<FName> Keys;
+		Values.GetKeys(Keys);
+		Keys.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		TArray<FString> Tokens;
+		Tokens.Reserve(Keys.Num());
+		for (const FName Key : Keys)
+		{
+			Tokens.Add(FString::Printf(
+				TEXT("%s=\"%s\""),
+				Key.IsNone() ? TEXT("<none>") : *Key.ToString(),
+				*EscapeDisplayValue(Values.FindRef(Key))));
+		}
+
+		return FString::Printf(TEXT("{%s}"), *FString::Join(Tokens, TEXT(", ")));
+	}
+
+	FString DescribeLeafType(const FName PinCategory, const FString& ObjectPath)
+	{
+		if (PinCategory.IsNone())
+		{
+			return TEXT("<none>");
+		}
+
+		const FString TrimmedObjectPath = ObjectPath.TrimStartAndEnd();
+		return TrimmedObjectPath.IsEmpty()
+			? PinCategory.ToString()
+			: FString::Printf(TEXT("%s:%s"), *PinCategory.ToString(), *TrimmedObjectPath);
+	}
+
+	FString DescribeTypeReference(const FVergilVariableTypeReference& Type)
+	{
+		const FString BaseType = DescribeLeafType(Type.PinCategory, Type.ObjectPath);
+		switch (Type.ContainerType)
+		{
+		case EVergilVariableContainerType::Array:
+			return FString::Printf(TEXT("array<%s>"), *BaseType);
+
+		case EVergilVariableContainerType::Set:
+			return FString::Printf(TEXT("set<%s>"), *BaseType);
+
+		case EVergilVariableContainerType::Map:
+			return FString::Printf(
+				TEXT("map<%s, %s>"),
+				*BaseType,
+				*DescribeLeafType(Type.ValuePinCategory, Type.ValueObjectPath));
+
+		case EVergilVariableContainerType::None:
+		default:
+			return BaseType;
+		}
+	}
+
+	FString DescribeVariableFlags(const FVergilVariableFlags& Flags)
+	{
+		TArray<FString> Tokens;
+		if (Flags.bInstanceEditable)
+		{
+			Tokens.Add(TEXT("InstanceEditable"));
+		}
+		if (Flags.bBlueprintReadOnly)
+		{
+			Tokens.Add(TEXT("BlueprintReadOnly"));
+		}
+		if (Flags.bExposeOnSpawn)
+		{
+			Tokens.Add(TEXT("ExposeOnSpawn"));
+		}
+		if (Flags.bPrivate)
+		{
+			Tokens.Add(TEXT("Private"));
+		}
+		if (Flags.bTransient)
+		{
+			Tokens.Add(TEXT("Transient"));
+		}
+		if (Flags.bSaveGame)
+		{
+			Tokens.Add(TEXT("SaveGame"));
+		}
+		if (Flags.bAdvancedDisplay)
+		{
+			Tokens.Add(TEXT("AdvancedDisplay"));
+		}
+		if (Flags.bDeprecated)
+		{
+			Tokens.Add(TEXT("Deprecated"));
+		}
+		if (Flags.bExposeToCinematics)
+		{
+			Tokens.Add(TEXT("ExposeToCinematics"));
+		}
+
+		return Tokens.Num() == 0
+			? TEXT("{}")
+			: FString::Printf(TEXT("{%s}"), *FString::Join(Tokens, TEXT(", ")));
+	}
+
+	FString DescribeFunctionParameter(const FVergilFunctionParameterDefinition& Parameter)
+	{
+		return FString::Printf(TEXT("%s:%s"), *LexOptionalNameString(Parameter.Name), *DescribeTypeReference(Parameter.Type));
+	}
+
+	FString DescribeMacroParameter(const FVergilMacroParameterDefinition& Parameter)
+	{
+		return Parameter.bIsExec
+			? FString::Printf(TEXT("%s:exec"), *LexOptionalNameString(Parameter.Name))
+			: FString::Printf(TEXT("%s:%s"), *LexOptionalNameString(Parameter.Name), *DescribeTypeReference(Parameter.Type));
+	}
+
+	FString DescribeDispatcherParameter(const FVergilDispatcherParameter& Parameter)
+	{
+		FString Description = FString::Printf(
+			TEXT("%s:%s"),
+			*LexOptionalNameString(Parameter.Name),
+			*DescribeLeafType(Parameter.PinCategory, Parameter.ObjectPath));
+		if (Parameter.bIsArray)
+		{
+			Description = FString::Printf(TEXT("array<%s>"), *Description);
+		}
+
+		if (!Parameter.PinSubCategory.IsNone())
+		{
+			Description += FString::Printf(TEXT(" sub=%s"), *Parameter.PinSubCategory.ToString());
+		}
+
+		return Description;
+	}
+
+	FString DescribeGraphPin(const FVergilGraphPin& Pin)
+	{
+		TArray<FString> Tokens;
+		Tokens.Add(LexOptionalNameString(Pin.Name));
+		Tokens.Add(LexPinDirectionString(Pin.Direction));
+		if (Pin.bIsExec)
+		{
+			Tokens.Add(TEXT("exec"));
+		}
+		if (Pin.bIsArray)
+		{
+			Tokens.Add(TEXT("array"));
+		}
+		if (!Pin.TypeName.IsNone())
+		{
+			Tokens.Add(FString::Printf(TEXT("type=%s"), *Pin.TypeName.ToString()));
+		}
+		if (!Pin.DefaultValue.IsEmpty())
+		{
+			Tokens.Add(FString::Printf(TEXT("default=\"%s\""), *EscapeDisplayValue(Pin.DefaultValue)));
+		}
+		if (Pin.Id.IsValid())
+		{
+			Tokens.Add(FString::Printf(TEXT("pinId=%s"), *LexGuidString(Pin.Id)));
+		}
+
+		return FString::Join(Tokens, TEXT(" "));
+	}
+
+	FString DescribeGraphNode(const FVergilGraphNode& Node)
+	{
+		TArray<FString> Tokens;
+		Tokens.Add(FString::Printf(TEXT("id=%s"), *LexGuidString(Node.Id)));
+		Tokens.Add(FString::Printf(TEXT("kind=%s"), LexNodeKindString(Node.Kind)));
+		Tokens.Add(FString::Printf(TEXT("descriptor=%s"), *LexOptionalNameString(Node.Descriptor)));
+		Tokens.Add(FString::Printf(TEXT("position=(%.2f, %.2f)"), Node.Position.X, Node.Position.Y));
+
+		if (Node.Pins.Num() > 0)
+		{
+			TArray<FString> PinTokens;
+			PinTokens.Reserve(Node.Pins.Num());
+			for (const FVergilGraphPin& Pin : Node.Pins)
+			{
+				PinTokens.Add(DescribeGraphPin(Pin));
+			}
+
+			Tokens.Add(FString::Printf(TEXT("pins=[%s]"), *FString::Join(PinTokens, TEXT(", "))));
+		}
+		else
+		{
+			Tokens.Add(TEXT("pins=[]"));
+		}
+
+		Tokens.Add(FString::Printf(TEXT("metadata=%s"), *DescribeNameValueMap(Node.Metadata)));
+		return FString::Join(Tokens, TEXT(" "));
+	}
+
+	FString DescribeGraphEdge(const FVergilGraphEdge& Edge)
+	{
+		return FString::Printf(
+			TEXT("id=%s source=%s/%s target=%s/%s"),
+			*LexGuidString(Edge.Id),
+			*LexGuidString(Edge.SourceNodeId),
+			*LexGuidString(Edge.SourcePinId),
+			*LexGuidString(Edge.TargetNodeId),
+			*LexGuidString(Edge.TargetPinId));
+	}
+
+	FString DescribeComponentTransform(const FVergilComponentTransformDefinition& Transform)
+	{
+		TArray<FString> Tokens;
+		if (Transform.bHasRelativeLocation)
+		{
+			Tokens.Add(FString::Printf(
+				TEXT("location=(%.2f, %.2f, %.2f)"),
+				Transform.RelativeLocation.X,
+				Transform.RelativeLocation.Y,
+				Transform.RelativeLocation.Z));
+		}
+		if (Transform.bHasRelativeRotation)
+		{
+			Tokens.Add(FString::Printf(
+				TEXT("rotation=(%.2f, %.2f, %.2f)"),
+				Transform.RelativeRotation.Roll,
+				Transform.RelativeRotation.Pitch,
+				Transform.RelativeRotation.Yaw));
+		}
+		if (Transform.bHasRelativeScale)
+		{
+			Tokens.Add(FString::Printf(
+				TEXT("scale=(%.2f, %.2f, %.2f)"),
+				Transform.RelativeScale3D.X,
+				Transform.RelativeScale3D.Y,
+				Transform.RelativeScale3D.Z));
+		}
+
+		return Tokens.Num() == 0
+			? TEXT("{}")
+			: FString::Printf(TEXT("{%s}"), *FString::Join(Tokens, TEXT(", ")));
+	}
+
+	FString DescribeDispatcherDefinition(const FVergilDispatcherDefinition& Dispatcher)
+	{
+		TArray<FString> ParameterTokens;
+		ParameterTokens.Reserve(Dispatcher.Parameters.Num());
+		for (const FVergilDispatcherParameter& Parameter : Dispatcher.Parameters)
+		{
+			ParameterTokens.Add(DescribeDispatcherParameter(Parameter));
+		}
+
+		return FString::Printf(
+			TEXT("%s parameters=[%s]"),
+			*LexOptionalNameString(Dispatcher.Name),
+			*FString::Join(ParameterTokens, TEXT(", ")));
+	}
+
+	FString DescribeVariableDefinition(const FVergilVariableDefinition& Variable)
+	{
+		return FString::Printf(
+			TEXT("%s type=%s category=\"%s\" flags=%s metadata=%s default=\"%s\""),
+			*LexOptionalNameString(Variable.Name),
+			*DescribeTypeReference(Variable.Type),
+			*EscapeDisplayValue(Variable.Category),
+			*DescribeVariableFlags(Variable.Flags),
+			*DescribeNameValueMap(Variable.Metadata),
+			*EscapeDisplayValue(Variable.DefaultValue));
+	}
+
+	FString DescribeFunctionDefinition(const FVergilFunctionDefinition& Function)
+	{
+		TArray<FString> InputTokens;
+		InputTokens.Reserve(Function.Inputs.Num());
+		for (const FVergilFunctionParameterDefinition& Input : Function.Inputs)
+		{
+			InputTokens.Add(DescribeFunctionParameter(Input));
+		}
+
+		TArray<FString> OutputTokens;
+		OutputTokens.Reserve(Function.Outputs.Num());
+		for (const FVergilFunctionParameterDefinition& Output : Function.Outputs)
+		{
+			OutputTokens.Add(DescribeFunctionParameter(Output));
+		}
+
+		return FString::Printf(
+			TEXT("%s pure=%s access=%s inputs=[%s] outputs=[%s]"),
+			*LexOptionalNameString(Function.Name),
+			LexBoolString(Function.bPure),
+			LexFunctionAccessSpecifierString(Function.AccessSpecifier),
+			*FString::Join(InputTokens, TEXT(", ")),
+			*FString::Join(OutputTokens, TEXT(", ")));
+	}
+
+	FString DescribeMacroDefinition(const FVergilMacroDefinition& Macro)
+	{
+		TArray<FString> InputTokens;
+		InputTokens.Reserve(Macro.Inputs.Num());
+		for (const FVergilMacroParameterDefinition& Input : Macro.Inputs)
+		{
+			InputTokens.Add(DescribeMacroParameter(Input));
+		}
+
+		TArray<FString> OutputTokens;
+		OutputTokens.Reserve(Macro.Outputs.Num());
+		for (const FVergilMacroParameterDefinition& Output : Macro.Outputs)
+		{
+			OutputTokens.Add(DescribeMacroParameter(Output));
+		}
+
+		return FString::Printf(
+			TEXT("%s inputs=[%s] outputs=[%s]"),
+			*LexOptionalNameString(Macro.Name),
+			*FString::Join(InputTokens, TEXT(", ")),
+			*FString::Join(OutputTokens, TEXT(", ")));
+	}
+
+	FString DescribeComponentDefinition(const FVergilComponentDefinition& Component)
+	{
+		const FString TrimmedClassPath = Component.ComponentClassPath.TrimStartAndEnd();
+		return FString::Printf(
+			TEXT("%s class=%s parent=%s socket=%s transform=%s templateProperties=%s"),
+			*LexOptionalNameString(Component.Name),
+			TrimmedClassPath.IsEmpty() ? TEXT("<none>") : *TrimmedClassPath,
+			*LexOptionalNameString(Component.ParentComponentName),
+			*LexOptionalNameString(Component.AttachSocketName),
+			*DescribeComponentTransform(Component.RelativeTransform),
+			*DescribeNameValueMap(Component.TemplateProperties));
+	}
+
+	FString DescribeInterfaceDefinition(const FVergilInterfaceDefinition& InterfaceDefinition)
+	{
+		const FString TrimmedInterfacePath = InterfaceDefinition.InterfaceClassPath.TrimStartAndEnd();
+		return TrimmedInterfacePath.IsEmpty() ? TEXT("<none>") : TrimmedInterfacePath;
+	}
+
+	template <typename PrintPolicy>
+	void WriteNameValueMapJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const TMap<FName, FString>& Values)
+	{
+		Writer.WriteObjectStart(FieldName);
+
+		TArray<FName> Keys;
+		Values.GetKeys(Keys);
+		Keys.Sort([](const FName& A, const FName& B)
+		{
+			return A.LexicalLess(B);
+		});
+
+		for (const FName Key : Keys)
+		{
+			Writer.WriteValue(Key.ToString(), Values.FindRef(Key));
+		}
+
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteVector2DJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVector2D& Value)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("x"), Value.X);
+		Writer.WriteValue(TEXT("y"), Value.Y);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteVectorJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVector& Value)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("x"), Value.X);
+		Writer.WriteValue(TEXT("y"), Value.Y);
+		Writer.WriteValue(TEXT("z"), Value.Z);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteRotatorJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FRotator& Value)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("roll"), Value.Roll);
+		Writer.WriteValue(TEXT("pitch"), Value.Pitch);
+		Writer.WriteValue(TEXT("yaw"), Value.Yaw);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteVariableTypeReferenceJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilVariableTypeReference& Type)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("pinCategory"), LexNameString(Type.PinCategory));
+		Writer.WriteValue(TEXT("pinSubCategory"), LexNameString(Type.PinSubCategory));
+		Writer.WriteValue(TEXT("objectPath"), Type.ObjectPath);
+		Writer.WriteValue(TEXT("containerType"), LexVariableContainerTypeString(Type.ContainerType));
+		Writer.WriteValue(TEXT("valuePinCategory"), LexNameString(Type.ValuePinCategory));
+		Writer.WriteValue(TEXT("valuePinSubCategory"), LexNameString(Type.ValuePinSubCategory));
+		Writer.WriteValue(TEXT("valueObjectPath"), Type.ValueObjectPath);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteVariableFlagsJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilVariableFlags& Flags)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("instanceEditable"), Flags.bInstanceEditable);
+		Writer.WriteValue(TEXT("blueprintReadOnly"), Flags.bBlueprintReadOnly);
+		Writer.WriteValue(TEXT("exposeOnSpawn"), Flags.bExposeOnSpawn);
+		Writer.WriteValue(TEXT("private"), Flags.bPrivate);
+		Writer.WriteValue(TEXT("transient"), Flags.bTransient);
+		Writer.WriteValue(TEXT("saveGame"), Flags.bSaveGame);
+		Writer.WriteValue(TEXT("advancedDisplay"), Flags.bAdvancedDisplay);
+		Writer.WriteValue(TEXT("deprecated"), Flags.bDeprecated);
+		Writer.WriteValue(TEXT("exposeToCinematics"), Flags.bExposeToCinematics);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteGraphPinJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilGraphPin& Pin)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("id"), LexGuidString(Pin.Id));
+		Writer.WriteValue(TEXT("name"), LexNameString(Pin.Name));
+		Writer.WriteValue(TEXT("direction"), LexPinDirectionString(Pin.Direction));
+		Writer.WriteValue(TEXT("typeName"), LexNameString(Pin.TypeName));
+		Writer.WriteValue(TEXT("isExec"), Pin.bIsExec);
+		Writer.WriteValue(TEXT("isArray"), Pin.bIsArray);
+		Writer.WriteValue(TEXT("defaultValue"), Pin.DefaultValue);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteGraphNodeJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilGraphNode& Node)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("id"), LexGuidString(Node.Id));
+		Writer.WriteValue(TEXT("kind"), LexNodeKindString(Node.Kind));
+		Writer.WriteValue(TEXT("descriptor"), LexNameString(Node.Descriptor));
+		WriteVector2DJson(Writer, TEXT("position"), Node.Position);
+
+		Writer.WriteArrayStart(TEXT("pins"));
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			WriteGraphPinJson(Writer, Pin);
+		}
+		Writer.WriteArrayEnd();
+
+		WriteNameValueMapJson(Writer, TEXT("metadata"), Node.Metadata);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteGraphEdgeJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilGraphEdge& Edge)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("id"), LexGuidString(Edge.Id));
+		Writer.WriteValue(TEXT("sourceNodeId"), LexGuidString(Edge.SourceNodeId));
+		Writer.WriteValue(TEXT("sourcePinId"), LexGuidString(Edge.SourcePinId));
+		Writer.WriteValue(TEXT("targetNodeId"), LexGuidString(Edge.TargetNodeId));
+		Writer.WriteValue(TEXT("targetPinId"), LexGuidString(Edge.TargetPinId));
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDispatcherParameterJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilDispatcherParameter& Parameter)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Parameter.Name));
+		Writer.WriteValue(TEXT("pinCategory"), LexNameString(Parameter.PinCategory));
+		Writer.WriteValue(TEXT("pinSubCategory"), LexNameString(Parameter.PinSubCategory));
+		Writer.WriteValue(TEXT("objectPath"), Parameter.ObjectPath);
+		Writer.WriteValue(TEXT("isArray"), Parameter.bIsArray);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDispatcherDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilDispatcherDefinition& Dispatcher)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Dispatcher.Name));
+		Writer.WriteArrayStart(TEXT("parameters"));
+		for (const FVergilDispatcherParameter& Parameter : Dispatcher.Parameters)
+		{
+			WriteDispatcherParameterJson(Writer, Parameter);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteVariableDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilVariableDefinition& Variable)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Variable.Name));
+		WriteVariableTypeReferenceJson(Writer, TEXT("type"), Variable.Type);
+		WriteVariableFlagsJson(Writer, TEXT("flags"), Variable.Flags);
+		Writer.WriteValue(TEXT("category"), Variable.Category);
+		WriteNameValueMapJson(Writer, TEXT("metadata"), Variable.Metadata);
+		Writer.WriteValue(TEXT("defaultValue"), Variable.DefaultValue);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteFunctionParameterDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilFunctionParameterDefinition& Parameter)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Parameter.Name));
+		WriteVariableTypeReferenceJson(Writer, TEXT("type"), Parameter.Type);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteFunctionDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilFunctionDefinition& Function)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Function.Name));
+		Writer.WriteValue(TEXT("pure"), Function.bPure);
+		Writer.WriteValue(TEXT("accessSpecifier"), LexFunctionAccessSpecifierString(Function.AccessSpecifier));
+		Writer.WriteArrayStart(TEXT("inputs"));
+		for (const FVergilFunctionParameterDefinition& Input : Function.Inputs)
+		{
+			WriteFunctionParameterDefinitionJson(Writer, Input);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteArrayStart(TEXT("outputs"));
+		for (const FVergilFunctionParameterDefinition& Output : Function.Outputs)
+		{
+			WriteFunctionParameterDefinitionJson(Writer, Output);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteMacroParameterDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilMacroParameterDefinition& Parameter)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Parameter.Name));
+		Writer.WriteValue(TEXT("isExec"), Parameter.bIsExec);
+		WriteVariableTypeReferenceJson(Writer, TEXT("type"), Parameter.Type);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteMacroDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilMacroDefinition& Macro)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Macro.Name));
+		Writer.WriteArrayStart(TEXT("inputs"));
+		for (const FVergilMacroParameterDefinition& Input : Macro.Inputs)
+		{
+			WriteMacroParameterDefinitionJson(Writer, Input);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteArrayStart(TEXT("outputs"));
+		for (const FVergilMacroParameterDefinition& Output : Macro.Outputs)
+		{
+			WriteMacroParameterDefinitionJson(Writer, Output);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteComponentTransformJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilComponentTransformDefinition& Transform)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("hasRelativeLocation"), Transform.bHasRelativeLocation);
+		WriteVectorJson(Writer, TEXT("relativeLocation"), Transform.RelativeLocation);
+		Writer.WriteValue(TEXT("hasRelativeRotation"), Transform.bHasRelativeRotation);
+		WriteRotatorJson(Writer, TEXT("relativeRotation"), Transform.RelativeRotation);
+		Writer.WriteValue(TEXT("hasRelativeScale"), Transform.bHasRelativeScale);
+		WriteVectorJson(Writer, TEXT("relativeScale3D"), Transform.RelativeScale3D);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteComponentDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilComponentDefinition& Component)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("name"), LexNameString(Component.Name));
+		Writer.WriteValue(TEXT("componentClassPath"), Component.ComponentClassPath);
+		Writer.WriteValue(TEXT("parentComponentName"), LexNameString(Component.ParentComponentName));
+		Writer.WriteValue(TEXT("attachSocketName"), LexNameString(Component.AttachSocketName));
+		WriteComponentTransformJson(Writer, TEXT("relativeTransform"), Component.RelativeTransform);
+		WriteNameValueMapJson(Writer, TEXT("templateProperties"), Component.TemplateProperties);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteInterfaceDefinitionJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilInterfaceDefinition& InterfaceDefinition)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("interfaceClassPath"), InterfaceDefinition.InterfaceClassPath);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteGraphDocumentJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilGraphDocument& Document)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("format"), DocumentInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), DocumentInspectionFormatVersion);
+		Writer.WriteValue(TEXT("schemaVersion"), Document.SchemaVersion);
+		Writer.WriteValue(TEXT("blueprintPath"), Document.BlueprintPath);
+		WriteNameValueMapJson(Writer, TEXT("metadata"), Document.Metadata);
+
+		Writer.WriteArrayStart(TEXT("variables"));
+		for (const FVergilVariableDefinition& Variable : Document.Variables)
+		{
+			WriteVariableDefinitionJson(Writer, Variable);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("functions"));
+		for (const FVergilFunctionDefinition& Function : Document.Functions)
+		{
+			WriteFunctionDefinitionJson(Writer, Function);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("dispatchers"));
+		for (const FVergilDispatcherDefinition& Dispatcher : Document.Dispatchers)
+		{
+			WriteDispatcherDefinitionJson(Writer, Dispatcher);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("macros"));
+		for (const FVergilMacroDefinition& Macro : Document.Macros)
+		{
+			WriteMacroDefinitionJson(Writer, Macro);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("components"));
+		for (const FVergilComponentDefinition& Component : Document.Components)
+		{
+			WriteComponentDefinitionJson(Writer, Component);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("interfaces"));
+		for (const FVergilInterfaceDefinition& InterfaceDefinition : Document.Interfaces)
+		{
+			WriteInterfaceDefinitionJson(Writer, InterfaceDefinition);
+		}
+		Writer.WriteArrayEnd();
+
+		WriteNameValueMapJson(Writer, TEXT("classDefaults"), Document.ClassDefaults);
+
+		Writer.WriteArrayStart(TEXT("constructionScriptNodes"));
+		for (const FVergilGraphNode& Node : Document.ConstructionScriptNodes)
+		{
+			WriteGraphNodeJson(Writer, Node);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("constructionScriptEdges"));
+		for (const FVergilGraphEdge& Edge : Document.ConstructionScriptEdges)
+		{
+			WriteGraphEdgeJson(Writer, Edge);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("nodes"));
+		for (const FVergilGraphNode& Node : Document.Nodes)
+		{
+			WriteGraphNodeJson(Writer, Node);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("edges"));
+		for (const FVergilGraphEdge& Edge : Document.Edges)
+		{
+			WriteGraphEdgeJson(Writer, Edge);
+		}
+		Writer.WriteArrayEnd();
+
+		Writer.WriteArrayStart(TEXT("tags"));
+		for (const FName Tag : Document.Tags)
+		{
+			Writer.WriteValue(LexNameString(Tag));
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
 	void AddDiagnostic(
 		TArray<FVergilDiagnostic>* OutDiagnostics,
 		const EVergilDiagnosticSeverity Severity,
@@ -1118,6 +1927,199 @@ bool FVergilGraphDocument::IsStructurallyValid(TArray<FVergilDiagnostic>* OutDia
 	}
 
 	return bIsValid;
+}
+
+FString Vergil::GetDocumentInspectionFormatName()
+{
+	return DocumentInspectionFormatName;
+}
+
+int32 Vergil::GetDocumentInspectionFormatVersion()
+{
+	return DocumentInspectionFormatVersion;
+}
+
+FString Vergil::DescribeGraphDocument(const FVergilGraphDocument& Document)
+{
+	const FString TrimmedBlueprintPath = Document.BlueprintPath.TrimStartAndEnd();
+	TArray<FString> Lines;
+	Lines.Add(FString::Printf(
+		TEXT("%s version=%d schema=%d blueprint=%s metadata=%d variables=%d functions=%d dispatchers=%d macros=%d components=%d interfaces=%d classDefaults=%d constructionScript=%d/%d graph=%d/%d tags=%d"),
+		DocumentInspectionFormatName,
+		DocumentInspectionFormatVersion,
+		Document.SchemaVersion,
+		TrimmedBlueprintPath.IsEmpty() ? TEXT("<none>") : *TrimmedBlueprintPath,
+		Document.Metadata.Num(),
+		Document.Variables.Num(),
+		Document.Functions.Num(),
+		Document.Dispatchers.Num(),
+		Document.Macros.Num(),
+		Document.Components.Num(),
+		Document.Interfaces.Num(),
+		Document.ClassDefaults.Num(),
+		Document.ConstructionScriptNodes.Num(),
+		Document.ConstructionScriptEdges.Num(),
+		Document.Nodes.Num(),
+		Document.Edges.Num(),
+		Document.Tags.Num()));
+
+	auto AppendSection = [&Lines](const TCHAR* Title, const TArray<FString>& Entries)
+	{
+		if (Entries.Num() == 0)
+		{
+			return;
+		}
+
+		Lines.Add(Title);
+		for (int32 EntryIndex = 0; EntryIndex < Entries.Num(); ++EntryIndex)
+		{
+			Lines.Add(FString::Printf(TEXT("  %d: %s"), EntryIndex, *Entries[EntryIndex]));
+		}
+	};
+
+	if (Document.Metadata.Num() > 0)
+	{
+		Lines.Add(FString::Printf(TEXT("metadata: %s"), *DescribeNameValueMap(Document.Metadata)));
+	}
+
+	if (Document.ClassDefaults.Num() > 0)
+	{
+		Lines.Add(FString::Printf(TEXT("classDefaults: %s"), *DescribeNameValueMap(Document.ClassDefaults)));
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Variables.Num());
+		for (const FVergilVariableDefinition& Variable : Document.Variables)
+		{
+			Entries.Add(DescribeVariableDefinition(Variable));
+		}
+		AppendSection(TEXT("variables:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Functions.Num());
+		for (const FVergilFunctionDefinition& Function : Document.Functions)
+		{
+			Entries.Add(DescribeFunctionDefinition(Function));
+		}
+		AppendSection(TEXT("functions:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Dispatchers.Num());
+		for (const FVergilDispatcherDefinition& Dispatcher : Document.Dispatchers)
+		{
+			Entries.Add(DescribeDispatcherDefinition(Dispatcher));
+		}
+		AppendSection(TEXT("dispatchers:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Macros.Num());
+		for (const FVergilMacroDefinition& Macro : Document.Macros)
+		{
+			Entries.Add(DescribeMacroDefinition(Macro));
+		}
+		AppendSection(TEXT("macros:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Components.Num());
+		for (const FVergilComponentDefinition& Component : Document.Components)
+		{
+			Entries.Add(DescribeComponentDefinition(Component));
+		}
+		AppendSection(TEXT("components:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Interfaces.Num());
+		for (const FVergilInterfaceDefinition& InterfaceDefinition : Document.Interfaces)
+		{
+			Entries.Add(DescribeInterfaceDefinition(InterfaceDefinition));
+		}
+		AppendSection(TEXT("interfaces:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.ConstructionScriptNodes.Num());
+		for (const FVergilGraphNode& Node : Document.ConstructionScriptNodes)
+		{
+			Entries.Add(DescribeGraphNode(Node));
+		}
+		AppendSection(TEXT("constructionScriptNodes:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.ConstructionScriptEdges.Num());
+		for (const FVergilGraphEdge& Edge : Document.ConstructionScriptEdges)
+		{
+			Entries.Add(DescribeGraphEdge(Edge));
+		}
+		AppendSection(TEXT("constructionScriptEdges:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Nodes.Num());
+		for (const FVergilGraphNode& Node : Document.Nodes)
+		{
+			Entries.Add(DescribeGraphNode(Node));
+		}
+		AppendSection(TEXT("nodes:"), Entries);
+	}
+
+	{
+		TArray<FString> Entries;
+		Entries.Reserve(Document.Edges.Num());
+		for (const FVergilGraphEdge& Edge : Document.Edges)
+		{
+			Entries.Add(DescribeGraphEdge(Edge));
+		}
+		AppendSection(TEXT("edges:"), Entries);
+	}
+
+	if (Document.Tags.Num() > 0)
+	{
+		TArray<FString> TagEntries;
+		TagEntries.Reserve(Document.Tags.Num());
+		for (const FName Tag : Document.Tags)
+		{
+			TagEntries.Add(LexOptionalNameString(Tag));
+		}
+		AppendSection(TEXT("tags:"), TagEntries);
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
+}
+
+FString Vergil::SerializeGraphDocument(const FVergilGraphDocument& Document, const bool bPrettyPrint)
+{
+	FString SerializedDocument;
+	if (bPrettyPrint)
+	{
+		TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&SerializedDocument);
+		WriteGraphDocumentJson(*Writer, Document);
+		Writer->Close();
+	}
+	else
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedDocument);
+		WriteGraphDocumentJson(*Writer, Document);
+		Writer->Close();
+	}
+
+	return SerializedDocument;
 }
 
 bool Vergil::CanMigrateSchemaVersion(const int32 SourceSchemaVersion, const int32 TargetSchemaVersion)

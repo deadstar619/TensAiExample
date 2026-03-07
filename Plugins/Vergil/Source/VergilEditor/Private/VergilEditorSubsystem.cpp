@@ -200,6 +200,41 @@ FString UVergilEditorSubsystem::SerializeCommandPlan(const TArray<FVergilCompile
 	return Vergil::SerializeCommandPlan(Commands, bPrettyPrint);
 }
 
+FString UVergilEditorSubsystem::DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const
+{
+	return Vergil::DescribeCommandPlan(Commands);
+}
+
+FString UVergilEditorSubsystem::DescribeDocument(const FVergilGraphDocument& Document) const
+{
+	return Vergil::DescribeGraphDocument(Document);
+}
+
+FString UVergilEditorSubsystem::SerializeDocument(const FVergilGraphDocument& Document, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeGraphDocument(Document, bPrettyPrint);
+}
+
+FString UVergilEditorSubsystem::DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const
+{
+	return Vergil::DescribeDiagnostics(Diagnostics);
+}
+
+FString UVergilEditorSubsystem::SerializeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeDiagnostics(Diagnostics, bPrettyPrint);
+}
+
+FString UVergilEditorSubsystem::DescribeCompileResult(const FVergilCompileResult& Result) const
+{
+	return Vergil::DescribeCompileResult(Result);
+}
+
+FString UVergilEditorSubsystem::SerializeCompileResult(const FVergilCompileResult& Result, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
+}
+
 FVergilCompileResult UVergilEditorSubsystem::ExecuteSerializedCommandPlan(UBlueprint* Blueprint, const FString& SerializedCommandPlan) const
 {
 	FVergilCompileResult Result;

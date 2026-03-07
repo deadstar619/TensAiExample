@@ -14,5 +14,11 @@ public class VergilBlueprintModel : ModuleRules
 				"Engine",
 				"VergilCore"
 			});
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"Json"
+			});
 	}
 }

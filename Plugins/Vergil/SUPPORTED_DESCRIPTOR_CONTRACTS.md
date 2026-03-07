@@ -25,6 +25,8 @@ This document describes the current scaffold contracts implemented in code today
 - Direct `ExecuteCommandPlan` execution now preflight-validates command-plan shape and intra-plan references before opening an editor transaction.
 - Compiler-produced plans and direct `ExecuteCommandPlan` input now normalize into deterministic execution-phase order before validation and apply.
 - Command plans now expose stable debug strings plus versioned JSON serialization/deserialization helpers for inspection and replay.
+- `Vergil::DescribeGraphDocument(...)` / `SerializeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)` / `SerializeDiagnostics(...)`, and `Vergil::DescribeCompileResult(...)` / `SerializeCompileResult(...)` now expose the canonical document, diagnostic list, and compile result through stable human-readable descriptions plus deterministic JSON inspection payloads.
+- `UVergilEditorSubsystem` now exposes read-only command-plan, document, diagnostic, and compile-result inspection helpers, while `UVergilAgentSubsystem` mirrors those same helpers for tool-facing inspection without requiring callers to scrape logs.
 - `Vergil::GetSupportedContractManifest()` now exposes the current supported-contract surface as code-backed data, and `UVergilAgentSubsystem` exposes that manifest through read-only inspection helpers for structured data, descriptor-only inspection, deterministic JSON, and a human-readable summary.
 
 ## Inspection manifest contracts
@@ -35,9 +37,19 @@ This document describes the current scaffold contracts implemented in code today
 - `UVergilAgentSubsystem::InspectSupportedContracts()` returns the full structured manifest, `InspectSupportedDescriptorContracts()` returns just the descriptor table, `InspectSupportedContractsAsJson()` returns the deterministic JSON export, and `DescribeSupportedContracts()` returns a human-readable summary string.
 - The manifest is read-only inspection data. It does not loosen validation or execution behavior; unsupported descriptors outside the documented table still fail explicitly.
 
+## Inspector tooling contracts
+
+- The graph-document inspection format is `format="Vergil.GraphDocument"` with `version=1`, sourced from `Vergil::GetDocumentInspectionFormatName()` and `Vergil::GetDocumentInspectionFormatVersion()`.
+- The diagnostics inspection format is `format="Vergil.Diagnostics"` with `version=1`, sourced from `Vergil::GetDiagnosticsInspectionFormatName()` and `Vergil::GetDiagnosticsInspectionFormatVersion()`.
+- The compile-result inspection format is `format="Vergil.CompileResult"` with `version=1`, sourced from `Vergil::GetCompileResultInspectionFormatName()` and `Vergil::GetCompileResultInspectionFormatVersion()`.
+- `Vergil::DescribeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)`, `Vergil::DescribeCommandPlan(...)`, and `Vergil::DescribeCompileResult(...)` return stable human-readable inspection strings intended for tooling, logs, and previews.
+- `Vergil::SerializeGraphDocument(...)`, `Vergil::SerializeDiagnostics(...)`, and `Vergil::SerializeCompileResult(...)` return deterministic JSON inspection payloads. `Vergil::SerializeCompileResult(...)` nests the current diagnostics and command-plan payloads for the inspected result.
+- `UVergilEditorSubsystem` exposes `DescribeCommandPlan()`, `SerializeCommandPlan()`, `DescribeDocument()`, `SerializeDocument()`, `DescribeDiagnostics()`, `SerializeDiagnostics()`, `DescribeCompileResult()`, and `SerializeCompileResult()` as the supported editor-facing inspection surface.
+- `UVergilAgentSubsystem` mirrors those read-only helpers through `DescribeCommandPlan()`, `InspectCommandPlanAsJson()`, `DescribeDocument()`, `InspectDocumentAsJson()`, `DescribeDiagnostics()`, `InspectDiagnosticsAsJson()`, `DescribeCompileResult()`, and `InspectCompileResultAsJson()`.
+
 ## Versioning policy contracts
 
-- Vergil uses semantic versioning for the plugin release surface and separate integer versioning for document schema, serialized command plans, and the supported-contract inspection manifest.
+- Vergil uses semantic versioning for the plugin release surface and separate integer versioning for document schema, serialized command plans, the graph-document/diagnostics/compile-result inspection payloads, and the supported-contract inspection manifest.
 - The current plugin semantic version is sourced from `Vergil::GetSemanticVersionString()`. `Vergil.uplugin` `VersionName` is expected to stay aligned with that helper.
 - The current plugin descriptor version is sourced from `Vergil::PluginDescriptorVersion`. `Vergil.uplugin` `Version` is expected to stay aligned with that constant.
 - `Vergil::GetSupportedSchemaMigrationPaths()` exposes the exact supported forward schema-migration steps from the model layer, and the supported-contract manifest mirrors that list for agent/tool inspection.

@@ -407,6 +407,10 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 
 namespace Vergil
 {
+	VERGILBLUEPRINTMODEL_API FString GetDocumentInspectionFormatName();
+	VERGILBLUEPRINTMODEL_API int32 GetDocumentInspectionFormatVersion();
+	VERGILBLUEPRINTMODEL_API FString DescribeGraphDocument(const FVergilGraphDocument& Document);
+	VERGILBLUEPRINTMODEL_API FString SerializeGraphDocument(const FVergilGraphDocument& Document, bool bPrettyPrint = true);
 	VERGILBLUEPRINTMODEL_API TArray<FString> GetSupportedSchemaMigrationPaths();
 	VERGILBLUEPRINTMODEL_API bool CanMigrateSchemaVersion(int32 SourceSchemaVersion, int32 TargetSchemaVersion = SchemaVersion);
 	VERGILBLUEPRINTMODEL_API bool MigrateDocumentSchema(

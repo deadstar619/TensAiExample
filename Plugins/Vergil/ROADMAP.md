@@ -366,7 +366,7 @@ Goal:
 
 Tickets:
 
-- `VGR-7001` Add document/command/diagnostic inspector tooling
+- [x] `VGR-7001` Add document/command/diagnostic inspector tooling
 - `VGR-7002` Add deterministic auto-layout pass API
 - `VGR-7003` Add explicit comment generation pass API
 - `VGR-7004` Add document diff and command-plan preview tooling
@@ -377,6 +377,12 @@ Acceptance criteria:
 
 - users can inspect planned mutations before apply
 - layout/comments remain optional post-passes
+
+Session note for `VGR-7001` (2026-03-07):
+
+- The existing inspection helper declarations are now implemented end-to-end: `Vergil::DescribeGraphDocument(...)` / `SerializeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)` / `SerializeDiagnostics(...)`, and `Vergil::DescribeCompileResult(...)` / `SerializeCompileResult(...)` now expose stable document, diagnostics, and compile-result inspection surfaces alongside the pre-existing command-plan inspection helpers.
+- `UVergilEditorSubsystem` now exposes read-only `DescribeCommandPlan()`, `DescribeDocument()`, `SerializeDocument()`, `DescribeDiagnostics()`, `SerializeDiagnostics()`, `DescribeCompileResult()`, and `SerializeCompileResult()` helpers, while `UVergilAgentSubsystem` mirrors the same surfaces plus `InspectCommandPlanAsJson()` for tool-facing inspection without scraping logs.
+- `Vergil.Scaffold.InspectorTooling` now covers namespace, editor-subsystem, and agent-subsystem inspection parity for command plans, canonical documents, diagnostics, and compile results, including deterministic JSON payload checks.
 
 ## Milestone 8: Real Agent Layer
 Goal:
@@ -448,13 +454,13 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7001`
-2. `VGR-5001`
-3. `VGR-8001`
-4. `VGR-9004`
-5. `VGR-5002`
+1. `VGR-5001`
+2. `VGR-8001`
+3. `VGR-9004`
+4. `VGR-5002`
+5. `VGR-7002`
 
-This keeps pressure on remaining inspection/tooling gaps, the next highest-value K2 breadth items, and release hardening now that the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

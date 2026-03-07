@@ -13,6 +13,10 @@ namespace
 {
 	inline constexpr TCHAR CommandPlanFormatName[] = TEXT("Vergil.CommandPlan");
 	inline constexpr int32 CommandPlanFormatVersion = 1;
+	inline constexpr TCHAR DiagnosticsInspectionFormatName[] = TEXT("Vergil.Diagnostics");
+	inline constexpr int32 DiagnosticsInspectionFormatVersion = 1;
+	inline constexpr TCHAR CompileResultInspectionFormatName[] = TEXT("Vergil.CompileResult");
+	inline constexpr int32 CompileResultInspectionFormatVersion = 1;
 
 	const TCHAR* LexBoolString(const bool bValue)
 	{
@@ -203,6 +207,24 @@ namespace
 		return Value.IsNone() ? FString(TEXT("<none>")) : Value.ToString();
 	}
 
+	const TCHAR* LexDiagnosticSeverityString(const EVergilDiagnosticSeverity Severity)
+	{
+		switch (Severity)
+		{
+		case EVergilDiagnosticSeverity::Info:
+			return TEXT("Info");
+
+		case EVergilDiagnosticSeverity::Warning:
+			return TEXT("Warning");
+
+		case EVergilDiagnosticSeverity::Error:
+			return TEXT("Error");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
 	FString EscapeDisplayValue(const FString& Value)
 	{
 		FString EscapedValue = Value;
@@ -297,6 +319,155 @@ namespace
 			WriteCommandJson(Writer, Command);
 		}
 		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDiagnosticJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilDiagnostic& Diagnostic)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("severity"), LexDiagnosticSeverityString(Diagnostic.Severity));
+		Writer.WriteValue(TEXT("code"), LexNameString(Diagnostic.Code));
+		Writer.WriteValue(TEXT("message"), Diagnostic.Message);
+		Writer.WriteValue(TEXT("sourceId"), LexGuidString(Diagnostic.SourceId));
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDiagnosticsJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("format"), DiagnosticsInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), DiagnosticsInspectionFormatVersion);
+		Writer.WriteArrayStart(TEXT("diagnostics"));
+		for (const FVergilDiagnostic& Diagnostic : Diagnostics)
+		{
+			WriteDiagnosticJson(Writer, Diagnostic);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDiagnosticsJsonField(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("format"), DiagnosticsInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), DiagnosticsInspectionFormatVersion);
+		Writer.WriteArrayStart(TEXT("diagnostics"));
+		for (const FVergilDiagnostic& Diagnostic : Diagnostics)
+		{
+			WriteDiagnosticJson(Writer, Diagnostic);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDiagnosticSummaryJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilDiagnosticSummary& Summary)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("infoCount"), Summary.InfoCount);
+		Writer.WriteValue(TEXT("warningCount"), Summary.WarningCount);
+		Writer.WriteValue(TEXT("errorCount"), Summary.ErrorCount);
+		Writer.WriteValue(TEXT("totalCount"), Summary.GetTotalCount());
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteExecutionSummaryJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilExecutionSummary& Summary)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("label"), Summary.Label);
+		Writer.WriteValue(TEXT("succeeded"), Summary.bSucceeded);
+		Writer.WriteValue(TEXT("applied"), Summary.bApplied);
+		Writer.WriteValue(TEXT("plannedCommandCount"), Summary.PlannedCommandCount);
+		Writer.WriteValue(TEXT("executedCommandCount"), Summary.ExecutedCommandCount);
+		WriteDiagnosticSummaryJson(Writer, TEXT("diagnostics"), Summary.Diagnostics);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteCompilePassRecordJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilCompilePassRecord& PassRecord)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("passName"), LexNameString(PassRecord.PassName));
+		Writer.WriteValue(TEXT("succeeded"), PassRecord.bSucceeded);
+		Writer.WriteValue(TEXT("diagnosticCount"), PassRecord.DiagnosticCount);
+		Writer.WriteValue(TEXT("errorCount"), PassRecord.ErrorCount);
+		Writer.WriteValue(TEXT("plannedCommandCount"), PassRecord.PlannedCommandCount);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteCompileStatisticsJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilCompileStatistics& Statistics)
+	{
+		Writer.WriteObjectStart(TEXT("statistics"));
+		Writer.WriteValue(TEXT("targetGraphName"), LexNameString(Statistics.TargetGraphName));
+		Writer.WriteValue(TEXT("requestedSchemaVersion"), Statistics.RequestedSchemaVersion);
+		Writer.WriteValue(TEXT("effectiveSchemaVersion"), Statistics.EffectiveSchemaVersion);
+		Writer.WriteValue(TEXT("autoLayoutRequested"), Statistics.bAutoLayoutRequested);
+		Writer.WriteValue(TEXT("generateCommentsRequested"), Statistics.bGenerateCommentsRequested);
+		Writer.WriteValue(TEXT("applyRequested"), Statistics.bApplyRequested);
+		Writer.WriteValue(TEXT("executionAttempted"), Statistics.bExecutionAttempted);
+		Writer.WriteValue(TEXT("commandPlanNormalized"), Statistics.bCommandPlanNormalized);
+		Writer.WriteValue(TEXT("commandPlanFingerprint"), Statistics.CommandPlanFingerprint);
+		Writer.WriteValue(TEXT("executionUsedReturnedCommandPlan"), Statistics.bExecutionUsedReturnedCommandPlan);
+		Writer.WriteValue(TEXT("planningInvocationCount"), Statistics.PlanningInvocationCount);
+		Writer.WriteValue(TEXT("applyInvocationCount"), Statistics.ApplyInvocationCount);
+		Writer.WriteValue(TEXT("sourceNodeCount"), Statistics.SourceNodeCount);
+		Writer.WriteValue(TEXT("sourceEdgeCount"), Statistics.SourceEdgeCount);
+		Writer.WriteValue(TEXT("plannedCommandCount"), Statistics.PlannedCommandCount);
+		Writer.WriteValue(TEXT("blueprintDefinitionCommandCount"), Statistics.BlueprintDefinitionCommandCount);
+		Writer.WriteValue(TEXT("graphStructureCommandCount"), Statistics.GraphStructureCommandCount);
+		Writer.WriteValue(TEXT("connectionCommandCount"), Statistics.ConnectionCommandCount);
+		Writer.WriteValue(TEXT("finalizeCommandCount"), Statistics.FinalizeCommandCount);
+		Writer.WriteValue(TEXT("explicitCompileCommandCount"), Statistics.ExplicitCompileCommandCount);
+		Writer.WriteValue(TEXT("postBlueprintCompileCommandCount"), Statistics.PostBlueprintCompileCommandCount);
+		Writer.WriteValue(TEXT("lastCompletedPassName"), LexNameString(Statistics.LastCompletedPassName));
+		Writer.WriteValue(TEXT("failedPassName"), LexNameString(Statistics.FailedPassName));
+		Writer.WriteArrayStart(TEXT("completedPassNames"));
+		for (const FName CompletedPassName : Statistics.CompletedPassNames)
+		{
+			Writer.WriteValue(CompletedPassName.ToString());
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteCompileResultJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilCompileResult& Result)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("format"), CompileResultInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), CompileResultInspectionFormatVersion);
+		Writer.WriteValue(TEXT("succeeded"), Result.bSucceeded);
+		Writer.WriteValue(TEXT("applied"), Result.bApplied);
+		Writer.WriteValue(TEXT("executedCommandCount"), Result.ExecutedCommandCount);
+		WriteCompileStatisticsJson(Writer, Result.Statistics);
+		WriteDiagnosticSummaryJson(Writer, TEXT("diagnosticSummary"), Vergil::SummarizeDiagnostics(Result.Diagnostics));
+		WriteExecutionSummaryJson(Writer, TEXT("compileSummary"), Vergil::SummarizeCompileResult(Result));
+		WriteExecutionSummaryJson(Writer, TEXT("applySummary"), Vergil::SummarizeApplyResult(Result));
+
+		Writer.WriteArrayStart(TEXT("passRecords"));
+		for (const FVergilCompilePassRecord& PassRecord : Result.PassRecords)
+		{
+			WriteCompilePassRecordJson(Writer, PassRecord);
+		}
+		Writer.WriteArrayEnd();
+
+		WriteDiagnosticsJsonField(Writer, TEXT("diagnostics"), Result.Diagnostics);
+
+		Writer.WriteObjectStart(TEXT("commandPlan"));
+		Writer.WriteValue(TEXT("format"), CommandPlanFormatName);
+		Writer.WriteValue(TEXT("version"), CommandPlanFormatVersion);
+		Writer.WriteArrayStart(TEXT("commands"));
+		for (const FVergilCompilerCommand& Command : Result.Commands)
+		{
+			WriteCommandJson(Writer, Command);
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
 		Writer.WriteObjectEnd();
 	}
 
@@ -786,6 +957,26 @@ int32 Vergil::GetCommandPlanFormatVersion()
 	return CommandPlanFormatVersion;
 }
 
+FString Vergil::GetDiagnosticsInspectionFormatName()
+{
+	return DiagnosticsInspectionFormatName;
+}
+
+int32 Vergil::GetDiagnosticsInspectionFormatVersion()
+{
+	return DiagnosticsInspectionFormatVersion;
+}
+
+FString Vergil::GetCompileResultInspectionFormatName()
+{
+	return CompileResultInspectionFormatName;
+}
+
+int32 Vergil::GetCompileResultInspectionFormatVersion()
+{
+	return CompileResultInspectionFormatVersion;
+}
+
 void Vergil::NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands)
 {
 	Algo::StableSort(Commands, [](const FVergilCompilerCommand& A, const FVergilCompilerCommand& B)
@@ -941,6 +1132,101 @@ bool Vergil::DeserializeCommandPlan(
 	}
 
 	return true;
+}
+
+FString Vergil::DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics)
+{
+	if (Diagnostics.Num() == 0)
+	{
+		return TEXT("<no diagnostics>");
+	}
+
+	TArray<FString> Lines;
+	Lines.Reserve(Diagnostics.Num());
+	for (int32 DiagnosticIndex = 0; DiagnosticIndex < Diagnostics.Num(); ++DiagnosticIndex)
+	{
+		Lines.Add(FString::Printf(TEXT("%d: %s"), DiagnosticIndex, *Diagnostics[DiagnosticIndex].ToDisplayString()));
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
+}
+
+FString Vergil::SerializeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics, const bool bPrettyPrint)
+{
+	FString SerializedDiagnostics;
+	if (bPrettyPrint)
+	{
+		TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&SerializedDiagnostics);
+		WriteDiagnosticsJson(*Writer, Diagnostics);
+		Writer->Close();
+	}
+	else
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedDiagnostics);
+		WriteDiagnosticsJson(*Writer, Diagnostics);
+		Writer->Close();
+	}
+
+	return SerializedDiagnostics;
+}
+
+FString Vergil::DescribeCompileResult(const FVergilCompileResult& Result)
+{
+	TArray<FString> Lines;
+	Lines.Add(FString::Printf(
+		TEXT("%s version=%d succeeded=%s applied=%s executed=%d diagnostics=%d commands=%d"),
+		CompileResultInspectionFormatName,
+		CompileResultInspectionFormatVersion,
+		LexBoolString(Result.bSucceeded),
+		LexBoolString(Result.bApplied),
+		Result.ExecutedCommandCount,
+		Result.Diagnostics.Num(),
+		Result.Commands.Num()));
+	Lines.Add(FString::Printf(TEXT("compileSummary: %s"), *Vergil::SummarizeCompileResult(Result).ToDisplayString()));
+	Lines.Add(FString::Printf(TEXT("applySummary: %s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString()));
+	Lines.Add(FString::Printf(TEXT("stats: %s"), *Result.Statistics.ToDisplayString()));
+
+	if (Result.PassRecords.Num() == 0)
+	{
+		Lines.Add(TEXT("passRecords: <none>"));
+	}
+	else
+	{
+		Lines.Add(TEXT("passRecords:"));
+		for (const FVergilCompilePassRecord& PassRecord : Result.PassRecords)
+		{
+			Lines.Add(FString::Printf(TEXT("- %s"), *PassRecord.ToDisplayString()));
+		}
+	}
+
+	Lines.Add(TEXT("diagnostics:"));
+	Lines.Add(Vergil::DescribeDiagnostics(Result.Diagnostics));
+	Lines.Add(TEXT("commands:"));
+	Lines.Add(Vergil::DescribeCommandPlan(Result.Commands));
+	return FString::Join(Lines, TEXT("\n"));
+}
+
+FString Vergil::SerializeCompileResult(const FVergilCompileResult& Result, const bool bPrettyPrint)
+{
+	FString SerializedResult;
+	if (bPrettyPrint)
+	{
+		TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&SerializedResult);
+		WriteCompileResultJson(*Writer, Result);
+		Writer->Close();
+	}
+	else
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedResult);
+		WriteCompileResultJson(*Writer, Result);
+		Writer->Close();
+	}
+
+	return SerializedResult;
 }
 
 int32 FVergilDiagnosticSummary::GetTotalCount() const

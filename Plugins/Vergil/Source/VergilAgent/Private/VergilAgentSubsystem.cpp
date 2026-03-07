@@ -51,6 +51,46 @@ FString UVergilAgentSubsystem::DescribeSupportedContracts() const
 	return Vergil::DescribeSupportedContractManifest();
 }
 
+FString UVergilAgentSubsystem::DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const
+{
+	return Vergil::DescribeCommandPlan(Commands);
+}
+
+FString UVergilAgentSubsystem::InspectCommandPlanAsJson(const TArray<FVergilCompilerCommand>& Commands, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCommandPlan(Commands, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeDocument(const FVergilGraphDocument& Document) const
+{
+	return Vergil::DescribeGraphDocument(Document);
+}
+
+FString UVergilAgentSubsystem::InspectDocumentAsJson(const FVergilGraphDocument& Document, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeGraphDocument(Document, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const
+{
+	return Vergil::DescribeDiagnostics(Diagnostics);
+}
+
+FString UVergilAgentSubsystem::InspectDiagnosticsAsJson(const TArray<FVergilDiagnostic>& Diagnostics, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeDiagnostics(Diagnostics, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeCompileResult(const FVergilCompileResult& Result) const
+{
+	return Vergil::DescribeCompileResult(Result);
+}
+
+FString UVergilAgentSubsystem::InspectCompileResultAsJson(const FVergilCompileResult& Result, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
+}
+
 void UVergilAgentSubsystem::ClearAuditTrail()
 {
 	AuditTrail.Reset();
