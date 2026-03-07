@@ -262,6 +262,35 @@ namespace
 		return BlueprintPath.IsEmpty() ? FString(TEXT("<none>")) : BlueprintPath;
 	}
 
+	FString BuildApplyResponseMessage(const FString& BlueprintPath, const FVergilCompileResult& Result)
+	{
+		if (Result.bApplied)
+		{
+			return FString::Printf(
+				TEXT("Applied %d commands to '%s'."),
+				Result.ExecutedCommandCount,
+				*FormatTargetBlueprintLabel(BlueprintPath));
+		}
+
+		if (Result.Statistics.TransactionAudit.bRecoveryRequired)
+		{
+			return Result.Statistics.TransactionAudit.bRecoverySucceeded
+				? FString::Printf(
+					TEXT("Apply failed for '%s', and Vergil rolled back the partial changes."),
+					*FormatTargetBlueprintLabel(BlueprintPath))
+				: FString::Printf(
+					TEXT("Apply failed for '%s'. Automatic recovery did not complete: %s"),
+					*FormatTargetBlueprintLabel(BlueprintPath),
+					Result.Statistics.TransactionAudit.RecoveryMessage.IsEmpty()
+						? TEXT("unknown recovery state")
+						: *Result.Statistics.TransactionAudit.RecoveryMessage);
+		}
+
+		return FString::Printf(
+			TEXT("Apply failed for '%s'."),
+			*FormatTargetBlueprintLabel(BlueprintPath));
+	}
+
 	const TCHAR* LexWritePermissionPolicyString(const EVergilAgentWritePermissionPolicy Policy)
 	{
 		switch (Policy)
@@ -854,14 +883,7 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAge
 
 	Response.Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, Request.Apply.Commands);
 	Response.State = Response.Result.bApplied ? EVergilAgentExecutionState::Completed : EVergilAgentExecutionState::Failed;
-	Response.Message = Response.Result.bApplied
-		? FString::Printf(
-			TEXT("Applied %d commands to '%s'."),
-			Response.Result.ExecutedCommandCount,
-			*FormatTargetBlueprintLabel(Request.Apply.TargetBlueprintPath))
-		: FString::Printf(
-			TEXT("Apply failed for '%s'."),
-			*FormatTargetBlueprintLabel(Request.Apply.TargetBlueprintPath));
+	Response.Message = BuildApplyResponseMessage(Request.Apply.TargetBlueprintPath, Response.Result);
 	return Response;
 }
 

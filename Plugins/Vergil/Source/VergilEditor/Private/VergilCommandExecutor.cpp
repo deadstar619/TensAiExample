@@ -196,6 +196,35 @@ namespace
 		return Snapshot;
 	}
 
+	bool HasErrorDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		return Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Severity == EVergilDiagnosticSeverity::Error;
+		});
+	}
+
+	bool DoesLatestUndoMatchTransaction(const FVergilTransactionAudit& TransactionAudit)
+	{
+		if (!TransactionAudit.FailureState.NextUndoTransactionId.IsValid())
+		{
+			return false;
+		}
+
+		if (TransactionAudit.FailureState.NextUndoContext != TransactionAudit.TransactionContext)
+		{
+			return false;
+		}
+
+		if (TransactionAudit.FailureState.NextUndoTitle != TransactionAudit.TransactionTitle)
+		{
+			return false;
+		}
+
+		return TransactionAudit.PrimaryObjectPath.IsEmpty()
+			|| TransactionAudit.FailureState.NextUndoPrimaryObjectPath == TransactionAudit.PrimaryObjectPath;
+	}
+
 	const FVergilStandardMacroCommand* FindStandardMacroCommand(const FName CommandName)
 	{
 		static const FVergilStandardMacroCommand Commands[] =
@@ -6905,15 +6934,15 @@ bool FVergilCommandExecutor::Execute(
 	int32* OutExecutedCommandCount,
 	FVergilTransactionAudit* OutTransactionAudit) const
 {
+	FVergilTransactionAudit LocalTransactionAudit;
+	FVergilTransactionAudit* const TransactionAudit = OutTransactionAudit != nullptr ? OutTransactionAudit : &LocalTransactionAudit;
+
 	if (OutExecutedCommandCount != nullptr)
 	{
 		*OutExecutedCommandCount = 0;
 	}
 
-	if (OutTransactionAudit != nullptr)
-	{
-		*OutTransactionAudit = FVergilTransactionAudit();
-	}
+	*TransactionAudit = FVergilTransactionAudit();
 
 	TArray<FVergilCompilerCommand> OrderedCommands = Commands;
 	Vergil::NormalizeCommandPlan(OrderedCommands);
@@ -6923,15 +6952,12 @@ bool FVergilCommandExecutor::Execute(
 		return false;
 	}
 
-	if (OutTransactionAudit != nullptr)
-	{
-		OutTransactionAudit->bRecorded = true;
-		OutTransactionAudit->bNestedInActiveTransaction = GEditor != nullptr && GEditor->IsTransactionActive();
-		OutTransactionAudit->TransactionContext = VergilTransactionContext;
-		OutTransactionAudit->TransactionTitle = NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan").ToString();
-		OutTransactionAudit->PrimaryObjectPath = GetOptionalObjectPath(Blueprint);
-		OutTransactionAudit->BeforeState = CaptureUndoRedoSnapshot(Blueprint);
-	}
+	TransactionAudit->bRecorded = true;
+	TransactionAudit->bNestedInActiveTransaction = GEditor != nullptr && GEditor->IsTransactionActive();
+	TransactionAudit->TransactionContext = VergilTransactionContext;
+	TransactionAudit->TransactionTitle = NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan").ToString();
+	TransactionAudit->PrimaryObjectPath = GetOptionalObjectPath(Blueprint);
+	TransactionAudit->BeforeState = CaptureUndoRedoSnapshot(Blueprint);
 
 	Blueprint->SetFlags(RF_Transactional);
 
@@ -7081,10 +7107,7 @@ bool FVergilCommandExecutor::Execute(
 			VergilTransactionContext,
 			NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan"),
 			Blueprint);
-		if (OutTransactionAudit != nullptr)
-		{
-			OutTransactionAudit->bOpenedScopedTransaction = Transaction.IsOutstanding();
-		}
+		TransactionAudit->bOpenedScopedTransaction = Transaction.IsOutstanding();
 
 		Blueprint->Modify();
 
@@ -7248,38 +7271,76 @@ bool FVergilCommandExecutor::Execute(
 		}
 	}
 
-	if (OutTransactionAudit != nullptr)
+	const bool bHasExecutionErrors = HasErrorDiagnostics(Diagnostics);
+	if (bHasExecutionErrors)
 	{
-		OutTransactionAudit->AfterState = CaptureUndoRedoSnapshot(Blueprint);
+		bSucceeded = false;
+		TransactionAudit->bRecoveryRequired = true;
+		TransactionAudit->RecoveryMethod = TEXT("UndoTransaction(bCanRedo=false)");
+		TransactionAudit->FailureState = CaptureUndoRedoSnapshot(Blueprint);
+
+		if (TransactionAudit->bNestedInActiveTransaction)
+		{
+			TransactionAudit->RecoveryMessage = TEXT("Skipped automatic recovery because the failed apply ran inside an already-active editor transaction.");
+		}
+		else if (!TransactionAudit->bOpenedScopedTransaction)
+		{
+			TransactionAudit->RecoveryMessage = TEXT("Skipped automatic recovery because Vergil did not open a scoped editor transaction.");
+		}
+		else if (GEditor == nullptr || GEditor->Trans == nullptr)
+		{
+			TransactionAudit->RecoveryMessage = TEXT("Skipped automatic recovery because the editor transactor was unavailable.");
+		}
+		else if (!DoesLatestUndoMatchTransaction(*TransactionAudit))
+		{
+			TransactionAudit->RecoveryMessage = TEXT("Skipped automatic recovery because the latest undo entry no longer matched the failed Vergil transaction.");
+		}
+		else
+		{
+			TransactionAudit->bRecoveryAttempted = true;
+			TransactionAudit->bRecoverySucceeded = GEditor->UndoTransaction(false);
+			TransactionAudit->RecoveryMessage = TransactionAudit->bRecoverySucceeded
+				? TEXT("Recovered the failed apply by undoing the recorded Vergil transaction without leaving a redo entry.")
+				: TEXT("Automatic recovery failed because editor undo could not revert the recorded Vergil transaction.");
+		}
 	}
 
-	for (const FVergilDiagnostic& Diagnostic : Diagnostics)
-	{
-		if (Diagnostic.Severity == EVergilDiagnosticSeverity::Error)
-		{
-			UE_LOG(LogVergil, Log, TEXT("Vergil command execution failed with %d diagnostics."), Diagnostics.Num());
-			for (const FVergilDiagnostic& EmittedDiagnostic : Diagnostics)
-			{
-				const TCHAR* SeverityLabel = TEXT("Info");
-				if (EmittedDiagnostic.Severity == EVergilDiagnosticSeverity::Error)
-				{
-					SeverityLabel = TEXT("Error");
-				}
-				else if (EmittedDiagnostic.Severity == EVergilDiagnosticSeverity::Warning)
-				{
-					SeverityLabel = TEXT("Warning");
-				}
+	TransactionAudit->AfterState = CaptureUndoRedoSnapshot(Blueprint);
 
-				UE_LOG(
-					LogVergil,
-					Log,
-					TEXT("Vergil execution diagnostic [%s] %s: %s"),
-					SeverityLabel,
-					*EmittedDiagnostic.Code.ToString(),
-					*EmittedDiagnostic.Message);
+	if (bHasExecutionErrors)
+	{
+		UE_LOG(LogVergil, Log, TEXT("Vergil command execution failed with %d diagnostics."), Diagnostics.Num());
+		if (TransactionAudit->bRecoveryRequired)
+		{
+			UE_LOG(
+				LogVergil,
+				Log,
+				TEXT("Vergil apply recovery required=%s attempted=%s succeeded=%s message=%s"),
+				TransactionAudit->bRecoveryRequired ? TEXT("true") : TEXT("false"),
+				TransactionAudit->bRecoveryAttempted ? TEXT("true") : TEXT("false"),
+				TransactionAudit->bRecoverySucceeded ? TEXT("true") : TEXT("false"),
+				*TransactionAudit->RecoveryMessage);
+		}
+
+		for (const FVergilDiagnostic& EmittedDiagnostic : Diagnostics)
+		{
+			const TCHAR* SeverityLabel = TEXT("Info");
+			if (EmittedDiagnostic.Severity == EVergilDiagnosticSeverity::Error)
+			{
+				SeverityLabel = TEXT("Error");
 			}
-			bSucceeded = false;
-			break;
+			else if (EmittedDiagnostic.Severity == EVergilDiagnosticSeverity::Warning)
+			{
+				SeverityLabel = TEXT("Warning");
+			}
+
+			UE_LOG(
+				LogVergil,
+				Log,
+				TEXT("Vergil execution diagnostic [%s] %s: %s"),
+				SeverityLabel,
+				*EmittedDiagnostic.Code.ToString(),
+				*EmittedDiagnostic.Message);
 		}
 	}
 

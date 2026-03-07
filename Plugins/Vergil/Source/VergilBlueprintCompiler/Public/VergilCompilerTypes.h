@@ -332,6 +332,24 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilTransactionAudit
 	FVergilUndoRedoSnapshot BeforeState;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bRecoveryRequired = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bRecoveryAttempted = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bRecoverySucceeded = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString RecoveryMethod;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString RecoveryMessage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilUndoRedoSnapshot FailureState;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	FVergilUndoRedoSnapshot AfterState;
 
 	FString ToDisplayString() const;

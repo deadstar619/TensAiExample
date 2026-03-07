@@ -433,6 +433,14 @@ namespace
 		Writer.WriteValue(TEXT("transactionTitle"), TransactionAudit.TransactionTitle);
 		Writer.WriteValue(TEXT("primaryObjectPath"), TransactionAudit.PrimaryObjectPath);
 		WriteUndoRedoSnapshotJson(Writer, TEXT("before"), TransactionAudit.BeforeState);
+		Writer.WriteObjectStart(TEXT("recovery"));
+		Writer.WriteValue(TEXT("required"), TransactionAudit.bRecoveryRequired);
+		Writer.WriteValue(TEXT("attempted"), TransactionAudit.bRecoveryAttempted);
+		Writer.WriteValue(TEXT("succeeded"), TransactionAudit.bRecoverySucceeded);
+		Writer.WriteValue(TEXT("method"), TransactionAudit.RecoveryMethod);
+		Writer.WriteValue(TEXT("message"), TransactionAudit.RecoveryMessage);
+		WriteUndoRedoSnapshotJson(Writer, TEXT("failure"), TransactionAudit.FailureState);
+		Writer.WriteObjectEnd();
 		WriteUndoRedoSnapshotJson(Writer, TEXT("after"), TransactionAudit.AfterState);
 		Writer.WriteObjectEnd();
 	}
@@ -841,13 +849,19 @@ FString FVergilTransactionAudit::ToDisplayString() const
 	}
 
 	return FString::Printf(
-		TEXT("recorded=true nested=%s opened=%s context=\"%s\" title=\"%s\" primary=\"%s\" before={%s} after={%s}"),
+		TEXT("recorded=true nested=%s opened=%s context=\"%s\" title=\"%s\" primary=\"%s\" before={%s} recovery={required=%s attempted=%s succeeded=%s method=\"%s\" message=\"%s\" failure={%s}} after={%s}"),
 		LexBoolString(bNestedInActiveTransaction),
 		LexBoolString(bOpenedScopedTransaction),
 		*EscapeDisplayValue(TransactionContext),
 		*EscapeDisplayValue(TransactionTitle),
 		PrimaryObjectPath.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(PrimaryObjectPath),
 		*BeforeState.ToDisplayString(),
+		LexBoolString(bRecoveryRequired),
+		LexBoolString(bRecoveryAttempted),
+		LexBoolString(bRecoverySucceeded),
+		*EscapeDisplayValue(RecoveryMethod),
+		*EscapeDisplayValue(RecoveryMessage),
+		*FailureState.ToDisplayString(),
 		*AfterState.ToDisplayString());
 }
 

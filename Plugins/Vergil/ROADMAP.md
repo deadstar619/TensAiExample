@@ -488,7 +488,7 @@ Tickets:
 - [x] `VGR-8003` Add plan/apply separation
 - [x] `VGR-8004` Add permission gates around write/apply actions
 - [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
-- `VGR-8006` Add partial-apply recovery flows
+- [x] `VGR-8006` Add partial-apply recovery flows
 - `VGR-8007` Add provenance/session correlation IDs
 - `VGR-8008` Keep agent orchestration separate from deterministic compile/execute logic
 
@@ -526,6 +526,12 @@ Session note for `VGR-8005` (2026-03-06):
 - The compiler module now exposes a code-backed `FVergilSupportedContractManifest` plus `Vergil::GetSupportedContractManifest()`, `DescribeSupportedContractManifest()`, and `SerializeSupportedContractManifest(...)`, so the current supported contract surface is inspectable without scraping markdown.
 - `UVergilAgentSubsystem` now exposes read-only `InspectSupportedContracts()`, `InspectSupportedDescriptorContracts()`, `InspectSupportedContractsAsJson()`, and `DescribeSupportedContracts()` helpers for the current document fields, target graphs, metadata keys, type categories, command types, and node-descriptor table.
 - `Vergil.Scaffold.SupportedContractInspection` now covers the structured manifest, descriptor-table inspection, and deterministic JSON/summary output.
+
+Session note for `VGR-8006` (2026-03-07):
+
+- Failed apply execution now records partial-apply recovery state in `FVergilCompileResult.Statistics.TransactionAudit`, including whether recovery was required, whether Vergil attempted rollback through its recorded editor transaction, whether that rollback succeeded, and the failure snapshot captured before recovery.
+- `FVergilCommandExecutor::Execute(...)` now automatically undoes its own failed Vergil transaction with `bCanRedo=false` when the latest undo entry still matches the recorded apply transaction, so failed apply requests no longer silently leave half-applied Blueprint mutations behind.
+- `Vergil.Scaffold.PartialApplyRecovery` and `Vergil.Scaffold.AgentPartialApplyRecovery` now cover both direct editor execution and audited agent apply requests, proving a runtime failure after one successful mutation is rolled back and reported through the inspection/audit surface.
 
 ## Milestone 9: Studio-Grade Release Hardening
 Goal:
@@ -583,11 +589,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-8006`
-2. `VGR-6004`
-3. `VGR-6005`
-4. `VGR-6006`
-5. `VGR-7006`
+1. `VGR-6004`
+2. `VGR-6005`
+3. `VGR-6006`
+4. `VGR-7006`
+5. `VGR-9001`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

@@ -4412,6 +4412,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilPartialApplyRecoveryTest,
+	"Vergil.Scaffold.PartialApplyRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilDryRunApplyPlanningParityTest,
 	"Vergil.Scaffold.DryRunApplyPlanningParity",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -4514,6 +4519,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilAgentWritePermissionGatesTest,
 	"Vergil.Scaffold.AgentWritePermissionGates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAgentPartialApplyRecoveryTest,
+	"Vergil.Scaffold.AgentPartialApplyRecovery",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
@@ -5698,6 +5708,101 @@ bool FVergilAgentWritePermissionGatesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+bool FVergilAgentPartialApplyRecoveryTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for partial-apply recovery coverage."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FScopedVergilWritePermissionPolicyOverride RequireApprovalPolicy(EVergilAgentWritePermissionPolicy::RequireExplicitApproval);
+	TestTrue(TEXT("Partial-apply recovery coverage should be able to require explicit approval."), RequireApprovalPolicy.IsReady());
+	if (!RequireApprovalPolicy.IsReady())
+	{
+		return false;
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+
+	FScopedPersistentTestBlueprint PersistentBlueprint(TEXT("BP_AgentPartialApplyRecovery"));
+	UBlueprint* const Blueprint = PersistentBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Partial-apply recovery coverage should create a persistent Blueprint asset."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FString OriginalDescription = Blueprint->BlueprintDescription;
+
+	FVergilCompilerCommand SetBlueprintDescription;
+	SetBlueprintDescription.Type = EVergilCommandType::SetBlueprintMetadata;
+	SetBlueprintDescription.Name = TEXT("BlueprintDescription");
+	SetBlueprintDescription.StringValue = TEXT("Agent recovery should roll this back");
+
+	FVergilCompilerCommand InvalidClassDefault;
+	InvalidClassDefault.Type = EVergilCommandType::SetClassDefault;
+	InvalidClassDefault.Name = TEXT("DefinitelyMissingProperty");
+	InvalidClassDefault.StringValue = TEXT("42");
+
+	TArray<FVergilCompilerCommand> ApplyCommands = { SetBlueprintDescription, InvalidClassDefault };
+	Vergil::NormalizeCommandPlan(ApplyCommands);
+
+	FVergilCompileStatistics ApplyStatistics;
+	ApplyStatistics.RebuildCommandStatistics(ApplyCommands);
+
+	FVergilAgentRequest ApplyRequest;
+	ApplyRequest.Context.RequestId = FGuid::NewGuid();
+	ApplyRequest.Context.Summary = TEXT("Apply a plan that will fail after one successful mutation.");
+	ApplyRequest.Context.InputText = TEXT("Exercise automatic partial-apply rollback.");
+	ApplyRequest.Context.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Recovery") };
+	ApplyRequest.Context.WriteAuthorization.bApproved = true;
+	ApplyRequest.Context.WriteAuthorization.ApprovedBy = TEXT("Automation");
+	ApplyRequest.Context.WriteAuthorization.ApprovalNote = TEXT("Agent partial apply recovery coverage");
+	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
+	ApplyRequest.Apply.TargetBlueprintPath = PersistentBlueprint.PackagePath;
+	ApplyRequest.Apply.Commands = ApplyCommands;
+	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = ApplyStatistics.CommandPlanFingerprint;
+
+	const FVergilAgentResponse ApplyResponse = AgentSubsystem->ExecuteRequest(ApplyRequest);
+	TestEqual(TEXT("Failed recovery coverage should still report the apply operation."), ApplyResponse.Operation, EVergilAgentOperation::ApplyCommandPlan);
+	TestEqual(TEXT("The agent should report failed state when apply recovery was required."), ApplyResponse.State, EVergilAgentExecutionState::Failed);
+	TestFalse(TEXT("Recovered failed applies should not be reported as applied through the agent layer."), ApplyResponse.Result.bApplied);
+	TestFalse(TEXT("Recovered failed applies should still report failure because diagnostics contained errors."), ApplyResponse.Result.bSucceeded);
+	TestEqual(TEXT("The agent should report the successfully executed command count before rollback."), ApplyResponse.Result.ExecutedCommandCount, 1);
+	TestTrue(TEXT("The agent message should explain that Vergil rolled back the partial changes."), ApplyResponse.Message.Contains(TEXT("rolled back the partial changes")));
+	TestTrue(
+		TEXT("The runtime failure should surface the missing class-default property diagnostic through the agent result."),
+		ApplyResponse.Result.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == TEXT("ClassDefaultPropertyMissing");
+		}));
+
+	const FVergilTransactionAudit& TransactionAudit = ApplyResponse.Result.Statistics.TransactionAudit;
+	TestTrue(TEXT("Agent apply failures should still record the transaction audit."), TransactionAudit.bRecorded);
+	TestTrue(TEXT("Agent apply failures should require recovery."), TransactionAudit.bRecoveryRequired);
+	TestTrue(TEXT("Agent apply failures should attempt recovery."), TransactionAudit.bRecoveryAttempted);
+	TestTrue(TEXT("Agent apply failures should succeed at recovery."), TransactionAudit.bRecoverySucceeded);
+	TestEqual(TEXT("Agent apply failures should record the non-redo undo recovery method."), TransactionAudit.RecoveryMethod, FString(TEXT("UndoTransaction(bCanRedo=false)")));
+	TestEqual(TEXT("Automatic recovery should restore the original persisted Blueprint description."), Blueprint->BlueprintDescription, OriginalDescription);
+
+	TArray<FVergilAgentAuditEntry> AuditEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("The failed apply should still persist a single audit entry."), AuditEntries.Num(), 1);
+	if (AuditEntries.Num() == 1)
+	{
+		TestEqual(TEXT("The persisted audit entry should keep the failed response state."), AuditEntries[0].Response.State, EVergilAgentExecutionState::Failed);
+		TestTrue(TEXT("The persisted audit entry should keep the successful recovery flag."), AuditEntries[0].Response.Result.Statistics.TransactionAudit.bRecoverySucceeded);
+		TestEqual(TEXT("The persisted audit entry should keep the normalized approval note."), AuditEntries[0].Request.Context.WriteAuthorization.ApprovalNote, FString(TEXT("Agent partial apply recovery coverage")));
+		TestTrue(TEXT("Agent audit-entry JSON should embed the nested recovery payload."), AgentSubsystem->InspectAgentAuditEntryAsJson(AuditEntries[0], false).Contains(TEXT("\"recovery\":{\"required\":true,\"attempted\":true,\"succeeded\":true")));
+	}
+
+	TestTrue(TEXT("Agent response JSON should embed the nested recovery payload."), AgentSubsystem->InspectAgentResponseAsJson(ApplyResponse, false).Contains(TEXT("\"recovery\":{\"required\":true,\"attempted\":true,\"succeeded\":true")));
+
+	AgentSubsystem->ClearAuditTrail();
+	return true;
+}
+
 bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 {
 	FVergilNodeRegistry::Get().Reset();
@@ -5735,6 +5840,7 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Compiler output should always record normalized command plans."), CompileResult.Statistics.bCommandPlanNormalized);
 	TestFalse(TEXT("Dry-run compile should not report execution using the returned plan."), CompileResult.Statistics.bExecutionUsedReturnedCommandPlan);
 	TestFalse(TEXT("Dry-run compile should not record a transaction audit."), CompileResult.Statistics.TransactionAudit.bRecorded);
+	TestFalse(TEXT("Dry-run compile should not require apply recovery."), CompileResult.Statistics.TransactionAudit.bRecoveryRequired);
 	TestEqual(TEXT("Dry-run compile should record one planning invocation."), CompileResult.Statistics.PlanningInvocationCount, 1);
 	TestEqual(TEXT("Dry-run compile should record zero apply invocations."), CompileResult.Statistics.ApplyInvocationCount, 0);
 	TestEqual(TEXT("Compile metadata should count target-graph nodes."), CompileResult.Statistics.SourceNodeCount, 1);
@@ -5820,6 +5926,9 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Compile+apply metadata should record an opened scoped transaction."), ApplyResult.Statistics.TransactionAudit.bOpenedScopedTransaction);
 	TestEqual(TEXT("Compile+apply transaction audits should retain the Vergil transaction context."), ApplyResult.Statistics.TransactionAudit.TransactionContext, FString(TEXT("Vergil")));
 	TestEqual(TEXT("Compile+apply transaction audits should retain the transaction title."), ApplyResult.Statistics.TransactionAudit.TransactionTitle, FString(TEXT("Vergil Execute Command Plan")));
+	TestFalse(TEXT("Successful compile+apply metadata should not require recovery."), ApplyResult.Statistics.TransactionAudit.bRecoveryRequired);
+	TestFalse(TEXT("Successful compile+apply metadata should not attempt recovery."), ApplyResult.Statistics.TransactionAudit.bRecoveryAttempted);
+	TestFalse(TEXT("Successful compile+apply metadata should not report recovery success."), ApplyResult.Statistics.TransactionAudit.bRecoverySucceeded);
 	TestTrue(TEXT("Compile+apply transaction audits should expose a next undo entry after apply."), ApplyResult.Statistics.TransactionAudit.AfterState.NextUndoTransactionId.IsValid());
 	TestTrue(TEXT("Compile+apply transaction audits should report the Blueprint in the undo buffer after apply."), ApplyResult.Statistics.TransactionAudit.AfterState.bBlueprintReferencedByUndoBuffer);
 	TestEqual(TEXT("Compile+apply metadata should preserve the default target graph."), ApplyResult.Statistics.TargetGraphName, FName(TEXT("EventGraph")));
@@ -5870,6 +5979,9 @@ bool FVergilTransactionAuditTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Transaction-audit coverage should preserve the Vergil transaction context."), TransactionAudit.TransactionContext, FString(TEXT("Vergil")));
 	TestEqual(TEXT("Transaction-audit coverage should preserve the transaction title."), TransactionAudit.TransactionTitle, FString(TEXT("Vergil Execute Command Plan")));
 	TestEqual(TEXT("Transaction-audit coverage should preserve the primary Blueprint object path."), TransactionAudit.PrimaryObjectPath, Blueprint->GetPathName());
+	TestFalse(TEXT("Successful transaction-audit coverage should not require recovery."), TransactionAudit.bRecoveryRequired);
+	TestFalse(TEXT("Successful transaction-audit coverage should not attempt recovery."), TransactionAudit.bRecoveryAttempted);
+	TestFalse(TEXT("Successful transaction-audit coverage should not report recovery success."), TransactionAudit.bRecoverySucceeded);
 	TestTrue(TEXT("Transaction-audit coverage should expose an undo entry after apply."), TransactionAudit.AfterState.NextUndoTransactionId.IsValid());
 	TestEqual(TEXT("The next undo title should match the Vergil transaction title."), TransactionAudit.AfterState.NextUndoTitle, TransactionAudit.TransactionTitle);
 	TestEqual(TEXT("The next undo context should match the Vergil transaction context."), TransactionAudit.AfterState.NextUndoContext, TransactionAudit.TransactionContext);
@@ -5885,6 +5997,66 @@ bool FVergilTransactionAuditTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Redo should succeed for the recorded Vergil transaction."), GEditor->RedoTransaction());
 	TestEqual(TEXT("Redo should restore the authored Blueprint description."), Blueprint->BlueprintDescription, FString(TEXT("Transaction audit coverage")));
+
+	return true;
+}
+
+bool FVergilPartialApplyRecoveryTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created for partial-apply recovery coverage."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FString OriginalDescription = Blueprint->BlueprintDescription;
+
+	FVergilCompilerCommand SetBlueprintDescription;
+	SetBlueprintDescription.Type = EVergilCommandType::SetBlueprintMetadata;
+	SetBlueprintDescription.Name = TEXT("BlueprintDescription");
+	SetBlueprintDescription.StringValue = TEXT("Should be rolled back");
+
+	FVergilCompilerCommand InvalidClassDefault;
+	InvalidClassDefault.Type = EVergilCommandType::SetClassDefault;
+	InvalidClassDefault.Name = TEXT("DefinitelyMissingProperty");
+	InvalidClassDefault.StringValue = TEXT("42");
+
+	const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { SetBlueprintDescription, InvalidClassDefault });
+	TestFalse(TEXT("Partial-apply recovery coverage should fail the overall apply."), Result.bSucceeded);
+	TestFalse(TEXT("Recovered partial applies should not be reported as applied."), Result.bApplied);
+	TestEqual(TEXT("The first command should execute before the runtime failure occurs."), Result.ExecutedCommandCount, 1);
+	TestTrue(
+		TEXT("The runtime failure should surface the missing class-default property diagnostic."),
+		Result.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == TEXT("ClassDefaultPropertyMissing");
+		}));
+
+	const FVergilTransactionAudit& TransactionAudit = Result.Statistics.TransactionAudit;
+	TestTrue(TEXT("Failed apply recovery should still record the Vergil transaction audit."), TransactionAudit.bRecorded);
+	TestTrue(TEXT("Failed apply recovery should mark recovery as required."), TransactionAudit.bRecoveryRequired);
+	TestTrue(TEXT("Failed apply recovery should attempt automatic recovery."), TransactionAudit.bRecoveryAttempted);
+	TestTrue(TEXT("Failed apply recovery should succeed for the recorded Vergil transaction."), TransactionAudit.bRecoverySucceeded);
+	TestEqual(TEXT("Failed apply recovery should record the recovery method."), TransactionAudit.RecoveryMethod, FString(TEXT("UndoTransaction(bCanRedo=false)")));
+	TestTrue(TEXT("Failed apply recovery should explain that the failed transaction was rolled back."), TransactionAudit.RecoveryMessage.Contains(TEXT("without leaving a redo entry")));
+	TestTrue(TEXT("Failed apply recovery should capture the failed transaction on the undo stack before rollback."), TransactionAudit.FailureState.NextUndoTransactionId.IsValid());
+	TestEqual(TEXT("The failed transaction title should match the recorded Vergil title."), TransactionAudit.FailureState.NextUndoTitle, TransactionAudit.TransactionTitle);
+	TestEqual(TEXT("The failed transaction context should match the recorded Vergil context."), TransactionAudit.FailureState.NextUndoContext, TransactionAudit.TransactionContext);
+	TestEqual(TEXT("The failed transaction primary object should match the target Blueprint."), TransactionAudit.FailureState.NextUndoPrimaryObjectPath, Blueprint->GetPathName());
+	TestFalse(
+		TEXT("Recovered failed applies should not leave the failed transaction on the redo stack."),
+		TransactionAudit.AfterState.NextRedoTransactionId == TransactionAudit.FailureState.NextUndoTransactionId);
+	TestEqual(TEXT("Automatic recovery should restore the original Blueprint description."), Blueprint->BlueprintDescription, OriginalDescription);
+	TestTrue(TEXT("Partial-apply recovery should surface the recovery payload in compile-result JSON."), Vergil::SerializeCompileResult(Result, false).Contains(TEXT("\"recovery\":{\"required\":true,\"attempted\":true,\"succeeded\":true")));
+	TestTrue(TEXT("Partial-apply recovery should surface the recovery audit in compile-result descriptions."), Vergil::DescribeCompileResult(Result).Contains(TEXT("recovery={required=true attempted=true succeeded=true")));
 
 	return true;
 }
