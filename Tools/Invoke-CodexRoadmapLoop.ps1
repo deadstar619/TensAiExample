@@ -3,7 +3,7 @@ param(
 	[string]$RepoRoot,
 	[string]$RoadmapPath = "Plugins/Vergil/ROADMAP.md",
 	[int]$MaxTickets = 100,
-	[string]$CodexCommand = "codex",
+	[string]$CodexCommand,
 	[string]$Model,
 	[string]$Profile,
 	[string]$SessionRoot,
@@ -17,6 +17,14 @@ $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 	$RepoRoot = (Resolve-Path (Join-Path (Split-Path -Parent $PSCommandPath) "..")).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($CodexCommand)) {
+	$CodexLauncher = Get-Command "codex.cmd" -ErrorAction SilentlyContinue
+	if ($null -eq $CodexLauncher) {
+		$CodexLauncher = Get-Command "codex" -ErrorAction Stop
+	}
+	$CodexCommand = $CodexLauncher.Source
 }
 
 function Write-LoopState {
@@ -191,8 +199,14 @@ try {
 		}
 		$CodexArgs += $Prompt
 
-		& $CodexCommand @CodexArgs 1> $StdoutPath 2> $StderrPath
-		$ExitCode = $LASTEXITCODE
+		$PreviousErrorActionPreference = $ErrorActionPreference
+		$ErrorActionPreference = "Continue"
+		try {
+			& $CodexCommand @CodexArgs 1> $StdoutPath 2> $StderrPath
+			$ExitCode = $LASTEXITCODE
+		} finally {
+			$ErrorActionPreference = $PreviousErrorActionPreference
+		}
 
 		$LastMessage = if (Test-Path $LastMessagePath) {
 			(Get-Content -Path $LastMessagePath -Raw).Trim()
