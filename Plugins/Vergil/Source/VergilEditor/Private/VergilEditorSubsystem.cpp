@@ -31,10 +31,13 @@ namespace
 		return Request;
 	}
 
-	FVergilCompileResult PlanCompileRequest(const FVergilCompileRequest& Request, const bool bApplyCommands)
+	FVergilCompileResult PlanCompileRequest(
+		const FVergilCompileRequest& Request,
+		const bool bApplyCommands,
+		FVergilGraphDocument* OutEffectiveDocument = nullptr)
 	{
 		const FVergilBlueprintCompilerService CompilerService;
-		FVergilCompileResult Result = CompilerService.Compile(Request);
+		FVergilCompileResult Result = CompilerService.Compile(Request, OutEffectiveDocument);
 		Result.Statistics.bApplyRequested = bApplyCommands;
 		return Result;
 	}
@@ -210,6 +213,32 @@ FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blue
 	return Result;
 }
 
+FVergilCommandPlanPreview UVergilEditorSubsystem::PreviewCompileRequest(const FVergilCompileRequest& Request) const
+{
+	FVergilGraphDocument EffectiveDocument = Request.Document;
+	const FVergilCompileResult Result = PlanCompileRequest(Request, false, &EffectiveDocument);
+	return Vergil::MakeCommandPlanPreview(Request, EffectiveDocument, Result);
+}
+
+FVergilCommandPlanPreview UVergilEditorSubsystem::PreviewDocument(
+	UBlueprint* Blueprint,
+	const FVergilGraphDocument& Document,
+	const bool bAutoLayout,
+	const bool bGenerateComments) const
+{
+	return PreviewDocumentToGraph(Blueprint, Document, TEXT("EventGraph"), bAutoLayout, bGenerateComments);
+}
+
+FVergilCommandPlanPreview UVergilEditorSubsystem::PreviewDocumentToGraph(
+	UBlueprint* Blueprint,
+	const FVergilGraphDocument& Document,
+	const FName TargetGraphName,
+	const bool bAutoLayout,
+	const bool bGenerateComments) const
+{
+	return PreviewCompileRequest(MakeCompileRequest(Blueprint, Document, TargetGraphName, bAutoLayout, bGenerateComments));
+}
+
 FString UVergilEditorSubsystem::SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, const bool bPrettyPrint) const
 {
 	return Vergil::SerializeCommandPlan(Commands, bPrettyPrint);
@@ -230,6 +259,21 @@ FString UVergilEditorSubsystem::SerializeDocument(const FVergilGraphDocument& Do
 	return Vergil::SerializeGraphDocument(Document, bPrettyPrint);
 }
 
+FVergilDocumentDiff UVergilEditorSubsystem::DiffDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After) const
+{
+	return Vergil::DiffGraphDocuments(Before, After);
+}
+
+FString UVergilEditorSubsystem::DescribeDocumentDiff(const FVergilDocumentDiff& Diff) const
+{
+	return Vergil::DescribeDocumentDiff(Diff);
+}
+
+FString UVergilEditorSubsystem::InspectDocumentDiffAsJson(const FVergilDocumentDiff& Diff, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeDocumentDiff(Diff, bPrettyPrint);
+}
+
 FString UVergilEditorSubsystem::DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const
 {
 	return Vergil::DescribeDiagnostics(Diagnostics);
@@ -248,6 +292,16 @@ FString UVergilEditorSubsystem::DescribeCompileResult(const FVergilCompileResult
 FString UVergilEditorSubsystem::SerializeCompileResult(const FVergilCompileResult& Result, const bool bPrettyPrint) const
 {
 	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
+}
+
+FString UVergilEditorSubsystem::DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview) const
+{
+	return Vergil::DescribeCommandPlanPreview(Preview);
+}
+
+FString UVergilEditorSubsystem::InspectCommandPlanPreviewAsJson(const FVergilCommandPlanPreview& Preview, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCommandPlanPreview(Preview, bPrettyPrint);
 }
 
 FVergilReflectionSymbolInfo UVergilEditorSubsystem::InspectReflectionSymbol(const FString& Query) const

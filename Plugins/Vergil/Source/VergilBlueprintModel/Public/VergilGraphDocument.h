@@ -405,12 +405,74 @@ struct VERGILBLUEPRINTMODEL_API FVergilGraphDocument
 	bool IsStructurallyValid(TArray<FVergilDiagnostic>* OutDiagnostics = nullptr) const;
 };
 
+UENUM(BlueprintType)
+enum class EVergilDocumentDiffChangeType : uint8
+{
+	Added,
+	Removed,
+	Modified
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilDocumentDiffEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString Path;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilDocumentDiffChangeType ChangeType = EVergilDocumentDiffChangeType::Modified;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString BeforeValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString AfterValue;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTMODEL_API FVergilDocumentDiff
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bDocumentsMatch = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString BeforeFingerprint;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString AfterFingerprint;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 AddedCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 RemovedCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 ModifiedCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilDocumentDiffEntry> Entries;
+
+	FString ToDisplayString() const;
+};
+
 namespace Vergil
 {
 	VERGILBLUEPRINTMODEL_API FString GetDocumentInspectionFormatName();
 	VERGILBLUEPRINTMODEL_API int32 GetDocumentInspectionFormatVersion();
 	VERGILBLUEPRINTMODEL_API FString DescribeGraphDocument(const FVergilGraphDocument& Document);
 	VERGILBLUEPRINTMODEL_API FString SerializeGraphDocument(const FVergilGraphDocument& Document, bool bPrettyPrint = true);
+	VERGILBLUEPRINTMODEL_API FString GetDocumentDiffInspectionFormatName();
+	VERGILBLUEPRINTMODEL_API int32 GetDocumentDiffInspectionFormatVersion();
+	VERGILBLUEPRINTMODEL_API FVergilDocumentDiff DiffGraphDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After);
+	VERGILBLUEPRINTMODEL_API FString DescribeDocumentDiff(const FVergilDocumentDiff& Diff);
+	VERGILBLUEPRINTMODEL_API FString SerializeDocumentDiff(const FVergilDocumentDiff& Diff, bool bPrettyPrint = true);
 	VERGILBLUEPRINTMODEL_API TArray<FString> GetSupportedSchemaMigrationPaths();
 	VERGILBLUEPRINTMODEL_API bool CanMigrateSchemaVersion(int32 SourceSchemaVersion, int32 TargetSchemaVersion = SchemaVersion);
 	VERGILBLUEPRINTMODEL_API bool MigrateDocumentSchema(

@@ -3431,6 +3431,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilDiffPreviewToolingTest,
+	"Vergil.Scaffold.DiffPreviewTooling",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilReflectionInspectionTest,
 	"Vergil.Scaffold.ReflectionInspection",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -3808,6 +3813,148 @@ bool FVergilInspectorToolingTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Serialized compile results should embed the command-plan payload."), NamespaceCompileResultJson.Contains(TEXT("\"commandPlan\":{\"format\":\"Vergil.CommandPlan\"")));
 	TestTrue(TEXT("Serialized compile results should include pass records."), NamespaceCompileResultJson.Contains(TEXT("\"passRecords\"")));
 	TestTrue(TEXT("Serialized compile results should include the schema-migration diagnostic code."), NamespaceCompileResultJson.Contains(TEXT("SchemaMigrationApplied")));
+
+	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
+
+bool FVergilDiffPreviewToolingTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem should be available for diff/preview tooling."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for diff/preview tooling."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FVergilVariableDefinition BeforeVariable;
+	BeforeVariable.Name = TEXT("Counter");
+	BeforeVariable.Type.PinCategory = TEXT("int");
+	BeforeVariable.DefaultValue = TEXT("1");
+
+	FVergilGraphDocument BeforeDocument;
+	BeforeDocument.SchemaVersion = Vergil::SchemaVersion;
+	BeforeDocument.BlueprintPath = TEXT("/Game/Tests/BP_DiffBefore");
+	BeforeDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Before"));
+	BeforeDocument.Variables.Add(BeforeVariable);
+	BeforeDocument.Tags.Add(TEXT("Smoke"));
+
+	FVergilGraphDocument AfterDocument = BeforeDocument;
+	AfterDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("After"));
+	AfterDocument.Variables.Reset();
+
+	FVergilFunctionDefinition AddedFunction;
+	AddedFunction.Name = TEXT("AddedFunction");
+	AfterDocument.Functions.Add(AddedFunction);
+	AfterDocument.Tags.Add(TEXT("Preview"));
+
+	const FVergilDocumentDiff NamespaceDiff = Vergil::DiffGraphDocuments(BeforeDocument, AfterDocument);
+	TestFalse(TEXT("Document diff should report non-matching documents when authored content changes."), NamespaceDiff.bDocumentsMatch);
+	TestTrue(TEXT("Document diff should report at least one modified entry."), NamespaceDiff.ModifiedCount > 0);
+	TestTrue(TEXT("Document diff should report at least one removed entry."), NamespaceDiff.RemovedCount > 0);
+	TestTrue(TEXT("Document diff should report at least one added entry."), NamespaceDiff.AddedCount > 0);
+	TestTrue(TEXT("Document diff should include the BlueprintDescription metadata path."), NamespaceDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("metadata.BlueprintDescription") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestTrue(TEXT("Document diff should include the removed variable entry."), NamespaceDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("variables[0]") && Entry.ChangeType == EVergilDocumentDiffChangeType::Removed;
+	}));
+	TestTrue(TEXT("Document diff should include the added function entry."), NamespaceDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("functions[0]") && Entry.ChangeType == EVergilDocumentDiffChangeType::Added;
+	}));
+
+	const FString NamespaceDiffDescription = Vergil::DescribeDocumentDiff(NamespaceDiff);
+	TestEqual(TEXT("Editor document-diff inspection should mirror the namespace helper."), EditorSubsystem->DescribeDocumentDiff(NamespaceDiff), NamespaceDiffDescription);
+	TestEqual(TEXT("Agent document-diff inspection should mirror the namespace helper."), AgentSubsystem->DescribeDocumentDiff(NamespaceDiff), NamespaceDiffDescription);
+	TestTrue(TEXT("Document-diff inspection should advertise the document-diff format marker."), NamespaceDiffDescription.Contains(TEXT("Vergil.DocumentDiff version=1")));
+	TestTrue(TEXT("Document-diff inspection should include the metadata path."), NamespaceDiffDescription.Contains(TEXT("metadata.BlueprintDescription")));
+
+	const FString NamespaceDiffJson = Vergil::SerializeDocumentDiff(NamespaceDiff, false);
+	TestEqual(TEXT("Editor document-diff JSON should mirror the namespace helper."), EditorSubsystem->InspectDocumentDiffAsJson(NamespaceDiff, false), NamespaceDiffJson);
+	TestEqual(TEXT("Agent document-diff JSON should mirror the namespace helper."), AgentSubsystem->InspectDocumentDiffAsJson(NamespaceDiff, false), NamespaceDiffJson);
+	TestTrue(TEXT("Document-diff JSON should advertise the document-diff format marker."), NamespaceDiffJson.Contains(TEXT("\"format\":\"Vergil.DocumentDiff\"")));
+	TestTrue(TEXT("Document-diff JSON should include modified metadata entries."), NamespaceDiffJson.Contains(TEXT("\"path\":\"metadata.BlueprintDescription\"")));
+
+	FVergilNodeRegistry::Get().Reset();
+	FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestSpecificNodeHandler, ESPMode::ThreadSafe>());
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created for preview tooling."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		FVergilNodeRegistry::Get().Reset();
+		return false;
+	}
+
+	FVergilGraphNode PreviewNode;
+	PreviewNode.Id = FGuid::NewGuid();
+	PreviewNode.Kind = EVergilNodeKind::Custom;
+	PreviewNode.Descriptor = TEXT("Test.Special");
+	PreviewNode.Position = FVector2D(64.0f, 128.0f);
+
+	FVergilGraphDocument PreviewDocument;
+	PreviewDocument.SchemaVersion = 1;
+	PreviewDocument.BlueprintPath = TEXT("/Game/Tests/BP_DiffPreviewTooling");
+	PreviewDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Preview document"));
+	PreviewDocument.Nodes.Add(PreviewNode);
+
+	const FVergilCompileRequest Request = EditorSubsystem->MakeCompileRequest(Blueprint, PreviewDocument, TEXT("EventGraph"), false, false);
+	const FVergilCommandPlanPreview Preview = EditorSubsystem->PreviewCompileRequest(Request);
+	TestTrue(TEXT("Preview tooling should succeed for a valid dry-run compile request."), Preview.Result.bSucceeded);
+	TestFalse(TEXT("Preview tooling should remain a dry run."), Preview.Result.bApplied);
+	TestTrue(TEXT("Preview tooling should expose planned commands."), Preview.Result.Commands.Num() > 0);
+	TestEqual(TEXT("Preview tooling should normalize the effective document schema version."), Preview.EffectiveDocument.SchemaVersion, Vergil::SchemaVersion);
+	TestTrue(TEXT("Preview tooling should expose a schema-version diff entry after migration."), Preview.DocumentDiff.Entries.ContainsByPredicate([](const FVergilDocumentDiffEntry& Entry)
+	{
+		return Entry.Path == TEXT("schemaVersion") && Entry.ChangeType == EVergilDocumentDiffChangeType::Modified;
+	}));
+	TestEqual(TEXT("Preview target graph should mirror the compile request."), Preview.TargetGraphName, Request.TargetGraphName);
+	TestEqual(TEXT("Preview auto-layout flag should mirror the compile request."), Preview.bAutoLayout, Request.bAutoLayout);
+	TestEqual(TEXT("Preview generate-comments flag should mirror the compile request."), Preview.bGenerateComments, Request.bGenerateComments);
+
+	const FVergilCompileResult DryRunResult = EditorSubsystem->CompileRequest(Request, false);
+	TestEqual(
+		TEXT("Preview command-plan fingerprint should match the normal dry-run compile path."),
+		Preview.Result.Statistics.CommandPlanFingerprint,
+		DryRunResult.Statistics.CommandPlanFingerprint);
+	TestEqual(
+		TEXT("Preview command-plan JSON should match the normal dry-run compile path."),
+		Vergil::SerializeCommandPlan(Preview.Result.Commands, false),
+		Vergil::SerializeCommandPlan(DryRunResult.Commands, false));
+
+	const FVergilCommandPlanPreview PreviewViaDocument = EditorSubsystem->PreviewDocument(Blueprint, PreviewDocument, false, false);
+	const FVergilCommandPlanPreview PreviewViaGraph = EditorSubsystem->PreviewDocumentToGraph(Blueprint, PreviewDocument, TEXT("EventGraph"), false, false);
+	TestEqual(
+		TEXT("PreviewDocument should mirror PreviewCompileRequest."),
+		Vergil::SerializeCommandPlanPreview(PreviewViaDocument, false),
+		Vergil::SerializeCommandPlanPreview(Preview, false));
+	TestEqual(
+		TEXT("PreviewDocumentToGraph should mirror PreviewCompileRequest."),
+		Vergil::SerializeCommandPlanPreview(PreviewViaGraph, false),
+		Vergil::SerializeCommandPlanPreview(Preview, false));
+
+	const FString NamespacePreviewDescription = Vergil::DescribeCommandPlanPreview(Preview);
+	TestEqual(TEXT("Editor command-plan preview inspection should mirror the namespace helper."), EditorSubsystem->DescribeCommandPlanPreview(Preview), NamespacePreviewDescription);
+	TestEqual(TEXT("Agent command-plan preview inspection should mirror the namespace helper."), AgentSubsystem->DescribeCommandPlanPreview(Preview), NamespacePreviewDescription);
+	TestTrue(TEXT("Command-plan preview inspection should advertise the preview format marker."), NamespacePreviewDescription.Contains(TEXT("Vergil.CommandPlanPreview version=1")));
+	TestTrue(TEXT("Command-plan preview inspection should include planned mutations."), NamespacePreviewDescription.Contains(TEXT("plannedMutations:")));
+
+	const FString NamespacePreviewJson = Vergil::SerializeCommandPlanPreview(Preview, false);
+	TestEqual(TEXT("Editor command-plan preview JSON should mirror the namespace helper."), EditorSubsystem->InspectCommandPlanPreviewAsJson(Preview, false), NamespacePreviewJson);
+	TestEqual(TEXT("Agent command-plan preview JSON should mirror the namespace helper."), AgentSubsystem->InspectCommandPlanPreviewAsJson(Preview, false), NamespacePreviewJson);
+	TestTrue(TEXT("Command-plan preview JSON should advertise the preview format marker."), NamespacePreviewJson.Contains(TEXT("\"format\":\"Vergil.CommandPlanPreview\"")));
+	TestTrue(TEXT("Command-plan preview JSON should embed the document-diff payload."), NamespacePreviewJson.Contains(TEXT("\"documentDiff\":{\"format\":\"Vergil.DocumentDiff\"")));
+	TestTrue(TEXT("Command-plan preview JSON should embed the compile-result payload."), NamespacePreviewJson.Contains(TEXT("\"compileResult\":{\"format\":\"Vergil.CompileResult\"")));
 
 	FVergilNodeRegistry::Get().Reset();
 	return true;

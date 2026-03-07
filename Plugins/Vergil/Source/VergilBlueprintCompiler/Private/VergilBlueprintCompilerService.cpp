@@ -6,7 +6,7 @@
 #include "VergilCompilerTypes.h"
 #include "VergilLog.h"
 
-FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompileRequest& Request) const
+FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompileRequest& Request, FVergilGraphDocument* OutEffectiveDocument) const
 {
 	FVergilCompileResult Result;
 	Result.Statistics.TargetGraphName = Request.TargetGraphName;
@@ -18,6 +18,11 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 
 	if (Request.TargetBlueprint == nullptr)
 	{
+		if (OutEffectiveDocument != nullptr)
+		{
+			*OutEffectiveDocument = Request.Document;
+		}
+
 		Result.Diagnostics.Add(FVergilDiagnostic::Make(
 			EVergilDiagnosticSeverity::Error,
 			TEXT("MissingTargetBlueprint"),
@@ -110,6 +115,11 @@ FVergilCompileResult FVergilBlueprintCompilerService::Compile(const FVergilCompi
 	if (!Result.bSucceeded)
 	{
 		UE_LOG(LogVergil, Log, TEXT("Vergil compile request failed with %d diagnostics."), Result.Diagnostics.Num());
+	}
+
+	if (OutEffectiveDocument != nullptr)
+	{
+		*OutEffectiveDocument = Context.GetDocument();
 	}
 
 	return Result;

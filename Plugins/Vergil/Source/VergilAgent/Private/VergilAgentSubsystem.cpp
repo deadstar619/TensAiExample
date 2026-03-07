@@ -462,6 +462,21 @@ FString UVergilAgentSubsystem::InspectDocumentAsJson(const FVergilGraphDocument&
 	return Vergil::SerializeGraphDocument(Document, bPrettyPrint);
 }
 
+FVergilDocumentDiff UVergilAgentSubsystem::DiffDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After) const
+{
+	return Vergil::DiffGraphDocuments(Before, After);
+}
+
+FString UVergilAgentSubsystem::DescribeDocumentDiff(const FVergilDocumentDiff& Diff) const
+{
+	return Vergil::DescribeDocumentDiff(Diff);
+}
+
+FString UVergilAgentSubsystem::InspectDocumentDiffAsJson(const FVergilDocumentDiff& Diff, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeDocumentDiff(Diff, bPrettyPrint);
+}
+
 FString UVergilAgentSubsystem::DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const
 {
 	return Vergil::DescribeDiagnostics(Diagnostics);
@@ -480,6 +495,16 @@ FString UVergilAgentSubsystem::DescribeCompileResult(const FVergilCompileResult&
 FString UVergilAgentSubsystem::InspectCompileResultAsJson(const FVergilCompileResult& Result, const bool bPrettyPrint) const
 {
 	return Vergil::SerializeCompileResult(Result, bPrettyPrint);
+}
+
+FString UVergilAgentSubsystem::DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview) const
+{
+	return Vergil::DescribeCommandPlanPreview(Preview);
+}
+
+FString UVergilAgentSubsystem::InspectCommandPlanPreviewAsJson(const FVergilCommandPlanPreview& Preview, const bool bPrettyPrint) const
+{
+	return Vergil::SerializeCommandPlanPreview(Preview, bPrettyPrint);
 }
 
 FVergilReflectionSymbolInfo UVergilAgentSubsystem::InspectReflectionSymbol(const FString& Query) const

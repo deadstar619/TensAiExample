@@ -2,6 +2,7 @@
 
 #include "Algo/StableSort.h"
 #include "Dom/JsonObject.h"
+#include "Engine/Blueprint.h"
 #include "Misc/Crc.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
@@ -17,6 +18,8 @@ namespace
 	inline constexpr int32 DiagnosticsInspectionFormatVersion = 1;
 	inline constexpr TCHAR CompileResultInspectionFormatName[] = TEXT("Vergil.CompileResult");
 	inline constexpr int32 CompileResultInspectionFormatVersion = 1;
+	inline constexpr TCHAR CommandPlanPreviewInspectionFormatName[] = TEXT("Vergil.CommandPlanPreview");
+	inline constexpr int32 CommandPlanPreviewInspectionFormatVersion = 1;
 
 	const TCHAR* LexBoolString(const bool bValue)
 	{
@@ -468,6 +471,33 @@ namespace
 		}
 		Writer.WriteArrayEnd();
 		Writer.WriteObjectEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	FString ResolvePreviewBlueprintPath(const FVergilCompileRequest& Request)
+	{
+		if (Request.TargetBlueprint != nullptr)
+		{
+			return Request.TargetBlueprint->GetPathName();
+		}
+
+		return Request.Document.BlueprintPath.TrimStartAndEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteCommandPlanPreviewJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilCommandPlanPreview& Preview)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("format"), CommandPlanPreviewInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), CommandPlanPreviewInspectionFormatVersion);
+		Writer.WriteValue(TEXT("targetBlueprintPath"), Preview.TargetBlueprintPath);
+		Writer.WriteValue(TEXT("targetGraphName"), LexNameString(Preview.TargetGraphName));
+		Writer.WriteValue(TEXT("autoLayout"), Preview.bAutoLayout);
+		Writer.WriteValue(TEXT("generateComments"), Preview.bGenerateComments);
+		Writer.WriteRawJSONValue(TEXT("sourceDocument"), Vergil::SerializeGraphDocument(Preview.SourceDocument, false));
+		Writer.WriteRawJSONValue(TEXT("effectiveDocument"), Vergil::SerializeGraphDocument(Preview.EffectiveDocument, false));
+		Writer.WriteRawJSONValue(TEXT("documentDiff"), Vergil::SerializeDocumentDiff(Preview.DocumentDiff, false));
+		Writer.WriteRawJSONValue(TEXT("compileResult"), Vergil::SerializeCompileResult(Preview.Result, false));
 		Writer.WriteObjectEnd();
 	}
 
@@ -977,6 +1007,16 @@ int32 Vergil::GetCompileResultInspectionFormatVersion()
 	return CompileResultInspectionFormatVersion;
 }
 
+FString Vergil::GetCommandPlanPreviewInspectionFormatName()
+{
+	return CommandPlanPreviewInspectionFormatName;
+}
+
+int32 Vergil::GetCommandPlanPreviewInspectionFormatVersion()
+{
+	return CommandPlanPreviewInspectionFormatVersion;
+}
+
 void Vergil::NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands)
 {
 	Algo::StableSort(Commands, [](const FVergilCompilerCommand& A, const FVergilCompilerCommand& B)
@@ -1227,6 +1267,82 @@ FString Vergil::SerializeCompileResult(const FVergilCompileResult& Result, const
 	}
 
 	return SerializedResult;
+}
+
+FVergilCommandPlanPreview Vergil::MakeCommandPlanPreview(
+	const FVergilCompileRequest& Request,
+	const FVergilGraphDocument& EffectiveDocument,
+	const FVergilCompileResult& Result)
+{
+	FVergilCommandPlanPreview Preview;
+	Preview.TargetBlueprintPath = ResolvePreviewBlueprintPath(Request);
+	Preview.TargetGraphName = Request.TargetGraphName;
+	Preview.bAutoLayout = Request.bAutoLayout;
+	Preview.bGenerateComments = Request.bGenerateComments;
+	Preview.SourceDocument = Request.Document;
+	Preview.EffectiveDocument = EffectiveDocument;
+	Preview.DocumentDiff = Vergil::DiffGraphDocuments(Request.Document, EffectiveDocument);
+	Preview.Result = Result;
+	return Preview;
+}
+
+FString Vergil::DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview)
+{
+	TArray<FString> Lines;
+	Lines.Add(FString::Printf(
+		TEXT("%s version=%d targetBlueprint=%s targetGraph=%s autoLayout=%s generateComments=%s succeeded=%s applied=%s diffEntries=%d commands=%d diagnostics=%d"),
+		CommandPlanPreviewInspectionFormatName,
+		CommandPlanPreviewInspectionFormatVersion,
+		Preview.TargetBlueprintPath.IsEmpty() ? TEXT("<none>") : *Preview.TargetBlueprintPath,
+		Preview.TargetGraphName.IsNone() ? TEXT("<none>") : *Preview.TargetGraphName.ToString(),
+		LexBoolString(Preview.bAutoLayout),
+		LexBoolString(Preview.bGenerateComments),
+		LexBoolString(Preview.Result.bSucceeded),
+		LexBoolString(Preview.Result.bApplied),
+		Preview.DocumentDiff.Entries.Num(),
+		Preview.Result.Commands.Num(),
+		Preview.Result.Diagnostics.Num()));
+	Lines.Add(FString::Printf(TEXT("documentDiff: %s"), *Preview.DocumentDiff.ToDisplayString()));
+	Lines.Add(FString::Printf(TEXT("compileSummary: %s"), *Vergil::SummarizeCompileResult(Preview.Result).ToDisplayString()));
+	Lines.Add(TEXT("plannedMutations:"));
+	Lines.Add(Vergil::DescribeCommandPlan(Preview.Result.Commands));
+	return FString::Join(Lines, TEXT("\n"));
+}
+
+FString Vergil::SerializeCommandPlanPreview(const FVergilCommandPlanPreview& Preview, const bool bPrettyPrint)
+{
+	FString SerializedPreview;
+	if (bPrettyPrint)
+	{
+		TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&SerializedPreview);
+		WriteCommandPlanPreviewJson(*Writer, Preview);
+		Writer->Close();
+	}
+	else
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedPreview);
+		WriteCommandPlanPreviewJson(*Writer, Preview);
+		Writer->Close();
+	}
+
+	return SerializedPreview;
+}
+
+FString FVergilCommandPlanPreview::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("targetBlueprint=%s targetGraph=%s autoLayout=%s generateComments=%s diffEntries=%d commands=%d diagnostics=%d succeeded=%s applied=%s"),
+		TargetBlueprintPath.IsEmpty() ? TEXT("<none>") : *TargetBlueprintPath,
+		TargetGraphName.IsNone() ? TEXT("<none>") : *TargetGraphName.ToString(),
+		LexBoolString(bAutoLayout),
+		LexBoolString(bGenerateComments),
+		DocumentDiff.Entries.Num(),
+		Result.Commands.Num(),
+		Result.Diagnostics.Num(),
+		LexBoolString(Result.bSucceeded),
+		LexBoolString(Result.bApplied));
 }
 
 int32 FVergilDiagnosticSummary::GetTotalCount() const

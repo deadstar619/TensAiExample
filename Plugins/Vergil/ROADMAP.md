@@ -412,7 +412,7 @@ Tickets:
 - [x] `VGR-7001` Add document/command/diagnostic inspector tooling
 - [x] `VGR-7002` Add deterministic auto-layout pass API
 - [x] `VGR-7003` Add explicit comment generation pass API
-- `VGR-7004` Add document diff and command-plan preview tooling
+- [x] `VGR-7004` Add document diff and command-plan preview tooling
 - `VGR-7005` Add stronger undo/redo transaction auditing
 - `VGR-7006` Expand developer settings for compiler/layout/validation behavior
 - [x] `VGR-7007` Add runtime/reflection inspection/discovery utilities
@@ -439,6 +439,12 @@ Session note for `VGR-7003` (2026-03-07):
 - `FVergilCompileRequest` now carries explicit `CommentGeneration` settings for comment width, height, font size, title color, zoom bubble visibility, bubble coloring, and move mode, using `UE_5.7` `UEdGraphNode_Comment` defaults as the deterministic baseline instead of inheriting per-user graph-editor defaults.
 - The comment post-pass now emits default `SetNodeMetadata` work for any missing comment style fields, so authored comment nodes stay explicit in the returned command plan while still allowing authored metadata to override request defaults on a field-by-field basis.
 - `UVergilEditorSubsystem` now exposes `MakeCompileRequest(...)` plus `CompileRequest(...)`, and `Vergil.Scaffold.LayoutCommentPostPasses` / `Vergil.Scaffold.CommentExecution` now cover request-level comment-pass customization through planning and end-to-end `UE_5.7` execution.
+
+Session note for `VGR-7004` (2026-03-07):
+
+- Vergil now exposes a deterministic `Vergil.DocumentDiff` inspection contract through `Vergil::DiffGraphDocuments(...)`, `DescribeDocumentDiff(...)`, and `SerializeDocumentDiff(...)`, reporting added, removed, and modified canonical-document paths plus before/after fingerprints without depending on Blueprint asset scraping.
+- `UVergilEditorSubsystem` now exposes `PreviewCompileRequest(...)`, `PreviewDocument(...)`, and `PreviewDocumentToGraph(...)`, returning a versioned `Vergil.CommandPlanPreview` payload that captures the authored request document, the effective post-migration working document, the document diff between them, and the existing dry-run `FVergilCompileResult`.
+- `UVergilAgentSubsystem` mirrors the new diff/preview inspection helpers, and `Vergil.Scaffold.DiffPreviewTooling` now covers namespace, editor-subsystem, and agent-subsystem parity for document diffs plus command-plan preview parity against the existing dry-run compile path.
 
 Session note for `VGR-7007` (2026-03-07):
 
@@ -540,11 +546,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7004`
-2. `VGR-8004`
-3. `VGR-6001`
-4. `VGR-6002`
-5. `VGR-6003`
+1. `VGR-8004`
+2. `VGR-6001`
+3. `VGR-6002`
+4. `VGR-6003`
+5. `VGR-7005`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

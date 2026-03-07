@@ -84,6 +84,15 @@ public:
 	FString InspectDocumentAsJson(const FVergilGraphDocument& Document, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FVergilDocumentDiff DiffDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeDocumentDiff(const FVergilDocumentDiff& Diff) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectDocumentDiffAsJson(const FVergilDocumentDiff& Diff, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
@@ -94,6 +103,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString InspectCompileResultAsJson(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString InspectCommandPlanPreviewAsJson(const FVergilCommandPlanPreview& Preview, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FVergilReflectionSymbolInfo InspectReflectionSymbol(const FString& Query) const;

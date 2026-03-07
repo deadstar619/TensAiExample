@@ -1,13 +1,19 @@
 #include "VergilGraphDocument.h"
 
+#include "Dom/JsonObject.h"
+#include "Misc/Crc.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
 namespace
 {
 	inline constexpr TCHAR DocumentInspectionFormatName[] = TEXT("Vergil.GraphDocument");
 	inline constexpr int32 DocumentInspectionFormatVersion = 1;
+	inline constexpr TCHAR DocumentDiffInspectionFormatName[] = TEXT("Vergil.DocumentDiff");
+	inline constexpr int32 DocumentDiffInspectionFormatVersion = 1;
 
 	const TCHAR* LexBoolString(const bool bValue)
 	{
@@ -121,6 +127,24 @@ namespace
 
 		case EVergilFunctionAccessSpecifier::Private:
 			return TEXT("Private");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* LexDocumentDiffChangeTypeString(const EVergilDocumentDiffChangeType ChangeType)
+	{
+		switch (ChangeType)
+		{
+		case EVergilDocumentDiffChangeType::Added:
+			return TEXT("Added");
+
+		case EVergilDocumentDiffChangeType::Removed:
+			return TEXT("Removed");
+
+		case EVergilDocumentDiffChangeType::Modified:
+			return TEXT("Modified");
 
 		default:
 			return TEXT("Unknown");
@@ -806,6 +830,297 @@ namespace
 		for (const FName Tag : Document.Tags)
 		{
 			Writer.WriteValue(LexNameString(Tag));
+		}
+		Writer.WriteArrayEnd();
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteJsonValueSorted(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TSharedPtr<FJsonValue>& Value);
+
+	template <typename PrintPolicy>
+	void WriteJsonValueSorted(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FString& Identifier, const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid() || Value->Type == EJson::Null)
+		{
+			Writer.WriteNull(Identifier);
+			return;
+		}
+
+		if (Value->Type == EJson::Object)
+		{
+			Writer.WriteObjectStart(Identifier);
+
+			const TSharedPtr<FJsonObject> ObjectValue = Value->AsObject();
+			TArray<FString> Keys;
+			ObjectValue->Values.GenerateKeyArray(Keys);
+			Keys.Sort();
+
+			for (const FString& Key : Keys)
+			{
+				const TSharedPtr<FJsonValue>* ChildValue = ObjectValue->Values.Find(Key);
+				if (ChildValue != nullptr)
+				{
+					WriteJsonValueSorted(Writer, Key, *ChildValue);
+				}
+			}
+
+			Writer.WriteObjectEnd();
+			return;
+		}
+
+		if (Value->Type == EJson::Array)
+		{
+			Writer.WriteArrayStart(Identifier);
+			for (const TSharedPtr<FJsonValue>& ArrayValue : Value->AsArray())
+			{
+				WriteJsonValueSorted(Writer, ArrayValue);
+			}
+			Writer.WriteArrayEnd();
+			return;
+		}
+
+		TJsonSerializer<>::Serialize(Value.ToSharedRef(), Identifier, Writer, false);
+	}
+
+	template <typename PrintPolicy>
+	void WriteJsonValueSorted(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid() || Value->Type == EJson::Null)
+		{
+			Writer.WriteNull();
+			return;
+		}
+
+		if (Value->Type == EJson::Object)
+		{
+			Writer.WriteObjectStart();
+
+			const TSharedPtr<FJsonObject> ObjectValue = Value->AsObject();
+			TArray<FString> Keys;
+			ObjectValue->Values.GenerateKeyArray(Keys);
+			Keys.Sort();
+
+			for (const FString& Key : Keys)
+			{
+				const TSharedPtr<FJsonValue>* ChildValue = ObjectValue->Values.Find(Key);
+				if (ChildValue != nullptr)
+				{
+					WriteJsonValueSorted(Writer, Key, *ChildValue);
+				}
+			}
+
+			Writer.WriteObjectEnd();
+			return;
+		}
+
+		if (Value->Type == EJson::Array)
+		{
+			Writer.WriteArrayStart();
+			for (const TSharedPtr<FJsonValue>& ArrayValue : Value->AsArray())
+			{
+				WriteJsonValueSorted(Writer, ArrayValue);
+			}
+			Writer.WriteArrayEnd();
+			return;
+		}
+
+		TJsonSerializer<>::Serialize(Value.ToSharedRef(), FString(), Writer, false);
+	}
+
+	FString SerializeJsonValueSorted(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return FString();
+		}
+
+		FString SerializedValue;
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedValue);
+		WriteJsonValueSorted(*Writer, Value);
+		Writer->Close();
+		return SerializedValue;
+	}
+
+	FString BuildDocumentFingerprint(const FVergilGraphDocument& Document)
+	{
+		const FString SerializedDocument = Vergil::SerializeGraphDocument(Document, false);
+		return FString::Printf(TEXT("%08x"), FCrc::StrCrc32(*SerializedDocument));
+	}
+
+	bool ParseSerializedDocumentObject(const FString& SerializedDocument, TSharedPtr<FJsonObject>& OutObject)
+	{
+		OutObject.Reset();
+
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SerializedDocument);
+		TSharedPtr<FJsonObject> RootObject;
+		if (!FJsonSerializer::Deserialize(Reader, RootObject) || !RootObject.IsValid())
+		{
+			return false;
+		}
+
+		OutObject = RootObject;
+		return true;
+	}
+
+	FString BuildDocumentDiffPath(const FString& ParentPath, const FString& ChildKey)
+	{
+		return ParentPath.IsEmpty() ? ChildKey : FString::Printf(TEXT("%s.%s"), *ParentPath, *ChildKey);
+	}
+
+	FString BuildDocumentDiffArrayPath(const FString& ParentPath, const int32 Index)
+	{
+		return ParentPath.IsEmpty()
+			? FString::Printf(TEXT("[%d]"), Index)
+			: FString::Printf(TEXT("%s[%d]"), *ParentPath, Index);
+	}
+
+	void AddDocumentDiffEntry(
+		FVergilDocumentDiff& Diff,
+		const FString& Path,
+		const EVergilDocumentDiffChangeType ChangeType,
+		const TSharedPtr<FJsonValue>& BeforeValue,
+		const TSharedPtr<FJsonValue>& AfterValue)
+	{
+		FVergilDocumentDiffEntry Entry;
+		Entry.Path = Path.IsEmpty() ? TEXT("<root>") : Path;
+		Entry.ChangeType = ChangeType;
+		Entry.BeforeValue = SerializeJsonValueSorted(BeforeValue);
+		Entry.AfterValue = SerializeJsonValueSorted(AfterValue);
+		Diff.Entries.Add(MoveTemp(Entry));
+
+		switch (ChangeType)
+		{
+		case EVergilDocumentDiffChangeType::Added:
+			++Diff.AddedCount;
+			break;
+
+		case EVergilDocumentDiffChangeType::Removed:
+			++Diff.RemovedCount;
+			break;
+
+		case EVergilDocumentDiffChangeType::Modified:
+		default:
+			++Diff.ModifiedCount;
+			break;
+		}
+	}
+
+	void DiffDocumentJsonValues(
+		const TSharedPtr<FJsonValue>& BeforeValue,
+		const TSharedPtr<FJsonValue>& AfterValue,
+		const FString& Path,
+		FVergilDocumentDiff& Diff)
+	{
+		const bool bHasBefore = BeforeValue.IsValid();
+		const bool bHasAfter = AfterValue.IsValid();
+
+		if (!bHasBefore && !bHasAfter)
+		{
+			return;
+		}
+
+		if (!bHasBefore)
+		{
+			AddDocumentDiffEntry(Diff, Path, EVergilDocumentDiffChangeType::Added, nullptr, AfterValue);
+			return;
+		}
+
+		if (!bHasAfter)
+		{
+			AddDocumentDiffEntry(Diff, Path, EVergilDocumentDiffChangeType::Removed, BeforeValue, nullptr);
+			return;
+		}
+
+		if (BeforeValue->Type != AfterValue->Type)
+		{
+			AddDocumentDiffEntry(Diff, Path, EVergilDocumentDiffChangeType::Modified, BeforeValue, AfterValue);
+			return;
+		}
+
+		if (BeforeValue->Type == EJson::Object)
+		{
+			const TSharedPtr<FJsonObject> BeforeObject = BeforeValue->AsObject();
+			const TSharedPtr<FJsonObject> AfterObject = AfterValue->AsObject();
+
+			TArray<FString> Keys;
+			BeforeObject->Values.GenerateKeyArray(Keys);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : AfterObject->Values)
+			{
+				Keys.AddUnique(Pair.Key);
+			}
+			Keys.Sort();
+
+			for (const FString& Key : Keys)
+			{
+				if (Path.IsEmpty() && (Key == TEXT("format") || Key == TEXT("version")))
+				{
+					continue;
+				}
+
+				const TSharedPtr<FJsonValue>* BeforeChild = BeforeObject->Values.Find(Key);
+				const TSharedPtr<FJsonValue>* AfterChild = AfterObject->Values.Find(Key);
+				DiffDocumentJsonValues(
+					BeforeChild != nullptr ? *BeforeChild : nullptr,
+					AfterChild != nullptr ? *AfterChild : nullptr,
+					BuildDocumentDiffPath(Path, Key),
+					Diff);
+			}
+			return;
+		}
+
+		if (BeforeValue->Type == EJson::Array)
+		{
+			const TArray<TSharedPtr<FJsonValue>>& BeforeArray = BeforeValue->AsArray();
+			const TArray<TSharedPtr<FJsonValue>>& AfterArray = AfterValue->AsArray();
+			const int32 MaxCount = FMath::Max(BeforeArray.Num(), AfterArray.Num());
+			for (int32 Index = 0; Index < MaxCount; ++Index)
+			{
+				DiffDocumentJsonValues(
+					BeforeArray.IsValidIndex(Index) ? BeforeArray[Index] : nullptr,
+					AfterArray.IsValidIndex(Index) ? AfterArray[Index] : nullptr,
+					BuildDocumentDiffArrayPath(Path, Index),
+					Diff);
+			}
+			return;
+		}
+
+		const FString BeforeSerialized = SerializeJsonValueSorted(BeforeValue);
+		const FString AfterSerialized = SerializeJsonValueSorted(AfterValue);
+		if (BeforeSerialized != AfterSerialized)
+		{
+			AddDocumentDiffEntry(Diff, Path, EVergilDocumentDiffChangeType::Modified, BeforeValue, AfterValue);
+		}
+	}
+
+	template <typename PrintPolicy>
+	void WriteDocumentDiffEntryJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilDocumentDiffEntry& Entry)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("path"), Entry.Path);
+		Writer.WriteValue(TEXT("changeType"), LexDocumentDiffChangeTypeString(Entry.ChangeType));
+		Writer.WriteValue(TEXT("beforeValue"), Entry.BeforeValue);
+		Writer.WriteValue(TEXT("afterValue"), Entry.AfterValue);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteDocumentDiffJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilDocumentDiff& Diff)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("format"), DocumentDiffInspectionFormatName);
+		Writer.WriteValue(TEXT("version"), DocumentDiffInspectionFormatVersion);
+		Writer.WriteValue(TEXT("documentsMatch"), Diff.bDocumentsMatch);
+		Writer.WriteValue(TEXT("beforeFingerprint"), Diff.BeforeFingerprint);
+		Writer.WriteValue(TEXT("afterFingerprint"), Diff.AfterFingerprint);
+		Writer.WriteValue(TEXT("addedCount"), Diff.AddedCount);
+		Writer.WriteValue(TEXT("removedCount"), Diff.RemovedCount);
+		Writer.WriteValue(TEXT("modifiedCount"), Diff.ModifiedCount);
+		Writer.WriteArrayStart(TEXT("entries"));
+		for (const FVergilDocumentDiffEntry& Entry : Diff.Entries)
+		{
+			WriteDocumentDiffEntryJson(Writer, Entry);
 		}
 		Writer.WriteArrayEnd();
 		Writer.WriteObjectEnd();
@@ -2120,6 +2435,133 @@ FString Vergil::SerializeGraphDocument(const FVergilGraphDocument& Document, con
 	}
 
 	return SerializedDocument;
+}
+
+FString Vergil::GetDocumentDiffInspectionFormatName()
+{
+	return DocumentDiffInspectionFormatName;
+}
+
+int32 Vergil::GetDocumentDiffInspectionFormatVersion()
+{
+	return DocumentDiffInspectionFormatVersion;
+}
+
+FVergilDocumentDiff Vergil::DiffGraphDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After)
+{
+	FVergilDocumentDiff Diff;
+	Diff.BeforeFingerprint = BuildDocumentFingerprint(Before);
+	Diff.AfterFingerprint = BuildDocumentFingerprint(After);
+
+	TSharedPtr<FJsonObject> BeforeObject;
+	TSharedPtr<FJsonObject> AfterObject;
+	if (!ParseSerializedDocumentObject(Vergil::SerializeGraphDocument(Before, false), BeforeObject)
+		|| !ParseSerializedDocumentObject(Vergil::SerializeGraphDocument(After, false), AfterObject))
+	{
+		TSharedPtr<FJsonValue> BeforeFallback = MakeShared<FJsonValueString>(Vergil::SerializeGraphDocument(Before, false));
+		TSharedPtr<FJsonValue> AfterFallback = MakeShared<FJsonValueString>(Vergil::SerializeGraphDocument(After, false));
+		if (Diff.BeforeFingerprint != Diff.AfterFingerprint)
+		{
+			AddDocumentDiffEntry(Diff, TEXT("<document>"), EVergilDocumentDiffChangeType::Modified, BeforeFallback, AfterFallback);
+		}
+		Diff.bDocumentsMatch = Diff.Entries.Num() == 0;
+		return Diff;
+	}
+
+	DiffDocumentJsonValues(
+		MakeShared<FJsonValueObject>(BeforeObject),
+		MakeShared<FJsonValueObject>(AfterObject),
+		FString(),
+		Diff);
+
+	Diff.bDocumentsMatch = Diff.Entries.Num() == 0;
+	return Diff;
+}
+
+FString Vergil::DescribeDocumentDiff(const FVergilDocumentDiff& Diff)
+{
+	TArray<FString> Lines;
+	Lines.Add(FString::Printf(
+		TEXT("%s version=%d match=%s beforeFingerprint=%s afterFingerprint=%s added=%d removed=%d modified=%d entries=%d"),
+		DocumentDiffInspectionFormatName,
+		DocumentDiffInspectionFormatVersion,
+		LexBoolString(Diff.bDocumentsMatch),
+		Diff.BeforeFingerprint.IsEmpty() ? TEXT("<none>") : *Diff.BeforeFingerprint,
+		Diff.AfterFingerprint.IsEmpty() ? TEXT("<none>") : *Diff.AfterFingerprint,
+		Diff.AddedCount,
+		Diff.RemovedCount,
+		Diff.ModifiedCount,
+		Diff.Entries.Num()));
+
+	if (Diff.Entries.Num() == 0)
+	{
+		Lines.Add(TEXT("entries: <none>"));
+	}
+	else
+	{
+		Lines.Add(TEXT("entries:"));
+		for (int32 EntryIndex = 0; EntryIndex < Diff.Entries.Num(); ++EntryIndex)
+		{
+			Lines.Add(FString::Printf(TEXT("%d: %s"), EntryIndex, *Diff.Entries[EntryIndex].ToDisplayString()));
+		}
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
+}
+
+FString Vergil::SerializeDocumentDiff(const FVergilDocumentDiff& Diff, const bool bPrettyPrint)
+{
+	FString SerializedDiff;
+	if (bPrettyPrint)
+	{
+		TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&SerializedDiff);
+		WriteDocumentDiffJson(*Writer, Diff);
+		Writer->Close();
+	}
+	else
+	{
+		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&SerializedDiff);
+		WriteDocumentDiffJson(*Writer, Diff);
+		Writer->Close();
+	}
+
+	return SerializedDiff;
+}
+
+FString FVergilDocumentDiffEntry::ToDisplayString() const
+{
+	const TCHAR* const ChangeTypeLabel = LexDocumentDiffChangeTypeString(ChangeType);
+	const FString EffectivePath = Path.IsEmpty() ? TEXT("<root>") : Path;
+	const FString BeforeToken = BeforeValue.IsEmpty() ? TEXT("<missing>") : BeforeValue;
+	const FString AfterToken = AfterValue.IsEmpty() ? TEXT("<missing>") : AfterValue;
+
+	switch (ChangeType)
+	{
+	case EVergilDocumentDiffChangeType::Added:
+		return FString::Printf(TEXT("%s %s => %s"), ChangeTypeLabel, *EffectivePath, *AfterToken);
+
+	case EVergilDocumentDiffChangeType::Removed:
+		return FString::Printf(TEXT("%s %s <= %s"), ChangeTypeLabel, *EffectivePath, *BeforeToken);
+
+	case EVergilDocumentDiffChangeType::Modified:
+	default:
+		return FString::Printf(TEXT("%s %s %s -> %s"), ChangeTypeLabel, *EffectivePath, *BeforeToken, *AfterToken);
+	}
+}
+
+FString FVergilDocumentDiff::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("match=%s beforeFingerprint=%s afterFingerprint=%s added=%d removed=%d modified=%d entries=%d"),
+		LexBoolString(bDocumentsMatch),
+		BeforeFingerprint.IsEmpty() ? TEXT("<none>") : *BeforeFingerprint,
+		AfterFingerprint.IsEmpty() ? TEXT("<none>") : *AfterFingerprint,
+		AddedCount,
+		RemovedCount,
+		ModifiedCount,
+		Entries.Num());
 }
 
 bool Vergil::CanMigrateSchemaVersion(const int32 SourceSchemaVersion, const int32 TargetSchemaVersion)

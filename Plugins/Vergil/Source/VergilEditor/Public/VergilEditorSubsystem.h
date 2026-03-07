@@ -44,6 +44,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Vergil")
 	FVergilCompileResult ExecuteCommandPlan(UBlueprint* Blueprint, const TArray<FVergilCompilerCommand>& Commands) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCommandPlanPreview PreviewCompileRequest(const FVergilCompileRequest& Request) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCommandPlanPreview PreviewDocument(UBlueprint* Blueprint, const FVergilGraphDocument& Document, bool bAutoLayout = true, bool bGenerateComments = true) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil")
+	FVergilCommandPlanPreview PreviewDocumentToGraph(
+		UBlueprint* Blueprint,
+		const FVergilGraphDocument& Document,
+		FName TargetGraphName,
+		bool bAutoLayout = true,
+		bool bGenerateComments = true) const;
+
 	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FString SerializeCommandPlan(const TArray<FVergilCompilerCommand>& Commands, bool bPrettyPrint = true) const;
 
@@ -57,6 +71,15 @@ public:
 	FString SerializeDocument(const FVergilGraphDocument& Document, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FVergilDocumentDiff DiffDocuments(const FVergilGraphDocument& Before, const FVergilGraphDocument& After) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeDocumentDiff(const FVergilDocumentDiff& Diff) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString InspectDocumentDiffAsJson(const FVergilDocumentDiff& Diff, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FString DescribeDiagnostics(const TArray<FVergilDiagnostic>& Diagnostics) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
@@ -67,6 +90,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FString SerializeCompileResult(const FVergilCompileResult& Result, bool bPrettyPrint = true) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview) const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil")
+	FString InspectCommandPlanPreviewAsJson(const FVergilCommandPlanPreview& Preview, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil")
 	FVergilReflectionSymbolInfo InspectReflectionSymbol(const FString& Query) const;

@@ -370,6 +370,38 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileResult
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilCommandPlanPreview
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString TargetBlueprintPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FName TargetGraphName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bAutoLayout = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bGenerateComments = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilGraphDocument SourceDocument;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilGraphDocument EffectiveDocument;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilDocumentDiff DocumentDiff;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilCompileResult Result;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilDiagnosticSummary
 {
 	GENERATED_BODY()
@@ -424,6 +456,14 @@ namespace Vergil
 	VERGILBLUEPRINTCOMPILER_API int32 GetCompileResultInspectionFormatVersion();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeCompileResult(const FVergilCompileResult& Result);
 	VERGILBLUEPRINTCOMPILER_API FString SerializeCompileResult(const FVergilCompileResult& Result, bool bPrettyPrint = true);
+	VERGILBLUEPRINTCOMPILER_API FString GetCommandPlanPreviewInspectionFormatName();
+	VERGILBLUEPRINTCOMPILER_API int32 GetCommandPlanPreviewInspectionFormatVersion();
+	VERGILBLUEPRINTCOMPILER_API FVergilCommandPlanPreview MakeCommandPlanPreview(
+		const FVergilCompileRequest& Request,
+		const FVergilGraphDocument& EffectiveDocument,
+		const FVergilCompileResult& Result);
+	VERGILBLUEPRINTCOMPILER_API FString DescribeCommandPlanPreview(const FVergilCommandPlanPreview& Preview);
+	VERGILBLUEPRINTCOMPILER_API FString SerializeCommandPlanPreview(const FVergilCommandPlanPreview& Preview, bool bPrettyPrint = true);
 	VERGILBLUEPRINTCOMPILER_API FString GetCommandPlanFormatName();
 	VERGILBLUEPRINTCOMPILER_API int32 GetCommandPlanFormatVersion();
 	VERGILBLUEPRINTCOMPILER_API void NormalizeCommandPlan(TArray<FVergilCompilerCommand>& Commands);
