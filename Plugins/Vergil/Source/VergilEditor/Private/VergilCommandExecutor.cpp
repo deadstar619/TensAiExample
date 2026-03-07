@@ -49,6 +49,7 @@
 namespace
 {
 	const FName ConstructionScriptGraphName = UEdGraphSchema_K2::FN_UserConstructionScript;
+	const FString StandardMacrosBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
 
 	struct FVergilExecutionState
 	{
@@ -63,6 +64,40 @@ namespace
 		FName Name = NAME_None;
 		FEdGraphPinType Type;
 	};
+
+	struct FVergilStandardMacroCommand
+	{
+		FName CommandName;
+		FName DefaultMacroGraphName;
+		FName NotFoundDiagnosticCode;
+	};
+
+	const FVergilStandardMacroCommand* FindStandardMacroCommand(const FName CommandName)
+	{
+		static const FVergilStandardMacroCommand Commands[] =
+		{
+			{ TEXT("Vergil.K2.ForLoop"), TEXT("ForLoop"), TEXT("ForLoopMacroNotFound") },
+			{ TEXT("Vergil.K2.DoOnce"), TEXT("DoOnce"), TEXT("DoOnceMacroNotFound") },
+			{ TEXT("Vergil.K2.FlipFlop"), TEXT("FlipFlop"), TEXT("FlipFlopMacroNotFound") },
+		};
+
+		for (const FVergilStandardMacroCommand& Candidate : Commands)
+		{
+			if (Candidate.CommandName == CommandName)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	bool ExecuteStandardMacroNode(
+		const FVergilStandardMacroCommand& MacroCommand,
+		UEdGraph* Graph,
+		const FVergilCompilerCommand& Command,
+		UEdGraphNode*& OutNewNode,
+		TArray<FVergilDiagnostic>& Diagnostics);
 
 	FName ResolveCommandGraphName(const FVergilCompilerCommand& Command)
 	{
@@ -1069,6 +1104,36 @@ namespace
 			if (Pin->PinName == PlannedPin.Name)
 			{
 				return Pin;
+			}
+		}
+
+		if (Command.Name == TEXT("Vergil.K2.DoOnce") && PlannedPin.Name == TEXT("StartClosed"))
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin != nullptr
+					&& Pin->Direction == (PlannedPin.bIsInput ? EGPD_Input : EGPD_Output)
+					&& Pin->PinName == TEXT("Start Closed"))
+				{
+					return Pin;
+				}
+			}
+		}
+
+		if (Command.Name == TEXT("Vergil.K2.FlipFlop")
+			&& PlannedPin.bIsInput
+			&& PlannedPin.bIsExec
+			&& (PlannedPin.Name == UEdGraphSchema_K2::PN_Execute || PlannedPin.Name == TEXT("Execute") || PlannedPin.Name == TEXT("Exec")))
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin != nullptr
+					&& Pin->Direction == EGPD_Input
+					&& Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
+					&& Pin->PinName.IsNone())
+				{
+					return Pin;
+				}
 			}
 		}
 
@@ -3526,31 +3591,12 @@ namespace
 
 			NewNode = SequenceNode;
 		}
-		else if (Command.Name == TEXT("Vergil.K2.ForLoop"))
+		else if (const FVergilStandardMacroCommand* const MacroCommand = FindStandardMacroCommand(Command.Name))
 		{
-			const FString MacroBlueprintPath = GetCommandAttribute(Command, TEXT("MacroBlueprintPath")).IsEmpty()
-				? TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")
-				: GetCommandAttribute(Command, TEXT("MacroBlueprintPath"));
-			const FName MacroGraphName = GetCommandAttribute(Command, TEXT("MacroGraphName")).IsEmpty()
-				? TEXT("ForLoop")
-				: FName(*GetCommandAttribute(Command, TEXT("MacroGraphName")));
-
-			UEdGraph* const MacroGraph = ResolveMacroGraphReference(MacroBlueprintPath, MacroGraphName);
-			if (MacroGraph == nullptr)
+			if (!ExecuteStandardMacroNode(*MacroCommand, Graph, Command, NewNode, Diagnostics))
 			{
-				Diagnostics.Add(FVergilDiagnostic::Make(
-					EVergilDiagnosticSeverity::Error,
-					TEXT("ForLoopMacroNotFound"),
-					FString::Printf(TEXT("Unable to resolve macro graph '%s' from '%s'."), *MacroGraphName.ToString(), *MacroBlueprintPath),
-					Command.NodeId));
 				return false;
 			}
-
-			UK2Node_MacroInstance* MacroNode = NewObject<UK2Node_MacroInstance>(Graph);
-			MacroNode->SetMacroGraph(MacroGraph);
-			FinalizePlacedNode(Graph, MacroNode, Command.Position, Command.NodeId);
-			MacroNode->ReconstructNode();
-			NewNode = MacroNode;
 		}
 		else if (Command.Name == TEXT("Vergil.K2.Delay"))
 		{
@@ -4477,6 +4523,39 @@ namespace
 		return true;
 	}
 
+	bool ExecuteStandardMacroNode(
+		const FVergilStandardMacroCommand& MacroCommand,
+		UEdGraph* Graph,
+		const FVergilCompilerCommand& Command,
+		UEdGraphNode*& OutNewNode,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		const FString MacroBlueprintPath = GetCommandAttribute(Command, TEXT("MacroBlueprintPath")).IsEmpty()
+			? StandardMacrosBlueprintPath
+			: GetCommandAttribute(Command, TEXT("MacroBlueprintPath"));
+		const FName MacroGraphName = GetCommandAttribute(Command, TEXT("MacroGraphName")).IsEmpty()
+			? MacroCommand.DefaultMacroGraphName
+			: FName(*GetCommandAttribute(Command, TEXT("MacroGraphName")));
+
+		UEdGraph* const MacroGraph = ResolveMacroGraphReference(MacroBlueprintPath, MacroGraphName);
+		if (MacroGraph == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				MacroCommand.NotFoundDiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve macro graph '%s' from '%s'."), *MacroGraphName.ToString(), *MacroBlueprintPath),
+				Command.NodeId));
+			return false;
+		}
+
+		UK2Node_MacroInstance* MacroNode = NewObject<UK2Node_MacroInstance>(Graph);
+		MacroNode->SetMacroGraph(MacroGraph);
+		FinalizePlacedNode(Graph, MacroNode, Command.Position, Command.NodeId);
+		MacroNode->ReconstructNode();
+		OutNewNode = MacroNode;
+		return true;
+	}
+
 	bool ValidateCommandPlan(
 		UBlueprint* Blueprint,
 		const TArray<FVergilCompilerCommand>& Commands,
@@ -4916,6 +4995,8 @@ namespace
 					|| Command.Name == TEXT("Vergil.K2.Branch")
 					|| Command.Name == TEXT("Vergil.K2.Sequence")
 					|| Command.Name == TEXT("Vergil.K2.ForLoop")
+					|| Command.Name == TEXT("Vergil.K2.DoOnce")
+					|| Command.Name == TEXT("Vergil.K2.FlipFlop")
 					|| Command.Name == TEXT("Vergil.K2.Delay")
 					|| Command.Name == TEXT("Vergil.K2.Self")
 					|| Command.Name == TEXT("Vergil.K2.Reroute"))

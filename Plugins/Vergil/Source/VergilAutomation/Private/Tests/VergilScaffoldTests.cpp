@@ -2068,6 +2068,44 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Invalid macro references should report ForLoopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("ForLoopMacroNotFound")));
 	}
 
+	{
+		FVergilGraphNode InvalidDoOnceNode;
+		InvalidDoOnceNode.Id = FGuid::NewGuid();
+		InvalidDoOnceNode.Kind = EVergilNodeKind::Custom;
+		InvalidDoOnceNode.Descriptor = TEXT("K2.DoOnce");
+		InvalidDoOnceNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidDoOnceNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidDoOnce");
+		Request.Document.Nodes.Add(InvalidDoOnceNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid DoOnce macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid DoOnce macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid DoOnce macro references should report DoOnceMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("DoOnceMacroNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidFlipFlopNode;
+		InvalidFlipFlopNode.Id = FGuid::NewGuid();
+		InvalidFlipFlopNode.Kind = EVergilNodeKind::Custom;
+		InvalidFlipFlopNode.Descriptor = TEXT("K2.FlipFlop");
+		InvalidFlipFlopNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidFlipFlopNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidFlipFlop");
+		Request.Document.Nodes.Add(InvalidFlipFlopNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid FlipFlop macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid FlipFlop macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid FlipFlop macro references should report FlipFlopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("FlipFlopMacroNotFound")));
+	}
+
 	return true;
 }
 
@@ -10452,6 +10490,309 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilDelayExecutionTest,
 	"Vergil.Scaffold.DelayExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilStandardMacroInstanceExecutionTest,
+	"Vergil.Scaffold.StandardMacroInstanceExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilStandardMacroInstanceExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	auto FindFirstExecInputPin = [](UEdGraphNode* Node) -> UEdGraphPin*
+	{
+		if (Node == nullptr)
+		{
+			return nullptr;
+		}
+
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin != nullptr && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				return Pin;
+			}
+		}
+
+		return nullptr;
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("ShouldStartClosed member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ShouldStartClosed"), BoolType, TEXT("false")));
+	TestTrue(TEXT("WasA member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("WasA"), BoolType, TEXT("false")));
+	TestTrue(TEXT("DidB member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("DidB"), BoolType, TEXT("false")));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = TEXT("Then");
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode GetterNode;
+	GetterNode.Id = FGuid::NewGuid();
+	GetterNode.Kind = EVergilNodeKind::VariableGet;
+	GetterNode.Descriptor = TEXT("K2.VarGet.ShouldStartClosed");
+	GetterNode.Position = FVector2D(220.0f, -160.0f);
+
+	FVergilGraphPin GetterValuePin;
+	GetterValuePin.Id = FGuid::NewGuid();
+	GetterValuePin.Name = TEXT("ShouldStartClosed");
+	GetterValuePin.Direction = EVergilPinDirection::Output;
+	GetterNode.Pins.Add(GetterValuePin);
+
+	FVergilGraphNode DoOnceNode;
+	DoOnceNode.Id = FGuid::NewGuid();
+	DoOnceNode.Kind = EVergilNodeKind::Custom;
+	DoOnceNode.Descriptor = TEXT("K2.DoOnce");
+	DoOnceNode.Position = FVector2D(440.0f, -40.0f);
+
+	FVergilGraphPin DoOnceExecPin;
+	DoOnceExecPin.Id = FGuid::NewGuid();
+	DoOnceExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	DoOnceExecPin.Direction = EVergilPinDirection::Input;
+	DoOnceExecPin.bIsExec = true;
+	DoOnceNode.Pins.Add(DoOnceExecPin);
+
+	FVergilGraphPin DoOnceStartClosedPin;
+	DoOnceStartClosedPin.Id = FGuid::NewGuid();
+	DoOnceStartClosedPin.Name = TEXT("StartClosed");
+	DoOnceStartClosedPin.Direction = EVergilPinDirection::Input;
+	DoOnceNode.Pins.Add(DoOnceStartClosedPin);
+
+	FVergilGraphPin DoOnceCompletedPin;
+	DoOnceCompletedPin.Id = FGuid::NewGuid();
+	DoOnceCompletedPin.Name = TEXT("Completed");
+	DoOnceCompletedPin.Direction = EVergilPinDirection::Output;
+	DoOnceCompletedPin.bIsExec = true;
+	DoOnceNode.Pins.Add(DoOnceCompletedPin);
+
+	FVergilGraphNode FlipFlopNode;
+	FlipFlopNode.Id = FGuid::NewGuid();
+	FlipFlopNode.Kind = EVergilNodeKind::Custom;
+	FlipFlopNode.Descriptor = TEXT("K2.FlipFlop");
+	FlipFlopNode.Position = FVector2D(720.0f, -20.0f);
+
+	FVergilGraphPin FlipFlopExecPin;
+	FlipFlopExecPin.Id = FGuid::NewGuid();
+	FlipFlopExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	FlipFlopExecPin.Direction = EVergilPinDirection::Input;
+	FlipFlopExecPin.bIsExec = true;
+	FlipFlopNode.Pins.Add(FlipFlopExecPin);
+
+	FVergilGraphPin FlipFlopAPin;
+	FlipFlopAPin.Id = FGuid::NewGuid();
+	FlipFlopAPin.Name = TEXT("A");
+	FlipFlopAPin.Direction = EVergilPinDirection::Output;
+	FlipFlopAPin.bIsExec = true;
+	FlipFlopNode.Pins.Add(FlipFlopAPin);
+
+	FVergilGraphPin FlipFlopBPin;
+	FlipFlopBPin.Id = FGuid::NewGuid();
+	FlipFlopBPin.Name = TEXT("B");
+	FlipFlopBPin.Direction = EVergilPinDirection::Output;
+	FlipFlopBPin.bIsExec = true;
+	FlipFlopNode.Pins.Add(FlipFlopBPin);
+
+	FVergilGraphPin FlipFlopIsAPin;
+	FlipFlopIsAPin.Id = FGuid::NewGuid();
+	FlipFlopIsAPin.Name = TEXT("IsA");
+	FlipFlopIsAPin.Direction = EVergilPinDirection::Output;
+	FlipFlopNode.Pins.Add(FlipFlopIsAPin);
+
+	FVergilGraphNode SetWasANode;
+	SetWasANode.Id = FGuid::NewGuid();
+	SetWasANode.Kind = EVergilNodeKind::VariableSet;
+	SetWasANode.Descriptor = TEXT("K2.VarSet.WasA");
+	SetWasANode.Position = FVector2D(1000.0f, -120.0f);
+
+	FVergilGraphPin SetWasAExecPin;
+	SetWasAExecPin.Id = FGuid::NewGuid();
+	SetWasAExecPin.Name = TEXT("Execute");
+	SetWasAExecPin.Direction = EVergilPinDirection::Input;
+	SetWasAExecPin.bIsExec = true;
+	SetWasANode.Pins.Add(SetWasAExecPin);
+
+	FVergilGraphPin SetWasAValuePin;
+	SetWasAValuePin.Id = FGuid::NewGuid();
+	SetWasAValuePin.Name = TEXT("WasA");
+	SetWasAValuePin.Direction = EVergilPinDirection::Input;
+	SetWasANode.Pins.Add(SetWasAValuePin);
+
+	FVergilGraphNode SetDidBNode;
+	SetDidBNode.Id = FGuid::NewGuid();
+	SetDidBNode.Kind = EVergilNodeKind::VariableSet;
+	SetDidBNode.Descriptor = TEXT("K2.VarSet.DidB");
+	SetDidBNode.Position = FVector2D(1000.0f, 120.0f);
+
+	FVergilGraphPin SetDidBExecPin;
+	SetDidBExecPin.Id = FGuid::NewGuid();
+	SetDidBExecPin.Name = TEXT("Execute");
+	SetDidBExecPin.Direction = EVergilPinDirection::Input;
+	SetDidBExecPin.bIsExec = true;
+	SetDidBNode.Pins.Add(SetDidBExecPin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilStandardMacroInstanceExecution");
+	Document.Nodes = { BeginPlayNode, GetterNode, DoOnceNode, FlipFlopNode, SetWasANode, SetDidBNode };
+
+	FVergilGraphEdge EventToDoOnce;
+	EventToDoOnce.Id = FGuid::NewGuid();
+	EventToDoOnce.SourceNodeId = BeginPlayNode.Id;
+	EventToDoOnce.SourcePinId = BeginPlayThenPin.Id;
+	EventToDoOnce.TargetNodeId = DoOnceNode.Id;
+	EventToDoOnce.TargetPinId = DoOnceExecPin.Id;
+	Document.Edges.Add(EventToDoOnce);
+
+	FVergilGraphEdge GetterToDoOnce;
+	GetterToDoOnce.Id = FGuid::NewGuid();
+	GetterToDoOnce.SourceNodeId = GetterNode.Id;
+	GetterToDoOnce.SourcePinId = GetterValuePin.Id;
+	GetterToDoOnce.TargetNodeId = DoOnceNode.Id;
+	GetterToDoOnce.TargetPinId = DoOnceStartClosedPin.Id;
+	Document.Edges.Add(GetterToDoOnce);
+
+	FVergilGraphEdge DoOnceToFlipFlop;
+	DoOnceToFlipFlop.Id = FGuid::NewGuid();
+	DoOnceToFlipFlop.SourceNodeId = DoOnceNode.Id;
+	DoOnceToFlipFlop.SourcePinId = DoOnceCompletedPin.Id;
+	DoOnceToFlipFlop.TargetNodeId = FlipFlopNode.Id;
+	DoOnceToFlipFlop.TargetPinId = FlipFlopExecPin.Id;
+	Document.Edges.Add(DoOnceToFlipFlop);
+
+	FVergilGraphEdge FlipFlopAToSetWasA;
+	FlipFlopAToSetWasA.Id = FGuid::NewGuid();
+	FlipFlopAToSetWasA.SourceNodeId = FlipFlopNode.Id;
+	FlipFlopAToSetWasA.SourcePinId = FlipFlopAPin.Id;
+	FlipFlopAToSetWasA.TargetNodeId = SetWasANode.Id;
+	FlipFlopAToSetWasA.TargetPinId = SetWasAExecPin.Id;
+	Document.Edges.Add(FlipFlopAToSetWasA);
+
+	FVergilGraphEdge FlipFlopIsAToSetWasA;
+	FlipFlopIsAToSetWasA.Id = FGuid::NewGuid();
+	FlipFlopIsAToSetWasA.SourceNodeId = FlipFlopNode.Id;
+	FlipFlopIsAToSetWasA.SourcePinId = FlipFlopIsAPin.Id;
+	FlipFlopIsAToSetWasA.TargetNodeId = SetWasANode.Id;
+	FlipFlopIsAToSetWasA.TargetPinId = SetWasAValuePin.Id;
+	Document.Edges.Add(FlipFlopIsAToSetWasA);
+
+	FVergilGraphEdge FlipFlopBToSetDidB;
+	FlipFlopBToSetDidB.Id = FGuid::NewGuid();
+	FlipFlopBToSetDidB.SourceNodeId = FlipFlopNode.Id;
+	FlipFlopBToSetDidB.SourcePinId = FlipFlopBPin.Id;
+	FlipFlopBToSetDidB.TargetNodeId = SetDidBNode.Id;
+	FlipFlopBToSetDidB.TargetPinId = SetDidBExecPin.Id;
+	Document.Edges.Add(FlipFlopBToSetDidB);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Standard macro document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Standard macro document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Standard macro document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const DoOnceCommand = FindNodeCommand(Result.Commands, DoOnceNode.Id);
+	const FVergilCompilerCommand* const FlipFlopCommand = FindNodeCommand(Result.Commands, FlipFlopNode.Id);
+	TestNotNull(TEXT("DoOnce should lower into an AddNode command."), DoOnceCommand);
+	TestNotNull(TEXT("FlipFlop should lower into an AddNode command."), FlipFlopCommand);
+	if (DoOnceCommand == nullptr || FlipFlopCommand == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("DoOnce should lower into its dedicated command name."), DoOnceCommand->Name, FName(TEXT("Vergil.K2.DoOnce")));
+	TestEqual(TEXT("FlipFlop should lower into its dedicated command name."), FlipFlopCommand->Name, FName(TEXT("Vergil.K2.FlipFlop")));
+	TestEqual(TEXT("DoOnce should default to the UE_5.7 StandardMacros asset."), DoOnceCommand->Attributes.FindRef(TEXT("MacroBlueprintPath")), FString(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+	TestEqual(TEXT("DoOnce should default to the DoOnce macro graph."), DoOnceCommand->Attributes.FindRef(TEXT("MacroGraphName")), FString(TEXT("DoOnce")));
+	TestEqual(TEXT("FlipFlop should default to the UE_5.7 StandardMacros asset."), FlipFlopCommand->Attributes.FindRef(TEXT("MacroBlueprintPath")), FString(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+	TestEqual(TEXT("FlipFlop should default to the FlipFlop macro graph."), FlipFlopCommand->Attributes.FindRef(TEXT("MacroGraphName")), FString(TEXT("FlipFlop")));
+	TestTrue(TEXT("DoOnce planned pins should normalize the StartClosed alias to the engine pin name."), ContainsPlannedPin(*DoOnceCommand, TEXT("Start Closed"), true, false));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after standard macro execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_VariableGet* const GetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, GetterNode.Id);
+	UK2Node_MacroInstance* const DoOnceGraphNode = FindGraphNodeByGuid<UK2Node_MacroInstance>(EventGraph, DoOnceNode.Id);
+	UK2Node_MacroInstance* const FlipFlopGraphNode = FindGraphNodeByGuid<UK2Node_MacroInstance>(EventGraph, FlipFlopNode.Id);
+	UK2Node_VariableSet* const SetWasAGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetWasANode.Id);
+	UK2Node_VariableSet* const SetDidBGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetDidBNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventNode);
+	TestNotNull(TEXT("Getter node should exist."), GetterGraphNode);
+	TestNotNull(TEXT("DoOnce macro node should exist."), DoOnceGraphNode);
+	TestNotNull(TEXT("FlipFlop macro node should exist."), FlipFlopGraphNode);
+	TestNotNull(TEXT("WasA setter node should exist."), SetWasAGraphNode);
+	TestNotNull(TEXT("DidB setter node should exist."), SetDidBGraphNode);
+	if (EventNode == nullptr || GetterGraphNode == nullptr || DoOnceGraphNode == nullptr || FlipFlopGraphNode == nullptr || SetWasAGraphNode == nullptr || SetDidBGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const GetterGraphValuePin = GetterGraphNode->FindPin(TEXT("ShouldStartClosed"));
+	UEdGraphPin* const DoOnceExecGraphPin = DoOnceGraphNode->GetExecPin();
+	UEdGraphPin* const DoOnceStartClosedGraphPin = DoOnceGraphNode->FindPin(TEXT("Start Closed"));
+	UEdGraphPin* const DoOnceCompletedGraphPin = DoOnceGraphNode->FindPin(TEXT("Completed"));
+	UEdGraphPin* const FlipFlopExecGraphPin = FindFirstExecInputPin(FlipFlopGraphNode);
+	UEdGraphPin* const FlipFlopAGraphPin = FlipFlopGraphNode->FindPin(TEXT("A"));
+	UEdGraphPin* const FlipFlopBGraphPin = FlipFlopGraphNode->FindPin(TEXT("B"));
+	UEdGraphPin* const FlipFlopIsAGraphPin = FlipFlopGraphNode->FindPin(TEXT("IsA"));
+	UEdGraphPin* const SetWasAExecGraphPin = SetWasAGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetWasAValueGraphPin = SetWasAGraphNode->FindPin(TEXT("WasA"));
+	UEdGraphPin* const SetDidBExecGraphPin = SetDidBGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+
+	TestTrue(TEXT("Getter should remain pure."), GetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("DoOnce should resolve the UE_5.7 StandardMacros DoOnce graph."), DoOnceGraphNode->GetMacroGraph() != nullptr && DoOnceGraphNode->GetMacroGraph()->GetFName() == TEXT("DoOnce"));
+	TestTrue(TEXT("FlipFlop should resolve the UE_5.7 StandardMacros FlipFlop graph."), FlipFlopGraphNode->GetMacroGraph() != nullptr && FlipFlopGraphNode->GetMacroGraph()->GetFName() == TEXT("FlipFlop"));
+	TestTrue(TEXT("Event should feed DoOnce exec."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(DoOnceExecGraphPin));
+	TestTrue(TEXT("Getter should feed DoOnce Start Closed."), GetterGraphValuePin != nullptr && GetterGraphValuePin->LinkedTo.Contains(DoOnceStartClosedGraphPin));
+	TestTrue(TEXT("DoOnce Completed should feed FlipFlop exec."), DoOnceCompletedGraphPin != nullptr && DoOnceCompletedGraphPin->LinkedTo.Contains(FlipFlopExecGraphPin));
+	TestTrue(TEXT("FlipFlop A should feed the WasA setter exec."), FlipFlopAGraphPin != nullptr && FlipFlopAGraphPin->LinkedTo.Contains(SetWasAExecGraphPin));
+	TestTrue(TEXT("FlipFlop IsA should feed the WasA setter value."), FlipFlopIsAGraphPin != nullptr && FlipFlopIsAGraphPin->LinkedTo.Contains(SetWasAValueGraphPin));
+	TestTrue(TEXT("FlipFlop B should feed the DidB setter exec."), FlipFlopBGraphPin != nullptr && FlipFlopBGraphPin->LinkedTo.Contains(SetDidBExecGraphPin));
+
+	return true;
+}
 
 bool FVergilDelayExecutionTest::RunTest(const FString& Parameters)
 {

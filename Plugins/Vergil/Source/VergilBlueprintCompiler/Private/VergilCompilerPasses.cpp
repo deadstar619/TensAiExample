@@ -16,6 +16,35 @@ namespace
 {
 	const FName EventGraphName(TEXT("EventGraph"));
 	const FName ConstructionScriptGraphName(TEXT("UserConstructionScript"));
+	const FString StandardMacrosBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+
+	struct FVergilStandardMacroDescriptor
+	{
+		FName Descriptor;
+		FName CommandName;
+		FName DefaultMacroGraphName;
+		FName NotFoundDiagnosticCode;
+	};
+
+	const FVergilStandardMacroDescriptor* FindStandardMacroDescriptorByDescriptor(const FName Descriptor)
+	{
+		static const FVergilStandardMacroDescriptor Descriptors[] =
+		{
+			{ TEXT("K2.ForLoop"), TEXT("Vergil.K2.ForLoop"), TEXT("ForLoop"), TEXT("ForLoopMacroNotFound") },
+			{ TEXT("K2.DoOnce"), TEXT("Vergil.K2.DoOnce"), TEXT("DoOnce"), TEXT("DoOnceMacroNotFound") },
+			{ TEXT("K2.FlipFlop"), TEXT("Vergil.K2.FlipFlop"), TEXT("FlipFlop"), TEXT("FlipFlopMacroNotFound") },
+		};
+
+		for (const FVergilStandardMacroDescriptor& Candidate : Descriptors)
+		{
+			if (Candidate.Descriptor == Descriptor)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
 
 	void CopyPlannedPins(const FVergilGraphNode& Node, FVergilCompilerCommand& Command)
 	{
@@ -1692,27 +1721,44 @@ namespace
 		return false;
 	}
 
-	bool ResolveForLoopMacroSymbol(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	void NormalizeStandardMacroPlannedPins(
+		const FVergilStandardMacroDescriptor& MacroDescriptor,
+		FVergilCompilerCommand& Command)
 	{
-		static const FString DefaultMacroBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
-		static const FName DefaultMacroGraphName(TEXT("ForLoop"));
+		if (MacroDescriptor.Descriptor == TEXT("K2.DoOnce"))
+		{
+			for (FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+			{
+				if (PlannedPin.Name == TEXT("StartClosed"))
+				{
+					PlannedPin.Name = TEXT("Start Closed");
+				}
+			}
+		}
+	}
 
+	bool ResolveStandardMacroSymbol(
+		const FVergilStandardMacroDescriptor& MacroDescriptor,
+		FVergilGraphNode& Node,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
+	{
 		FString MacroBlueprintPath = Node.Metadata.FindRef(TEXT("MacroBlueprintPath")).TrimStartAndEnd();
 		FString MacroGraphNameString = Node.Metadata.FindRef(TEXT("MacroGraphName")).TrimStartAndEnd();
 		if (MacroBlueprintPath.IsEmpty())
 		{
-			MacroBlueprintPath = DefaultMacroBlueprintPath;
+			MacroBlueprintPath = StandardMacrosBlueprintPath;
 		}
 		if (MacroGraphNameString.IsEmpty())
 		{
-			MacroGraphNameString = DefaultMacroGraphName.ToString();
+			MacroGraphNameString = MacroDescriptor.DefaultMacroGraphName.ToString();
 		}
 
 		if (ResolveMacroGraphReference(MacroBlueprintPath, FName(*MacroGraphNameString)) == nullptr)
 		{
 			AddSymbolResolutionDiagnostic(
 				Context,
-				TEXT("ForLoopMacroNotFound"),
+				MacroDescriptor.NotFoundDiagnosticCode,
 				FString::Printf(TEXT("Unable to resolve macro graph '%s' from '%s'."), *MacroGraphNameString, *MacroBlueprintPath),
 				Node.Id);
 			return false;
@@ -1763,9 +1809,9 @@ namespace
 			return ResolveCreateDelegateSymbol(Node, SymbolTables, Context);
 		}
 
-		if (Node.Descriptor == TEXT("K2.ForLoop"))
+		if (const FVergilStandardMacroDescriptor* const StandardMacroDescriptor = FindStandardMacroDescriptorByDescriptor(Node.Descriptor))
 		{
-			return ResolveForLoopMacroSymbol(Node, Context, bOutChanged);
+			return ResolveStandardMacroSymbol(*StandardMacroDescriptor, Node, Context, bOutChanged);
 		}
 
 		return true;
@@ -2304,17 +2350,22 @@ namespace
 		}
 	};
 
-	class FVergilForLoopNodeHandler final : public IVergilNodeHandler
+	class FVergilStandardMacroNodeHandler final : public IVergilNodeHandler
 	{
 	public:
+		explicit FVergilStandardMacroNodeHandler(const FVergilStandardMacroDescriptor& InDescriptor)
+			: Descriptor(InDescriptor)
+		{
+		}
+
 		virtual FName GetDescriptor() const override
 		{
-			return TEXT("Vergil.K2.ForLoop");
+			return Descriptor.CommandName;
 		}
 
 		virtual bool CanHandle(const FVergilGraphNode& Node) const override
 		{
-			return Node.Descriptor == TEXT("K2.ForLoop");
+			return Node.Descriptor == Descriptor.Descriptor;
 		}
 
 		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
@@ -2328,16 +2379,20 @@ namespace
 			Command.Attributes = Node.Metadata;
 			if (!Command.Attributes.Contains(TEXT("MacroBlueprintPath")))
 			{
-				Command.Attributes.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+				Command.Attributes.Add(TEXT("MacroBlueprintPath"), StandardMacrosBlueprintPath);
 			}
 			if (!Command.Attributes.Contains(TEXT("MacroGraphName")))
 			{
-				Command.Attributes.Add(TEXT("MacroGraphName"), TEXT("ForLoop"));
+				Command.Attributes.Add(TEXT("MacroGraphName"), Descriptor.DefaultMacroGraphName.ToString());
 			}
 			CopyPlannedPins(Node, Command);
+			NormalizeStandardMacroPlannedPins(Descriptor, Command);
 			Context.AddCommand(Command);
 			return true;
 		}
+
+	private:
+		FVergilStandardMacroDescriptor Descriptor;
 	};
 
 	class FVergilDelayNodeHandler final : public IVergilNodeHandler
@@ -3135,7 +3190,9 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilCustomEventNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBranchNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSequenceNodeHandler, ESPMode::ThreadSafe>());
-		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilForLoopNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.ForLoop"))));
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.DoOnce"))));
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.FlipFlop"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilDelayNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBindDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilRemoveDelegateNodeHandler, ESPMode::ThreadSafe>());

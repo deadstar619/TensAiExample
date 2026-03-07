@@ -320,7 +320,7 @@ Tickets:
 
 - [x] `VGR-5001` Complete pure/impure call parity
 - [x] `VGR-5002` Add remaining variable node variants
-- `VGR-5003` Add common macro-instance families such as `DoOnce` and `FlipFlop`
+- [x] `VGR-5003` Add common macro-instance families such as `DoOnce` and `FlipFlop`
 - `VGR-5004` Add deterministic `SpawnActor`
 - `VGR-5005` Add timer families beyond current delegate-driven coverage
 - `VGR-5006` Add more flow-control families
@@ -337,6 +337,12 @@ Session note for `VGR-5007` (2026-03-06):
 - `UE_5.7` select behavior is now enforced explicitly: semantic validation plus direct command-plan preflight reject `K2.Select` index categories outside `bool`, `int`, or `enum` before any node creation or transaction work starts.
 - Apply-time pin-connection failures for `K2.Select`, `K2.SwitchInt`, `K2.SwitchString`, and `K2.SwitchEnum` now emit dedicated unsupported-type diagnostics instead of only falling back to generic schema rejection text.
 - `Vergil.Scaffold.SemanticValidationPass`, `Vergil.Scaffold.CommandPlanValidation`, and `Vergil.Scaffold.SelectSwitchTypeDiagnostics` now cover the compiler, direct-command, and editor-execution paths for these unsupported type combinations.
+
+Session note for `VGR-5003` (2026-03-07):
+
+- `UE_5.7` StandardMacros-backed `K2.DoOnce` and `K2.FlipFlop` now share the existing macro-instance resolution/apply path with `K2.ForLoop`, including optional `MacroBlueprintPath` / `MacroGraphName` overrides and symbol-pass validation of the selected macro graph.
+- Planning now emits dedicated `Vergil.K2.DoOnce` and `Vergil.K2.FlipFlop` add-node commands, while editor execution instantiates `UK2Node_MacroInstance` nodes against the resolved `StandardMacros` graph under `UE_5.7`.
+- `Vergil.Scaffold.SymbolResolutionPass` and `Vergil.Scaffold.StandardMacroInstanceExecution` now cover invalid override diagnostics plus end-to-end authoring of the real `DoOnce` and `FlipFlop` macro node surfaces.
 
 Session note for `VGR-5001` (2026-03-07):
 
@@ -490,11 +496,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5003`
-2. `VGR-5004`
-3. `VGR-7003`
-4. `VGR-8003`
-5. `VGR-5005`
+1. `VGR-5004`
+2. `VGR-7003`
+3. `VGR-8003`
+4. `VGR-5005`
+5. `VGR-5006`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

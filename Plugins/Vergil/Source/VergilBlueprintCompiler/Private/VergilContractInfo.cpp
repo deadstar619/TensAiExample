@@ -216,6 +216,20 @@ namespace
 				{},
 				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros ForLoop and are validated before planning.")),
 			MakeDescriptorContract(
+				TEXT("K2.DoOnce"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros DoOnce and are validated before planning. The bool input follows the engine pin name 'Start Closed'.")),
+			MakeDescriptorContract(
+				TEXT("K2.FlipFlop"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros FlipFlop and are validated before planning. The input exec pin maps to the engine macro's unnamed entry exec pin, while outputs remain A, B, and IsA.")),
+			MakeDescriptorContract(
 				TEXT("K2.Delay"),
 				EVergilDescriptorMatchKind::Exact,
 				TEXT("any"),

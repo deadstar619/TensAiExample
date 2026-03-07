@@ -142,13 +142,13 @@ This document describes the current scaffold contracts implemented in code today
 ## Symbol resolution contracts
 
 - `FVergilSymbolResolutionPass` now runs after semantic validation and before later lowering and command-planning passes.
-- The symbol pass resolves callable/member references for `K2.Event.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, `K2.BindDelegate.*`, `K2.RemoveDelegate.*`, `K2.ClearDelegate.*`, `K2.CallDelegate.*`, `K2.CreateDelegate.*`, custom-event delegate-signature metadata, and `K2.ForLoop` macro references.
+- The symbol pass resolves callable/member references for `K2.Event.*`, `K2.Call.*`, `K2.VarGet.*`, `K2.VarSet.*`, `K2.BindDelegate.*`, `K2.RemoveDelegate.*`, `K2.ClearDelegate.*`, `K2.CallDelegate.*`, `K2.CreateDelegate.*`, custom-event delegate-signature metadata, and `K2.ForLoop`, `K2.DoOnce`, and `K2.FlipFlop` macro references.
 - Explicit `OwnerClassPath` and `DelegateOwnerClassPath` metadata is authoritative. If authored, the symbol pass resolves only against that owner path and fails explicitly when the owner or member cannot be found.
 - Without explicit owner metadata, variable and delegate symbols resolve in this order: document-authored members first, then existing Blueprint-local members, then inherited/native members.
 - Without explicit owner metadata, `K2.Call.*` now resolves in this order: document-authored function definitions first, then existing Blueprint-local functions, then inherited/native functions. Self-owned resolutions keep an empty `OwnerClassPath`, while inherited/native resolutions are normalized back into `OwnerClassPath` on the compiler working document so planned commands become explicit.
 - `K2.CustomEvent.*` may optionally declare `DelegatePropertyName` plus `DelegateOwnerClassPath` metadata for delegate signatures. The symbol pass resolves those signatures before planning, and external-owner resolutions are normalized back into `DelegateOwnerClassPath`.
 - `K2.CreateDelegate.*` currently resolves against target-graph custom events, document-authored function definitions, and existing Blueprint or parent-class functions. Ambiguous local matches fail explicitly.
-- `K2.ForLoop` macro references now resolve during the symbol pass, and omitted `MacroBlueprintPath` / `MacroGraphName` metadata is normalized to the engine `StandardMacros` `ForLoop` default before planning.
+- `K2.ForLoop`, `K2.DoOnce`, and `K2.FlipFlop` macro references now resolve during the symbol pass, and omitted `MacroBlueprintPath` / `MacroGraphName` metadata is normalized to the matching engine `StandardMacros` graph before planning.
 
 ## Type resolution contracts
 
@@ -328,6 +328,8 @@ This document describes the current scaffold contracts implemented in code today
 | `K2.Branch` | any | none | Standard branch node. |
 | `K2.Sequence` | any | none | Output exec pins named like `Then_0`, `Then_1`, and so on determine sequence width. |
 | `K2.ForLoop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `ForLoop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. |
+| `K2.DoOnce` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `DoOnce` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. The bool input pin follows the engine name `Start Closed`. |
+| `K2.FlipFlop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `FlipFlop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. The single input exec pin maps to the engine macro's unnamed entry exec pin, while outputs remain `A`, `B`, and `IsA`. |
 | `K2.Delay` | any | none | Lowers to `UKismetSystemLibrary::Delay`. |
 | `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class during type resolution and is normalized before planning. |
 | `K2.Reroute` | any | none | Creates a knot node. |
