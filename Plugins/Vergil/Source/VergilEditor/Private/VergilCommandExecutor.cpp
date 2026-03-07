@@ -1255,7 +1255,7 @@ namespace
 		{
 			if (Reference.IsEmpty())
 			{
-				return Blueprint != nullptr ? Blueprint->ParentClass : nullptr;
+				return nullptr;
 			}
 
 			if (UClass* DirectClass = FindObject<UClass>(nullptr, *Reference))
@@ -1276,12 +1276,15 @@ namespace
 			return nullptr;
 		};
 
-		UClass* OwnerClass = ResolveOwnerClass(Command.StringValue);
-		if (OwnerClass != nullptr)
+		if (!Command.StringValue.IsEmpty())
 		{
-			UFunction* Func = OwnerClass->FindFunctionByName(Command.SecondaryName);
-			if (Func == nullptr)
+			if (UClass* const OwnerClass = ResolveOwnerClass(Command.StringValue))
 			{
+				if (UFunction* const Func = OwnerClass->FindFunctionByName(Command.SecondaryName))
+				{
+					return Func;
+				}
+
 				Diagnostics.Add(FVergilDiagnostic::Make(
 					EVergilDiagnosticSeverity::Error,
 					TEXT("FunctionNotFound"),
@@ -1289,12 +1292,6 @@ namespace
 					Command.NodeId));
 				return nullptr;
 			}
-
-			return Func;
-		}
-
-		if (!Command.StringValue.IsEmpty())
-		{
 			if (UFunction* DirectFunction = FindObject<UFunction>(nullptr, *Command.StringValue))
 			{
 				return DirectFunction;
@@ -1304,12 +1301,43 @@ namespace
 			{
 				return LoadedFunction;
 			}
+
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingFunctionOwner"),
+				FString::Printf(TEXT("Unable to resolve owner class '%s' for function '%s'."), *Command.StringValue, *Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return nullptr;
+		}
+
+		TArray<UClass*> SearchClasses;
+		auto AddSearchClass = [&SearchClasses](UClass* CandidateClass)
+		{
+			if (CandidateClass != nullptr)
+			{
+				SearchClasses.AddUnique(CandidateClass);
+			}
+		};
+
+		if (Blueprint != nullptr)
+		{
+			AddSearchClass(Blueprint->SkeletonGeneratedClass);
+			AddSearchClass(Blueprint->GeneratedClass);
+			AddSearchClass(Blueprint->ParentClass);
+		}
+
+		for (UClass* SearchClass : SearchClasses)
+		{
+			if (UFunction* const Func = SearchClass->FindFunctionByName(Command.SecondaryName))
+			{
+				return Func;
+			}
 		}
 
 		Diagnostics.Add(FVergilDiagnostic::Make(
 			EVergilDiagnosticSeverity::Error,
-			TEXT("MissingFunctionOwner"),
-			FString::Printf(TEXT("Unable to resolve owner class '%s' for function '%s'."), *Command.StringValue, *Command.SecondaryName.ToString()),
+			TEXT("FunctionNotFound"),
+			FString::Printf(TEXT("Unable to resolve function '%s' on the target Blueprint or its parent class."), *Command.SecondaryName.ToString()),
 			Command.NodeId));
 		return nullptr;
 	}
@@ -3369,12 +3397,11 @@ namespace
 			}
 
 			UK2Node_CallFunction* CallNode = NewObject<UK2Node_CallFunction>(Graph);
-			const bool bIsOwnCustomEvent = Func->HasAnyFunctionFlags(FUNC_BlueprintEvent)
-				&& Blueprint != nullptr
+			const bool bIsOwnBlueprintFunction = Blueprint != nullptr
 				&& ((Blueprint->SkeletonGeneratedClass != nullptr && Func->GetOwnerClass() == Blueprint->SkeletonGeneratedClass)
 					|| (Blueprint->GeneratedClass != nullptr && Func->GetOwnerClass() == Blueprint->GeneratedClass));
 
-			if (bIsOwnCustomEvent)
+			if (bIsOwnBlueprintFunction)
 			{
 				CallNode->FunctionReference.SetSelfMember(Func->GetFName());
 			}

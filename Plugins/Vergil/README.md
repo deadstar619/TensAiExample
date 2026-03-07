@@ -66,10 +66,11 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5007`, `VGR-7001`, `VGR-8005`, and `VGR-9007` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5007`, `VGR-7001`, `VGR-8005`, and `VGR-9007` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
+- `K2.Call.*` now resolves document-authored functions, existing Blueprint-local functions, and inherited/native functions with matching pure/impure self-call execution support under `UE_5.7`.
 - Document-authored component definitions now have structural validation plus deterministic command planning and editor execution for component creation, attachment, attach sockets, template properties, and relative transforms.
 - Document-authored implemented interfaces now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.

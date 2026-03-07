@@ -1139,7 +1139,11 @@ namespace
 		return true;
 	}
 
-	bool ResolveCallSymbol(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	bool ResolveCallSymbol(
+		FVergilGraphNode& Node,
+		const FVergilDocumentSymbolTables& SymbolTables,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged)
 	{
 		const FString FunctionNameString = GetDescriptorSuffix(Node.Descriptor, TEXT("K2.Call."));
 		const FName FunctionName(*FunctionNameString);
@@ -1173,31 +1177,52 @@ namespace
 			return true;
 		}
 
+		if (SymbolTables.FunctionNames.Contains(FunctionName))
+		{
+			bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+			return true;
+		}
+
 		UBlueprint* const Blueprint = Context.GetBlueprint();
-		UClass* const ParentClass = Blueprint != nullptr ? Blueprint->ParentClass : nullptr;
-		if (ParentClass == nullptr)
+		for (UClass* const SearchClass : BuildBlueprintSearchClasses(Blueprint))
+		{
+			if (SearchClass == nullptr)
+			{
+				continue;
+			}
+
+			if (UFunction* const Function = SearchClass->FindFunctionByName(FunctionName))
+			{
+				const UClass* const OwnerClass = Function->GetOwnerClass();
+				if (IsBlueprintSelfClass(Blueprint, OwnerClass))
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), FString());
+				}
+				else if (OwnerClass != nullptr)
+				{
+					bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), OwnerClass->GetPathName());
+				}
+
+				return true;
+			}
+		}
+
+		if (Blueprint == nullptr)
 		{
 			AddSymbolResolutionDiagnostic(
 				Context,
 				TEXT("MissingFunctionOwner"),
-				FString::Printf(TEXT("Unable to resolve a default owner class for function '%s'."), *FunctionNameString),
+				FString::Printf(TEXT("Unable to resolve function '%s' because the target Blueprint is missing."), *FunctionNameString),
 				Node.Id);
 			return false;
 		}
 
-		UFunction* const Function = ParentClass->FindFunctionByName(FunctionName);
-		if (Function == nullptr)
-		{
-			AddSymbolResolutionDiagnostic(
-				Context,
-				TEXT("FunctionNotFound"),
-				FString::Printf(TEXT("Unable to resolve function '%s' on parent class '%s'."), *FunctionNameString, *ParentClass->GetName()),
-				Node.Id);
-			return false;
-		}
-
-		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("OwnerClassPath"), Function->GetOwnerClass()->GetPathName());
-		return true;
+		AddSymbolResolutionDiagnostic(
+			Context,
+			TEXT("FunctionNotFound"),
+			FString::Printf(TEXT("Unable to resolve function '%s' on the compiled document, Blueprint, or parent class."), *FunctionNameString),
+			Node.Id);
+		return false;
 	}
 
 	bool ResolveVariableSymbol(
@@ -1528,7 +1553,7 @@ namespace
 
 		if (DescriptorString.StartsWith(TEXT("K2.Call.")))
 		{
-			return ResolveCallSymbol(Node, Context, bOutChanged);
+			return ResolveCallSymbol(Node, SymbolTables, Context, bOutChanged);
 		}
 
 		if (DescriptorString.StartsWith(TEXT("K2.VarGet.")) || DescriptorString.StartsWith(TEXT("K2.VarSet.")))

@@ -172,7 +172,7 @@ namespace
 				TEXT("Call"),
 				SupportedGraphs,
 				{},
-				TEXT("Optional OwnerClassPath constrains function resolution. When omitted, the current scaffold resolves against the target Blueprint parent class and normalizes that owner path into the planned command.")),
+				TEXT("Optional OwnerClassPath constrains function resolution. When omitted, the current scaffold resolves document-authored functions first, then existing Blueprint-local functions, then inherited/native functions. Self-owned resolutions keep an empty owner path; inherited/native resolutions normalize the owner path into the planned command.")),
 			MakeDescriptorContract(
 				TEXT("K2.VarGet.<VariableName>"),
 				EVergilDescriptorMatchKind::Prefix,

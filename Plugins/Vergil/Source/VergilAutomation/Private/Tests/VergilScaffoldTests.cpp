@@ -1532,6 +1532,63 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilFunctionDefinition PureFunction;
+		PureFunction.Name = TEXT("ComputeLocalResult");
+		PureFunction.bPure = true;
+
+		FVergilFunctionParameterDefinition PureInput;
+		PureInput.Name = TEXT("Value");
+		PureInput.Type.PinCategory = TEXT("bool");
+		PureFunction.Inputs.Add(PureInput);
+
+		FVergilFunctionParameterDefinition PureOutput;
+		PureOutput.Name = TEXT("Result");
+		PureOutput.Type.PinCategory = TEXT("bool");
+		PureFunction.Outputs.Add(PureOutput);
+
+		FVergilFunctionDefinition ImpureFunction;
+		ImpureFunction.Name = TEXT("ApplyLocalResult");
+
+		FVergilFunctionParameterDefinition ImpureInput;
+		ImpureInput.Name = TEXT("Value");
+		ImpureInput.Type.PinCategory = TEXT("bool");
+		ImpureFunction.Inputs.Add(ImpureInput);
+
+		FVergilGraphNode PureCallNode;
+		PureCallNode.Id = FGuid::NewGuid();
+		PureCallNode.Kind = EVergilNodeKind::Call;
+		PureCallNode.Descriptor = TEXT("K2.Call.ComputeLocalResult");
+
+		FVergilGraphNode ImpureCallNode;
+		ImpureCallNode.Id = FGuid::NewGuid();
+		ImpureCallNode.Kind = EVergilNodeKind::Call;
+		ImpureCallNode.Descriptor = TEXT("K2.Call.ApplyLocalResult");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_SelfCalls");
+		Request.Document.Functions = { PureFunction, ImpureFunction };
+		Request.Document.Nodes = { PureCallNode, ImpureCallNode };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestTrue(TEXT("Document-authored pure and impure self calls should resolve during compilation."), Result.bSucceeded);
+
+		const FVergilCompilerCommand* const PlannedPureCallCommand = FindNodeCommand(Result.Commands, PureCallNode.Id);
+		TestNotNull(TEXT("Resolved pure self calls should still lower into AddNode commands."), PlannedPureCallCommand);
+		if (PlannedPureCallCommand != nullptr)
+		{
+			TestTrue(TEXT("Document-authored pure self calls should not require an explicit owner path."), PlannedPureCallCommand->StringValue.IsEmpty());
+		}
+
+		const FVergilCompilerCommand* const PlannedImpureCallCommand = FindNodeCommand(Result.Commands, ImpureCallNode.Id);
+		TestNotNull(TEXT("Resolved impure self calls should still lower into AddNode commands."), PlannedImpureCallCommand);
+		if (PlannedImpureCallCommand != nullptr)
+		{
+			TestTrue(TEXT("Document-authored impure self calls should not require an explicit owner path."), PlannedImpureCallCommand->StringValue.IsEmpty());
+		}
+	}
+
+	{
 		FVergilGraphNode MissingCallNode;
 		MissingCallNode.Id = FGuid::NewGuid();
 		MissingCallNode.Kind = EVergilNodeKind::Call;
@@ -6127,6 +6184,188 @@ bool FVergilSupportedK2ChainExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("BeginPlay should link to Branch.Execute."), EventThenPin != nullptr && EventThenPin->LinkedTo.Contains(BranchExecPin));
 	TestTrue(TEXT("Branch.Then should link to Sequence.Execute."), BranchThenPin != nullptr && BranchThenPin->LinkedTo.Contains(SequenceExecPin));
 	TestTrue(TEXT("Sequence.Then_0 should link to Call.Execute."), SequenceThen0Pin != nullptr && SequenceThen0Pin->LinkedTo.Contains(CallExecPin));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSelfFunctionCallExecutionTest,
+	"Vergil.Scaffold.SelfFunctionCallExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilSelfFunctionCallExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilVariableDefinition FlagVariable;
+	FlagVariable.Name = TEXT("InputFlag");
+	FlagVariable.Type.PinCategory = TEXT("bool");
+
+	FVergilFunctionDefinition PureFunction;
+	PureFunction.Name = TEXT("ComputeLocalResult");
+	PureFunction.bPure = true;
+
+	FVergilFunctionParameterDefinition PureInput;
+	PureInput.Name = TEXT("Value");
+	PureInput.Type.PinCategory = TEXT("bool");
+	PureFunction.Inputs.Add(PureInput);
+
+	FVergilFunctionParameterDefinition PureOutput;
+	PureOutput.Name = TEXT("Result");
+	PureOutput.Type.PinCategory = TEXT("bool");
+	PureFunction.Outputs.Add(PureOutput);
+
+	FVergilFunctionDefinition ImpureFunction;
+	ImpureFunction.Name = TEXT("ApplyLocalResult");
+
+	FVergilFunctionParameterDefinition ImpureInput;
+	ImpureInput.Name = TEXT("Value");
+	ImpureInput.Type.PinCategory = TEXT("bool");
+	ImpureFunction.Inputs.Add(ImpureInput);
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThen;
+	BeginPlayThen.Id = FGuid::NewGuid();
+	BeginPlayThen.Name = TEXT("Then");
+	BeginPlayThen.Direction = EVergilPinDirection::Output;
+	BeginPlayThen.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThen);
+
+	FVergilGraphNode GetterNode;
+	GetterNode.Id = FGuid::NewGuid();
+	GetterNode.Kind = EVergilNodeKind::VariableGet;
+	GetterNode.Descriptor = TEXT("K2.VarGet.InputFlag");
+	GetterNode.Position = FVector2D(260.0f, -140.0f);
+
+	FVergilGraphPin GetterValue;
+	GetterValue.Id = FGuid::NewGuid();
+	GetterValue.Name = TEXT("InputFlag");
+	GetterValue.Direction = EVergilPinDirection::Output;
+	GetterNode.Pins.Add(GetterValue);
+
+	FVergilGraphNode PureCallNode;
+	PureCallNode.Id = FGuid::NewGuid();
+	PureCallNode.Kind = EVergilNodeKind::Call;
+	PureCallNode.Descriptor = TEXT("K2.Call.ComputeLocalResult");
+	PureCallNode.Position = FVector2D(580.0f, -140.0f);
+
+	FVergilGraphPin PureCallInput;
+	PureCallInput.Id = FGuid::NewGuid();
+	PureCallInput.Name = TEXT("Value");
+	PureCallInput.Direction = EVergilPinDirection::Input;
+	PureCallNode.Pins.Add(PureCallInput);
+
+	FVergilGraphPin PureCallOutput;
+	PureCallOutput.Id = FGuid::NewGuid();
+	PureCallOutput.Name = TEXT("Result");
+	PureCallOutput.Direction = EVergilPinDirection::Output;
+	PureCallNode.Pins.Add(PureCallOutput);
+
+	FVergilGraphNode ImpureCallNode;
+	ImpureCallNode.Id = FGuid::NewGuid();
+	ImpureCallNode.Kind = EVergilNodeKind::Call;
+	ImpureCallNode.Descriptor = TEXT("K2.Call.ApplyLocalResult");
+	ImpureCallNode.Position = FVector2D(580.0f, 0.0f);
+
+	FVergilGraphPin ImpureCallExec;
+	ImpureCallExec.Id = FGuid::NewGuid();
+	ImpureCallExec.Name = TEXT("Execute");
+	ImpureCallExec.Direction = EVergilPinDirection::Input;
+	ImpureCallExec.bIsExec = true;
+	ImpureCallNode.Pins.Add(ImpureCallExec);
+
+	FVergilGraphPin ImpureCallValue;
+	ImpureCallValue.Id = FGuid::NewGuid();
+	ImpureCallValue.Name = TEXT("Value");
+	ImpureCallValue.Direction = EVergilPinDirection::Input;
+	ImpureCallNode.Pins.Add(ImpureCallValue);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilSelfFunctionCall");
+	Document.Variables.Add(FlagVariable);
+	Document.Functions = { PureFunction, ImpureFunction };
+	Document.Nodes = { BeginPlayNode, GetterNode, PureCallNode, ImpureCallNode };
+
+	FVergilGraphEdge EventToImpureCall;
+	EventToImpureCall.Id = FGuid::NewGuid();
+	EventToImpureCall.SourceNodeId = BeginPlayNode.Id;
+	EventToImpureCall.SourcePinId = BeginPlayThen.Id;
+	EventToImpureCall.TargetNodeId = ImpureCallNode.Id;
+	EventToImpureCall.TargetPinId = ImpureCallExec.Id;
+	Document.Edges.Add(EventToImpureCall);
+
+	FVergilGraphEdge GetterToPureCall;
+	GetterToPureCall.Id = FGuid::NewGuid();
+	GetterToPureCall.SourceNodeId = GetterNode.Id;
+	GetterToPureCall.SourcePinId = GetterValue.Id;
+	GetterToPureCall.TargetNodeId = PureCallNode.Id;
+	GetterToPureCall.TargetPinId = PureCallInput.Id;
+	Document.Edges.Add(GetterToPureCall);
+
+	FVergilGraphEdge PureToImpureCall;
+	PureToImpureCall.Id = FGuid::NewGuid();
+	PureToImpureCall.SourceNodeId = PureCallNode.Id;
+	PureToImpureCall.SourcePinId = PureCallOutput.Id;
+	PureToImpureCall.TargetNodeId = ImpureCallNode.Id;
+	PureToImpureCall.TargetPinId = ImpureCallValue.Id;
+	Document.Edges.Add(PureToImpureCall);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Self function call document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Self function call document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Self function call document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after self function call execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_VariableGet* const GetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, GetterNode.Id);
+	UK2Node_CallFunction* const PureCallGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, PureCallNode.Id);
+	UK2Node_CallFunction* const ImpureCallGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ImpureCallNode.Id);
+
+	TestNotNull(TEXT("BeginPlay event node should exist."), EventNode);
+	TestNotNull(TEXT("Getter node should exist."), GetterGraphNode);
+	TestNotNull(TEXT("Pure self call node should exist."), PureCallGraphNode);
+	TestNotNull(TEXT("Impure self call node should exist."), ImpureCallGraphNode);
+	if (EventNode == nullptr || GetterGraphNode == nullptr || PureCallGraphNode == nullptr || ImpureCallGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const GetterValuePin = GetterGraphNode->FindPin(TEXT("InputFlag"));
+	UEdGraphPin* const PureCallValuePin = PureCallGraphNode->FindPin(TEXT("Value"));
+	UEdGraphPin* const PureCallResultPin = PureCallGraphNode->FindPin(TEXT("Result"));
+	UEdGraphPin* const ImpureCallExecPin = ImpureCallGraphNode->GetExecPin();
+	UEdGraphPin* const ImpureCallValuePin = ImpureCallGraphNode->FindPin(TEXT("Value"));
+
+	TestTrue(TEXT("Pure self call should remain pure."), PureCallGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("Impure self call should expose an exec pin."), ImpureCallExecPin != nullptr);
+	TestTrue(TEXT("BeginPlay should drive the impure self call."), EventThenPin != nullptr && EventThenPin->LinkedTo.Contains(ImpureCallExecPin));
+	TestTrue(TEXT("Getter should feed the pure self call input."), GetterValuePin != nullptr && GetterValuePin->LinkedTo.Contains(PureCallValuePin));
+	TestTrue(TEXT("Pure self call result should feed the impure self call input."), PureCallResultPin != nullptr && PureCallResultPin->LinkedTo.Contains(ImpureCallValuePin));
 
 	return true;
 }
