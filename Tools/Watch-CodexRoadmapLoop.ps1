@@ -85,7 +85,7 @@ Write-Output ("Watching {0}" -f $LogPath)
 Write-Output ""
 
 if ($NoWait) {
-	Get-Content -Path $LogPath -Tail $Tail
+	Get-Content -Path $LogPath -Tail $Tail -Encoding UTF8
 } else {
-	Get-Content -Path $LogPath -Tail $Tail -Wait
+	Get-Content -Path $LogPath -Tail $Tail -Wait -Encoding UTF8
 }
