@@ -6,6 +6,7 @@
 - After a ticket has been committed and pushed successfully, immediately look up the next roadmap ticket and start it without waiting for another prompt, unless the user has redirected the work.
 - Keep each commit scoped to the ticket that was just completed. Do not bundle unrelated dirty files into the commit.
 - For unattended chaining outside an active chat turn, use `Tools/Start-CodexRoadmapLoop.ps1` to launch the detached Codex roadmap loop, `Tools/Get-CodexRoadmapLoopStatus.ps1` to inspect it, and `Tools/Stop-CodexRoadmapLoop.ps1` to stop it.
+- User-facing usage notes for that detached loop live in `Tools/CodexRoadmapLoop.md`.
 
 ## Vergil / TensAi Constraints
 
