@@ -16,6 +16,7 @@
 #include "UObject/UObjectGlobals.h"
 
 #include "VergilCompilerTypes.h"
+#include "VergilContractInfo.h"
 #include "VergilDiagnostic.h"
 #include "VergilNodeRegistry.h"
 
@@ -285,10 +286,7 @@ namespace
 			Context.AddDiagnostic(
 				EVergilDiagnosticSeverity::Error,
 				TEXT("DedicatedAsyncNodeUnsupported"),
-				FString::Printf(
-					TEXT("%s resolves to factory class '%s', which advertises HasDedicatedAsyncNode and requires a dedicated handler instead of the generic async-action path."),
-					*Node.Descriptor.ToString(),
-					*FactoryClass->GetPathName()),
+				Vergil::BuildDedicatedAsyncNodeUnsupportedDiagnosticMessage(Node.Descriptor.ToString(), FactoryClass->GetPathName()),
 				Node.Id);
 			return false;
 		}

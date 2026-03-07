@@ -69,6 +69,7 @@
 #include "VergilAgentSubsystem.h"
 #include "VergilCommandTypes.h"
 #include "VergilBlueprintCompilerService.h"
+#include "VergilContractInfo.h"
 #include "VergilCompilerTypes.h"
 #include "VergilDeveloperSettings.h"
 #include "VergilEditorSubsystem.h"
@@ -13076,6 +13077,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.SpecializedAsyncTaskExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilUnsupportedNodeReportingTest,
+	"Vergil.Scaffold.UnsupportedNodeReporting",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -15955,6 +15961,103 @@ bool FVergilSpecializedAsyncTaskExecutionTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("Play Montage OnInterrupted should feed MontageInterrupted setter exec."), PlayMontageInterruptedGraphPin != nullptr && PlayMontageInterruptedGraphPin->LinkedTo.Contains(MontageInterruptedSetterExecGraphPin));
 	TestTrue(TEXT("Play Montage OnNotifyBegin should feed LastMontageNotify setter exec."), PlayMontageNotifyBeginGraphPin != nullptr && PlayMontageNotifyBeginGraphPin->LinkedTo.Contains(LastMontageNotifySetterExecGraphPin));
 	TestTrue(TEXT("Play Montage NotifyName should feed LastMontageNotify setter value."), PlayMontageNotifyNameGraphPin != nullptr && PlayMontageNotifyNameGraphPin->LinkedTo.Contains(LastMontageNotifySetterValueGraphPin));
+
+	return true;
+}
+
+bool FVergilUnsupportedNodeReportingTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindDiagnosticByCode = [](const TArray<FVergilDiagnostic>& Diagnostics, const FName Code) -> const FVergilDiagnostic*
+	{
+		return Diagnostics.FindByPredicate([Code](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == Code;
+		});
+	};
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for generic unsupported-node reporting."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FVergilGraphNode UnsupportedNode;
+		UnsupportedNode.Id = FGuid::NewGuid();
+		UnsupportedNode.Kind = EVergilNodeKind::Custom;
+		UnsupportedNode.Descriptor = TEXT("K2.UnsupportedNodeFamilyProbe");
+		UnsupportedNode.Position = FVector2D(0.0f, 0.0f);
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilUnsupportedNodeReporting_Generic");
+		Document.Nodes = { UnsupportedNode };
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+		TestFalse(TEXT("Unsupported generic node families should fail during apply-time execution."), Result.bSucceeded);
+		TestFalse(TEXT("Unsupported generic node families should not report a successful apply."), Result.bApplied);
+
+		const FVergilDiagnostic* const Diagnostic = FindDiagnosticByCode(Result.Diagnostics, TEXT("UnsupportedNodeExecution"));
+		TestNotNull(TEXT("Unsupported generic node families should emit UnsupportedNodeExecution."), Diagnostic);
+		if (Diagnostic == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(TEXT("Unsupported generic node-family diagnostics should name the unsupported support-matrix family."), Diagnostic->Message.Contains(Vergil::GetUnsupportedDescriptorBackedUK2NodeFamilyName()));
+		TestTrue(TEXT("Unsupported generic node-family diagnostics should mention the authored descriptor."), Diagnostic->Message.Contains(UnsupportedNode.Descriptor.ToString()));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for dedicated async-node reporting."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		UClass* const DedicatedAsyncFactoryClass = LoadClass<UObject>(nullptr, TEXT("/Script/MovieSceneTracks.MovieSceneAsyncAction_SequencePrediction"));
+		TestNotNull(TEXT("Dedicated async-node reporting coverage requires MovieSceneAsyncAction_SequencePrediction."), DedicatedAsyncFactoryClass);
+		if (DedicatedAsyncFactoryClass == nullptr)
+		{
+			return false;
+		}
+
+		FVergilGraphNode AsyncActionNode;
+		AsyncActionNode.Id = FGuid::NewGuid();
+		AsyncActionNode.Kind = EVergilNodeKind::Custom;
+		AsyncActionNode.Descriptor = TEXT("K2.AsyncAction.PredictWorldTransformAtTime");
+		AsyncActionNode.Position = FVector2D(0.0f, 0.0f);
+		AsyncActionNode.Metadata.Add(TEXT("FactoryClassPath"), DedicatedAsyncFactoryClass->GetPathName());
+
+		FVergilGraphDocument Document;
+		Document.BlueprintPath = TEXT("/Temp/BP_VergilUnsupportedNodeReporting_DedicatedAsync");
+		Document.Nodes = { AsyncActionNode };
+
+		const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, false);
+
+		TestFalse(TEXT("Dedicated async-node families without a specialized handler should fail compilation."), Result.bSucceeded);
+		TestEqual(TEXT("Dedicated async-node family failures should stop command planning."), Result.Commands.Num(), 0);
+
+		const FVergilDiagnostic* const Diagnostic = FindDiagnosticByCode(Result.Diagnostics, TEXT("DedicatedAsyncNodeUnsupported"));
+		TestNotNull(TEXT("Dedicated async-node family failures should emit DedicatedAsyncNodeUnsupported."), Diagnostic);
+		if (Diagnostic == nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(TEXT("Dedicated async-node diagnostics should name the unsupported support-matrix family."), Diagnostic->Message.Contains(Vergil::GetDedicatedAsyncNodeUnsupportedFamilyName()));
+		TestTrue(TEXT("Dedicated async-node diagnostics should mention the authored descriptor."), Diagnostic->Message.Contains(AsyncActionNode.Descriptor.ToString()));
+		TestTrue(TEXT("Dedicated async-node diagnostics should mention the resolved factory class."), Diagnostic->Message.Contains(DedicatedAsyncFactoryClass->GetPathName()));
+	}
 
 	return true;
 }

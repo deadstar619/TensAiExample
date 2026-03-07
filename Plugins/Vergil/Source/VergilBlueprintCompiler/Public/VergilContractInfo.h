@@ -163,6 +163,10 @@ namespace Vergil
 	VERGILBLUEPRINTCOMPILER_API const FVergilSupportedContractManifest& GetSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString SerializeSupportedContractManifest(bool bPrettyPrint = true);
+	VERGILBLUEPRINTCOMPILER_API const FString& GetDedicatedAsyncNodeUnsupportedFamilyName();
+	VERGILBLUEPRINTCOMPILER_API const FString& GetUnsupportedDescriptorBackedUK2NodeFamilyName();
+	VERGILBLUEPRINTCOMPILER_API FString BuildDedicatedAsyncNodeUnsupportedDiagnosticMessage(const FString& DescriptorLabel, const FString& FactoryClassPath);
+	VERGILBLUEPRINTCOMPILER_API FString BuildUnsupportedDescriptorBackedUK2NodeDiagnosticMessage(const FString& DescriptorLabel);
 	VERGILBLUEPRINTCOMPILER_API FString DescribeNodeSupportMatrixAsMarkdownTable();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedDescriptorContractsAsMarkdownTable();
 }

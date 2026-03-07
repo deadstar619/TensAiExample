@@ -395,7 +395,7 @@ Tickets:
 - [x] `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
 - [x] `VGR-6006` Add a generic node-spawner path for arbitrary supported `UK2Node` classes
 - [x] `VGR-6007` Build an explicit support matrix of generic vs specialized coverage
-- `VGR-6008` Add unsupported-node reporting that enumerates exact missing families
+- [x] `VGR-6008` Add unsupported-node reporting that enumerates exact missing families
 
 Acceptance criteria:
 
@@ -443,6 +443,12 @@ Session note for `VGR-6007` (2026-03-07):
 - The supported-contract manifest now exposes a code-backed node-support matrix summary plus explicit family rows, so tooling can measure supported versus intentionally unsupported K2-family coverage and distinguish generic node-spawner coverage, specialized-handler coverage, and other direct-lowering paths without scraping roadmap prose.
 - The current matrix rows group event/custom-event entrypoints, call/message/component-lookup nodes, variable/struct/delegate helpers, standard macro families, generic `UK2Node` spawner families, specialized async-task families, dedicated async nodes that still require explicit handlers, and the remaining unsupported descriptor-backed `UK2Node` bucket that still fails explicitly.
 - `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now includes a generated support-matrix table alongside the generated descriptor-contract table, and `Vergil.Scaffold.SupportedContractInspection` plus `Vergil.Scaffold.SupportedNodeContractDocs` now cover the structured manifest fields, JSON/description output, and markdown sync for that matrix surface.
+
+Session note for `VGR-6008` (2026-03-07):
+
+- Unsupported generic add-node execution and dedicated async-action rejection now both name the exact unsupported family from the code-backed node-support matrix instead of stopping at anonymous generic errors.
+- The compiler now routes `HasDedicatedAsyncNode` generic async-action failures through the `Dedicated async nodes without a specialized handler` family, while direct command-plan preflight and execution route unsupported descriptor-backed `UK2Node` add-node commands through the `Arbitrary unsupported descriptor-backed UK2Node families` bucket.
+- `Vergil.Scaffold.UnsupportedNodeReporting` now covers both paths end to end, so future support-matrix edits will fail automation if the emitted diagnostics drift away from the manifest family labels.
 
 ## Milestone 7: Editor Tooling
 Goal:
@@ -613,11 +619,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-6006`
-2. `VGR-7006`
-3. `VGR-9001`
-4. `VGR-6007`
-5. `VGR-6008`
+1. `VGR-7006`
+2. `VGR-9001`
+3. `VGR-8007`
+4. `VGR-8008`
+5. `VGR-9002`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

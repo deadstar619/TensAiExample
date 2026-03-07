@@ -429,6 +429,6 @@ This table is mirrored from the code-backed supported-contract manifest. `Vergil
 
 ## Important limits
 
-- The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but most will fail during execution with `UnsupportedNodeExecution`.
+- The generic fallback planner is not a support promise. Descriptors outside the table above may still plan, but unsupported add-node execution now fails with `UnsupportedNodeExecution` that names the exact unsupported support-matrix family, currently `Arbitrary unsupported descriptor-backed UK2Node families`.
 - Comment metadata only applies to executed comment nodes. Arbitrary metadata on other nodes is not a generic editor-side mutation surface.
 - One compile request currently targets one graph plus optional variable, dispatcher, function-signature, macro-signature, component-hierarchy, component-template-property, class-default, and implemented-interface definitions. Function bodies and macro bodies remain separate future work. Construction-script definitions participate in compile/apply when the target graph is `UserConstructionScript`.

@@ -62,6 +62,7 @@
 #include "Editor/Transactor.h"
 #include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
+#include "VergilContractInfo.h"
 #include "VergilLog.h"
 
 namespace
@@ -89,6 +90,7 @@ namespace
 	const FName PlayMontageCommandName(TEXT("Vergil.K2.PlayMontage"));
 	const FName AsyncActionFactoryClassMetadataName(TEXT("FactoryClassPath"));
 	const FName AsyncActionProxyPinName(TEXT("AsyncTaskProxy"));
+	const TCHAR* AsyncActionDescriptorPrefix = TEXT("K2.AsyncAction.");
 	const TCHAR* VergilTransactionContext = TEXT("Vergil");
 
 	struct FVergilExecutionState
@@ -186,6 +188,16 @@ namespace
 	FString GetOptionalObjectPath(const UObject* Object)
 	{
 		return Object != nullptr ? Object->GetPathName() : FString();
+	}
+
+	FString BuildAsyncActionDescriptorLabel(const FVergilCompilerCommand& Command)
+	{
+		if (Command.SecondaryName.IsNone())
+		{
+			return FString(AsyncActionDescriptorPrefix) + TEXT("<FactoryFunctionName>");
+		}
+
+		return FString::Printf(TEXT("%s%s"), AsyncActionDescriptorPrefix, *Command.SecondaryName.ToString());
 	}
 
 	void PopulateTransactionSnapshotContext(
@@ -561,9 +573,7 @@ namespace
 			Diagnostics.Add(FVergilDiagnostic::Make(
 				EVergilDiagnosticSeverity::Error,
 				TEXT("DedicatedAsyncNodeUnsupported"),
-				FString::Printf(
-					TEXT("Async-action factory class '%s' advertises HasDedicatedAsyncNode and requires a dedicated handler instead of Vergil.K2.AsyncAction."),
-					*FactoryClass->GetPathName()),
+				Vergil::BuildDedicatedAsyncNodeUnsupportedDiagnosticMessage(BuildAsyncActionDescriptorLabel(Command), FactoryClass->GetPathName()),
 				Command.NodeId));
 			return false;
 		}
@@ -7501,7 +7511,7 @@ namespace
 			Diagnostics.Add(FVergilDiagnostic::Make(
 				EVergilDiagnosticSeverity::Error,
 				TEXT("UnsupportedNodeExecution"),
-				FString::Printf(TEXT("Execution is not implemented for node descriptor '%s'."), *Command.Name.ToString()),
+				Vergil::BuildUnsupportedDescriptorBackedUK2NodeDiagnosticMessage(Command.Name.ToString()),
 				Command.NodeId));
 			return false;
 		}
@@ -8747,7 +8757,7 @@ namespace
 
 				AddValidationError(
 					TEXT("UnsupportedNodeExecution"),
-					FString::Printf(TEXT("Execution is not implemented for node descriptor '%s'."), *Command.Name.ToString()),
+					Vergil::BuildUnsupportedDescriptorBackedUK2NodeDiagnosticMessage(Command.Name.ToString()),
 					Command.NodeId);
 				break;
 			}

@@ -13,6 +13,8 @@ namespace
 {
 	inline constexpr TCHAR SupportedContractManifestFormatName[] = TEXT("Vergil.ContractManifest");
 	inline constexpr int32 SupportedContractManifestVersion = 1;
+	const FString DedicatedAsyncNodeUnsupportedFamilyName(TEXT("Dedicated async nodes without a specialized handler"));
+	const FString UnsupportedDescriptorBackedUK2NodeFamilyName(TEXT("Arbitrary unsupported descriptor-backed UK2Node families"));
 
 	TArray<FName> BuildSupportedDocumentFields()
 	{
@@ -168,6 +170,17 @@ namespace
 		Entry.DescriptorCoverage = DescriptorCoverage;
 		Entry.Notes = Notes;
 		return Entry;
+	}
+
+	const FVergilNodeSupportMatrixEntry& FindRequiredNodeSupportMatrixEntry(const FString& Family)
+	{
+		const FVergilSupportedContractManifest& Manifest = Vergil::GetSupportedContractManifest();
+		const FVergilNodeSupportMatrixEntry* const Entry = Manifest.NodeSupportMatrix.FindByPredicate([&Family](const FVergilNodeSupportMatrixEntry& Candidate)
+		{
+			return Candidate.Family == Family;
+		});
+		checkf(Entry != nullptr, TEXT("Unsupported node-support family '%s' is missing from the contract manifest."), *Family);
+		return *Entry;
 	}
 
 	TArray<FVergilSupportedDescriptorContract> BuildSupportedDescriptorContracts()
@@ -618,13 +631,13 @@ namespace
 				{ TEXT("K2.AIMoveTo"), TEXT("K2.PlayMontage") },
 				TEXT("These dedicated async-node families still require explicit specialized handlers to resolve the engine-owned factory function and delegate surface before the final UK2Node class is instantiated.")),
 			MakeSupportMatrixEntry(
-				TEXT("Dedicated async nodes without a specialized handler"),
+				DedicatedAsyncNodeUnsupportedFamilyName,
 				EVergilNodeSupportCoverage::Unsupported,
 				EVergilNodeSupportHandling::Unsupported,
 				{ TEXT("K2.AsyncAction.<FactoryFunctionName> where the resolved factory class advertises HasDedicatedAsyncNode") },
 				TEXT("Factories that advertise HasDedicatedAsyncNode are intentionally rejected from the generic async-action path until they have an explicit specialized handler.")),
 			MakeSupportMatrixEntry(
-				TEXT("Arbitrary unsupported descriptor-backed UK2Node families"),
+				UnsupportedDescriptorBackedUK2NodeFamilyName,
 				EVergilNodeSupportCoverage::Unsupported,
 				EVergilNodeSupportHandling::Unsupported,
 				{ TEXT("Descriptors outside the supported-contract table") },
@@ -887,6 +900,37 @@ const FVergilSupportedContractManifest& Vergil::GetSupportedContractManifest()
 {
 	static const FVergilSupportedContractManifest Manifest = BuildSupportedContractManifest();
 	return Manifest;
+}
+
+const FString& Vergil::GetDedicatedAsyncNodeUnsupportedFamilyName()
+{
+	return DedicatedAsyncNodeUnsupportedFamilyName;
+}
+
+const FString& Vergil::GetUnsupportedDescriptorBackedUK2NodeFamilyName()
+{
+	return UnsupportedDescriptorBackedUK2NodeFamilyName;
+}
+
+FString Vergil::BuildDedicatedAsyncNodeUnsupportedDiagnosticMessage(const FString& DescriptorLabel, const FString& FactoryClassPath)
+{
+	const FVergilNodeSupportMatrixEntry& Entry = FindRequiredNodeSupportMatrixEntry(GetDedicatedAsyncNodeUnsupportedFamilyName());
+	return FString::Printf(
+		TEXT("%s resolves to factory class '%s', which belongs to unsupported family '%s'. %s"),
+		*DescriptorLabel,
+		*FactoryClassPath,
+		*Entry.Family,
+		*Entry.Notes);
+}
+
+FString Vergil::BuildUnsupportedDescriptorBackedUK2NodeDiagnosticMessage(const FString& DescriptorLabel)
+{
+	const FVergilNodeSupportMatrixEntry& Entry = FindRequiredNodeSupportMatrixEntry(GetUnsupportedDescriptorBackedUK2NodeFamilyName());
+	return FString::Printf(
+		TEXT("Node descriptor '%s' belongs to unsupported family '%s'. %s"),
+		*DescriptorLabel,
+		*Entry.Family,
+		*Entry.Notes);
 }
 
 FString Vergil::DescribeSupportedContractManifest()
