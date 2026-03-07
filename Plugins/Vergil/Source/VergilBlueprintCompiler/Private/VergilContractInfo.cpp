@@ -172,7 +172,7 @@ namespace
 				TEXT("Call"),
 				SupportedGraphs,
 				{},
-				TEXT("Optional OwnerClassPath constrains function resolution. When omitted, the current scaffold resolves document-authored functions first, then existing Blueprint-local functions, then inherited/native functions. Self-owned resolutions keep an empty owner path; inherited/native resolutions normalize the owner path into the planned command.")),
+				TEXT("Optional OwnerClassPath constrains function resolution. When omitted, the current scaffold resolves document-authored functions first, then existing Blueprint-local functions, then inherited/native functions. Self-owned resolutions keep an empty owner path; inherited/native resolutions normalize the owner path into the planned command. Headless UE_5.7 coverage now explicitly re-verifies timer-by-function-name helpers plus handle-based timer pause/query helpers through this generic call path.")),
 			MakeDescriptorContract(
 				TEXT("K2.VarGet.<VariableName>"),
 				EVergilDescriptorMatchKind::Prefix,

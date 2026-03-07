@@ -11819,6 +11819,12 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	FEdGraphPinType BoolType;
 	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
 	TestTrue(TEXT("Looping member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Looping"), BoolType, TEXT("false")));
+	TestTrue(TEXT("WasTimerActive member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("WasTimerActive"), BoolType, TEXT("false")));
+	TestTrue(TEXT("WasTimerPaused member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("WasTimerPaused"), BoolType, TEXT("false")));
+	TestTrue(TEXT("DidTimerExist member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("DidTimerExist"), BoolType, TEXT("false")));
+
+	TestTrue(TEXT("ElapsedTimeValue member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ElapsedTimeValue"), FloatType, TEXT("0.0")));
+	TestTrue(TEXT("RemainingTimeValue member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("RemainingTimeValue"), FloatType, TEXT("0.0")));
 
 	FEdGraphPinType TimerHandleType;
 	TimerHandleType.PinCategory = UEdGraphSchema_K2::PC_Struct;
@@ -11957,6 +11963,285 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	GetHandleValuePin.Direction = EVergilPinDirection::Output;
 	GetHandleNode.Pins.Add(GetHandleValuePin);
 
+	FVergilGraphNode PauseTimerNode;
+	PauseTimerNode.Id = FGuid::NewGuid();
+	PauseTimerNode.Kind = EVergilNodeKind::Call;
+	PauseTimerNode.Descriptor = TEXT("K2.Call.K2_PauseTimerHandle");
+	PauseTimerNode.Position = FVector2D(1420.0f, -120.0f);
+	PauseTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin PauseTimerExecPin;
+	PauseTimerExecPin.Id = FGuid::NewGuid();
+	PauseTimerExecPin.Name = TEXT("Execute");
+	PauseTimerExecPin.Direction = EVergilPinDirection::Input;
+	PauseTimerExecPin.bIsExec = true;
+	PauseTimerNode.Pins.Add(PauseTimerExecPin);
+
+	FVergilGraphPin PauseTimerThenPin;
+	PauseTimerThenPin.Id = FGuid::NewGuid();
+	PauseTimerThenPin.Name = TEXT("Then");
+	PauseTimerThenPin.Direction = EVergilPinDirection::Output;
+	PauseTimerThenPin.bIsExec = true;
+	PauseTimerNode.Pins.Add(PauseTimerThenPin);
+
+	FVergilGraphPin PauseTimerHandlePin;
+	PauseTimerHandlePin.Id = FGuid::NewGuid();
+	PauseTimerHandlePin.Name = TEXT("Handle");
+	PauseTimerHandlePin.Direction = EVergilPinDirection::Input;
+	PauseTimerNode.Pins.Add(PauseTimerHandlePin);
+
+	FVergilGraphNode UnPauseTimerNode;
+	UnPauseTimerNode.Id = FGuid::NewGuid();
+	UnPauseTimerNode.Kind = EVergilNodeKind::Call;
+	UnPauseTimerNode.Descriptor = TEXT("K2.Call.K2_UnPauseTimerHandle");
+	UnPauseTimerNode.Position = FVector2D(1780.0f, -120.0f);
+	UnPauseTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin UnPauseTimerExecPin;
+	UnPauseTimerExecPin.Id = FGuid::NewGuid();
+	UnPauseTimerExecPin.Name = TEXT("Execute");
+	UnPauseTimerExecPin.Direction = EVergilPinDirection::Input;
+	UnPauseTimerExecPin.bIsExec = true;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerExecPin);
+
+	FVergilGraphPin UnPauseTimerThenPin;
+	UnPauseTimerThenPin.Id = FGuid::NewGuid();
+	UnPauseTimerThenPin.Name = TEXT("Then");
+	UnPauseTimerThenPin.Direction = EVergilPinDirection::Output;
+	UnPauseTimerThenPin.bIsExec = true;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerThenPin);
+
+	FVergilGraphPin UnPauseTimerHandlePin;
+	UnPauseTimerHandlePin.Id = FGuid::NewGuid();
+	UnPauseTimerHandlePin.Name = TEXT("Handle");
+	UnPauseTimerHandlePin.Direction = EVergilPinDirection::Input;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerHandlePin);
+
+	FVergilGraphNode IsActiveNode;
+	IsActiveNode.Id = FGuid::NewGuid();
+	IsActiveNode.Kind = EVergilNodeKind::Call;
+	IsActiveNode.Descriptor = TEXT("K2.Call.K2_IsTimerActiveHandle");
+	IsActiveNode.Position = FVector2D(1780.0f, 60.0f);
+	IsActiveNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin IsActiveHandlePin;
+	IsActiveHandlePin.Id = FGuid::NewGuid();
+	IsActiveHandlePin.Name = TEXT("Handle");
+	IsActiveHandlePin.Direction = EVergilPinDirection::Input;
+	IsActiveNode.Pins.Add(IsActiveHandlePin);
+
+	FVergilGraphPin IsActiveReturnPin;
+	IsActiveReturnPin.Id = FGuid::NewGuid();
+	IsActiveReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	IsActiveReturnPin.Direction = EVergilPinDirection::Output;
+	IsActiveNode.Pins.Add(IsActiveReturnPin);
+
+	FVergilGraphNode IsPausedNode;
+	IsPausedNode.Id = FGuid::NewGuid();
+	IsPausedNode.Kind = EVergilNodeKind::Call;
+	IsPausedNode.Descriptor = TEXT("K2.Call.K2_IsTimerPausedHandle");
+	IsPausedNode.Position = FVector2D(1780.0f, 220.0f);
+	IsPausedNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin IsPausedHandlePin;
+	IsPausedHandlePin.Id = FGuid::NewGuid();
+	IsPausedHandlePin.Name = TEXT("Handle");
+	IsPausedHandlePin.Direction = EVergilPinDirection::Input;
+	IsPausedNode.Pins.Add(IsPausedHandlePin);
+
+	FVergilGraphPin IsPausedReturnPin;
+	IsPausedReturnPin.Id = FGuid::NewGuid();
+	IsPausedReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	IsPausedReturnPin.Direction = EVergilPinDirection::Output;
+	IsPausedNode.Pins.Add(IsPausedReturnPin);
+
+	FVergilGraphNode ExistsNode;
+	ExistsNode.Id = FGuid::NewGuid();
+	ExistsNode.Kind = EVergilNodeKind::Call;
+	ExistsNode.Descriptor = TEXT("K2.Call.K2_TimerExistsHandle");
+	ExistsNode.Position = FVector2D(1780.0f, 380.0f);
+	ExistsNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin ExistsHandlePin;
+	ExistsHandlePin.Id = FGuid::NewGuid();
+	ExistsHandlePin.Name = TEXT("Handle");
+	ExistsHandlePin.Direction = EVergilPinDirection::Input;
+	ExistsNode.Pins.Add(ExistsHandlePin);
+
+	FVergilGraphPin ExistsReturnPin;
+	ExistsReturnPin.Id = FGuid::NewGuid();
+	ExistsReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	ExistsReturnPin.Direction = EVergilPinDirection::Output;
+	ExistsNode.Pins.Add(ExistsReturnPin);
+
+	FVergilGraphNode ElapsedNode;
+	ElapsedNode.Id = FGuid::NewGuid();
+	ElapsedNode.Kind = EVergilNodeKind::Call;
+	ElapsedNode.Descriptor = TEXT("K2.Call.K2_GetTimerElapsedTimeHandle");
+	ElapsedNode.Position = FVector2D(1780.0f, 540.0f);
+	ElapsedNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin ElapsedHandlePin;
+	ElapsedHandlePin.Id = FGuid::NewGuid();
+	ElapsedHandlePin.Name = TEXT("Handle");
+	ElapsedHandlePin.Direction = EVergilPinDirection::Input;
+	ElapsedNode.Pins.Add(ElapsedHandlePin);
+
+	FVergilGraphPin ElapsedReturnPin;
+	ElapsedReturnPin.Id = FGuid::NewGuid();
+	ElapsedReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	ElapsedReturnPin.Direction = EVergilPinDirection::Output;
+	ElapsedNode.Pins.Add(ElapsedReturnPin);
+
+	FVergilGraphNode RemainingNode;
+	RemainingNode.Id = FGuid::NewGuid();
+	RemainingNode.Kind = EVergilNodeKind::Call;
+	RemainingNode.Descriptor = TEXT("K2.Call.K2_GetTimerRemainingTimeHandle");
+	RemainingNode.Position = FVector2D(1780.0f, 700.0f);
+	RemainingNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin RemainingHandlePin;
+	RemainingHandlePin.Id = FGuid::NewGuid();
+	RemainingHandlePin.Name = TEXT("Handle");
+	RemainingHandlePin.Direction = EVergilPinDirection::Input;
+	RemainingNode.Pins.Add(RemainingHandlePin);
+
+	FVergilGraphPin RemainingReturnPin;
+	RemainingReturnPin.Id = FGuid::NewGuid();
+	RemainingReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	RemainingReturnPin.Direction = EVergilPinDirection::Output;
+	RemainingNode.Pins.Add(RemainingReturnPin);
+
+	FVergilGraphNode SetActiveNode;
+	SetActiveNode.Id = FGuid::NewGuid();
+	SetActiveNode.Kind = EVergilNodeKind::VariableSet;
+	SetActiveNode.Descriptor = TEXT("K2.VarSet.WasTimerActive");
+	SetActiveNode.Position = FVector2D(2200.0f, 40.0f);
+
+	FVergilGraphPin SetActiveExecPin;
+	SetActiveExecPin.Id = FGuid::NewGuid();
+	SetActiveExecPin.Name = TEXT("Execute");
+	SetActiveExecPin.Direction = EVergilPinDirection::Input;
+	SetActiveExecPin.bIsExec = true;
+	SetActiveNode.Pins.Add(SetActiveExecPin);
+
+	FVergilGraphPin SetActiveThenPin;
+	SetActiveThenPin.Id = FGuid::NewGuid();
+	SetActiveThenPin.Name = TEXT("Then");
+	SetActiveThenPin.Direction = EVergilPinDirection::Output;
+	SetActiveThenPin.bIsExec = true;
+	SetActiveNode.Pins.Add(SetActiveThenPin);
+
+	FVergilGraphPin SetActiveValuePin;
+	SetActiveValuePin.Id = FGuid::NewGuid();
+	SetActiveValuePin.Name = TEXT("WasTimerActive");
+	SetActiveValuePin.Direction = EVergilPinDirection::Input;
+	SetActiveNode.Pins.Add(SetActiveValuePin);
+
+	FVergilGraphNode SetPausedNode;
+	SetPausedNode.Id = FGuid::NewGuid();
+	SetPausedNode.Kind = EVergilNodeKind::VariableSet;
+	SetPausedNode.Descriptor = TEXT("K2.VarSet.WasTimerPaused");
+	SetPausedNode.Position = FVector2D(2200.0f, 200.0f);
+
+	FVergilGraphPin SetPausedExecPin;
+	SetPausedExecPin.Id = FGuid::NewGuid();
+	SetPausedExecPin.Name = TEXT("Execute");
+	SetPausedExecPin.Direction = EVergilPinDirection::Input;
+	SetPausedExecPin.bIsExec = true;
+	SetPausedNode.Pins.Add(SetPausedExecPin);
+
+	FVergilGraphPin SetPausedThenPin;
+	SetPausedThenPin.Id = FGuid::NewGuid();
+	SetPausedThenPin.Name = TEXT("Then");
+	SetPausedThenPin.Direction = EVergilPinDirection::Output;
+	SetPausedThenPin.bIsExec = true;
+	SetPausedNode.Pins.Add(SetPausedThenPin);
+
+	FVergilGraphPin SetPausedValuePin;
+	SetPausedValuePin.Id = FGuid::NewGuid();
+	SetPausedValuePin.Name = TEXT("WasTimerPaused");
+	SetPausedValuePin.Direction = EVergilPinDirection::Input;
+	SetPausedNode.Pins.Add(SetPausedValuePin);
+
+	FVergilGraphNode SetExistsNode;
+	SetExistsNode.Id = FGuid::NewGuid();
+	SetExistsNode.Kind = EVergilNodeKind::VariableSet;
+	SetExistsNode.Descriptor = TEXT("K2.VarSet.DidTimerExist");
+	SetExistsNode.Position = FVector2D(2200.0f, 360.0f);
+
+	FVergilGraphPin SetExistsExecPin;
+	SetExistsExecPin.Id = FGuid::NewGuid();
+	SetExistsExecPin.Name = TEXT("Execute");
+	SetExistsExecPin.Direction = EVergilPinDirection::Input;
+	SetExistsExecPin.bIsExec = true;
+	SetExistsNode.Pins.Add(SetExistsExecPin);
+
+	FVergilGraphPin SetExistsThenPin;
+	SetExistsThenPin.Id = FGuid::NewGuid();
+	SetExistsThenPin.Name = TEXT("Then");
+	SetExistsThenPin.Direction = EVergilPinDirection::Output;
+	SetExistsThenPin.bIsExec = true;
+	SetExistsNode.Pins.Add(SetExistsThenPin);
+
+	FVergilGraphPin SetExistsValuePin;
+	SetExistsValuePin.Id = FGuid::NewGuid();
+	SetExistsValuePin.Name = TEXT("DidTimerExist");
+	SetExistsValuePin.Direction = EVergilPinDirection::Input;
+	SetExistsNode.Pins.Add(SetExistsValuePin);
+
+	FVergilGraphNode SetElapsedNode;
+	SetElapsedNode.Id = FGuid::NewGuid();
+	SetElapsedNode.Kind = EVergilNodeKind::VariableSet;
+	SetElapsedNode.Descriptor = TEXT("K2.VarSet.ElapsedTimeValue");
+	SetElapsedNode.Position = FVector2D(2200.0f, 520.0f);
+
+	FVergilGraphPin SetElapsedExecPin;
+	SetElapsedExecPin.Id = FGuid::NewGuid();
+	SetElapsedExecPin.Name = TEXT("Execute");
+	SetElapsedExecPin.Direction = EVergilPinDirection::Input;
+	SetElapsedExecPin.bIsExec = true;
+	SetElapsedNode.Pins.Add(SetElapsedExecPin);
+
+	FVergilGraphPin SetElapsedThenPin;
+	SetElapsedThenPin.Id = FGuid::NewGuid();
+	SetElapsedThenPin.Name = TEXT("Then");
+	SetElapsedThenPin.Direction = EVergilPinDirection::Output;
+	SetElapsedThenPin.bIsExec = true;
+	SetElapsedNode.Pins.Add(SetElapsedThenPin);
+
+	FVergilGraphPin SetElapsedValuePin;
+	SetElapsedValuePin.Id = FGuid::NewGuid();
+	SetElapsedValuePin.Name = TEXT("ElapsedTimeValue");
+	SetElapsedValuePin.Direction = EVergilPinDirection::Input;
+	SetElapsedNode.Pins.Add(SetElapsedValuePin);
+
+	FVergilGraphNode SetRemainingNode;
+	SetRemainingNode.Id = FGuid::NewGuid();
+	SetRemainingNode.Kind = EVergilNodeKind::VariableSet;
+	SetRemainingNode.Descriptor = TEXT("K2.VarSet.RemainingTimeValue");
+	SetRemainingNode.Position = FVector2D(2200.0f, 680.0f);
+
+	FVergilGraphPin SetRemainingExecPin;
+	SetRemainingExecPin.Id = FGuid::NewGuid();
+	SetRemainingExecPin.Name = TEXT("Execute");
+	SetRemainingExecPin.Direction = EVergilPinDirection::Input;
+	SetRemainingExecPin.bIsExec = true;
+	SetRemainingNode.Pins.Add(SetRemainingExecPin);
+
+	FVergilGraphPin SetRemainingThenPin;
+	SetRemainingThenPin.Id = FGuid::NewGuid();
+	SetRemainingThenPin.Name = TEXT("Then");
+	SetRemainingThenPin.Direction = EVergilPinDirection::Output;
+	SetRemainingThenPin.bIsExec = true;
+	SetRemainingNode.Pins.Add(SetRemainingThenPin);
+
+	FVergilGraphPin SetRemainingValuePin;
+	SetRemainingValuePin.Id = FGuid::NewGuid();
+	SetRemainingValuePin.Name = TEXT("RemainingTimeValue");
+	SetRemainingValuePin.Direction = EVergilPinDirection::Input;
+	SetRemainingNode.Pins.Add(SetRemainingValuePin);
+
 	FVergilGraphNode ClearTimerNode;
 	ClearTimerNode.Id = FGuid::NewGuid();
 	ClearTimerNode.Kind = EVergilNodeKind::Call;
@@ -11979,7 +12264,7 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 
 	FVergilGraphDocument Document;
 	Document.BlueprintPath = TEXT("/Temp/BP_VergilTimerDelegateExecution");
-	Document.Nodes = { BeginPlayNode, TimerEventNode, SecondsGetterNode, LoopingGetterNode, SetTimerNode, SetHandleNode, GetHandleNode, ClearTimerNode };
+	Document.Nodes = { BeginPlayNode, TimerEventNode, SecondsGetterNode, LoopingGetterNode, SetTimerNode, SetHandleNode, GetHandleNode, PauseTimerNode, UnPauseTimerNode, IsActiveNode, IsPausedNode, ExistsNode, ElapsedNode, RemainingNode, SetActiveNode, SetPausedNode, SetExistsNode, SetElapsedNode, SetRemainingNode, ClearTimerNode };
 
 	FVergilGraphEdge EventToSetTimer;
 	EventToSetTimer.Id = FGuid::NewGuid();
@@ -12029,13 +12314,165 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	TimerReturnToSetHandle.TargetPinId = SetHandleValuePin.Id;
 	Document.Edges.Add(TimerReturnToSetHandle);
 
-	FVergilGraphEdge SetHandleToClearTimer;
-	SetHandleToClearTimer.Id = FGuid::NewGuid();
-	SetHandleToClearTimer.SourceNodeId = SetHandleNode.Id;
-	SetHandleToClearTimer.SourcePinId = SetHandleThenPin.Id;
-	SetHandleToClearTimer.TargetNodeId = ClearTimerNode.Id;
-	SetHandleToClearTimer.TargetPinId = ClearTimerExecPin.Id;
-	Document.Edges.Add(SetHandleToClearTimer);
+	FVergilGraphEdge SetHandleToPauseTimer;
+	SetHandleToPauseTimer.Id = FGuid::NewGuid();
+	SetHandleToPauseTimer.SourceNodeId = SetHandleNode.Id;
+	SetHandleToPauseTimer.SourcePinId = SetHandleThenPin.Id;
+	SetHandleToPauseTimer.TargetNodeId = PauseTimerNode.Id;
+	SetHandleToPauseTimer.TargetPinId = PauseTimerExecPin.Id;
+	Document.Edges.Add(SetHandleToPauseTimer);
+
+	FVergilGraphEdge GetHandleToPauseTimer;
+	GetHandleToPauseTimer.Id = FGuid::NewGuid();
+	GetHandleToPauseTimer.SourceNodeId = GetHandleNode.Id;
+	GetHandleToPauseTimer.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToPauseTimer.TargetNodeId = PauseTimerNode.Id;
+	GetHandleToPauseTimer.TargetPinId = PauseTimerHandlePin.Id;
+	Document.Edges.Add(GetHandleToPauseTimer);
+
+	FVergilGraphEdge PauseTimerToUnPauseTimer;
+	PauseTimerToUnPauseTimer.Id = FGuid::NewGuid();
+	PauseTimerToUnPauseTimer.SourceNodeId = PauseTimerNode.Id;
+	PauseTimerToUnPauseTimer.SourcePinId = PauseTimerThenPin.Id;
+	PauseTimerToUnPauseTimer.TargetNodeId = UnPauseTimerNode.Id;
+	PauseTimerToUnPauseTimer.TargetPinId = UnPauseTimerExecPin.Id;
+	Document.Edges.Add(PauseTimerToUnPauseTimer);
+
+	FVergilGraphEdge GetHandleToUnPauseTimer;
+	GetHandleToUnPauseTimer.Id = FGuid::NewGuid();
+	GetHandleToUnPauseTimer.SourceNodeId = GetHandleNode.Id;
+	GetHandleToUnPauseTimer.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToUnPauseTimer.TargetNodeId = UnPauseTimerNode.Id;
+	GetHandleToUnPauseTimer.TargetPinId = UnPauseTimerHandlePin.Id;
+	Document.Edges.Add(GetHandleToUnPauseTimer);
+
+	FVergilGraphEdge UnPauseTimerToSetActive;
+	UnPauseTimerToSetActive.Id = FGuid::NewGuid();
+	UnPauseTimerToSetActive.SourceNodeId = UnPauseTimerNode.Id;
+	UnPauseTimerToSetActive.SourcePinId = UnPauseTimerThenPin.Id;
+	UnPauseTimerToSetActive.TargetNodeId = SetActiveNode.Id;
+	UnPauseTimerToSetActive.TargetPinId = SetActiveExecPin.Id;
+	Document.Edges.Add(UnPauseTimerToSetActive);
+
+	FVergilGraphEdge GetHandleToIsActive;
+	GetHandleToIsActive.Id = FGuid::NewGuid();
+	GetHandleToIsActive.SourceNodeId = GetHandleNode.Id;
+	GetHandleToIsActive.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToIsActive.TargetNodeId = IsActiveNode.Id;
+	GetHandleToIsActive.TargetPinId = IsActiveHandlePin.Id;
+	Document.Edges.Add(GetHandleToIsActive);
+
+	FVergilGraphEdge IsActiveToSetActive;
+	IsActiveToSetActive.Id = FGuid::NewGuid();
+	IsActiveToSetActive.SourceNodeId = IsActiveNode.Id;
+	IsActiveToSetActive.SourcePinId = IsActiveReturnPin.Id;
+	IsActiveToSetActive.TargetNodeId = SetActiveNode.Id;
+	IsActiveToSetActive.TargetPinId = SetActiveValuePin.Id;
+	Document.Edges.Add(IsActiveToSetActive);
+
+	FVergilGraphEdge SetActiveToSetPaused;
+	SetActiveToSetPaused.Id = FGuid::NewGuid();
+	SetActiveToSetPaused.SourceNodeId = SetActiveNode.Id;
+	SetActiveToSetPaused.SourcePinId = SetActiveThenPin.Id;
+	SetActiveToSetPaused.TargetNodeId = SetPausedNode.Id;
+	SetActiveToSetPaused.TargetPinId = SetPausedExecPin.Id;
+	Document.Edges.Add(SetActiveToSetPaused);
+
+	FVergilGraphEdge GetHandleToIsPaused;
+	GetHandleToIsPaused.Id = FGuid::NewGuid();
+	GetHandleToIsPaused.SourceNodeId = GetHandleNode.Id;
+	GetHandleToIsPaused.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToIsPaused.TargetNodeId = IsPausedNode.Id;
+	GetHandleToIsPaused.TargetPinId = IsPausedHandlePin.Id;
+	Document.Edges.Add(GetHandleToIsPaused);
+
+	FVergilGraphEdge IsPausedToSetPaused;
+	IsPausedToSetPaused.Id = FGuid::NewGuid();
+	IsPausedToSetPaused.SourceNodeId = IsPausedNode.Id;
+	IsPausedToSetPaused.SourcePinId = IsPausedReturnPin.Id;
+	IsPausedToSetPaused.TargetNodeId = SetPausedNode.Id;
+	IsPausedToSetPaused.TargetPinId = SetPausedValuePin.Id;
+	Document.Edges.Add(IsPausedToSetPaused);
+
+	FVergilGraphEdge SetPausedToSetExists;
+	SetPausedToSetExists.Id = FGuid::NewGuid();
+	SetPausedToSetExists.SourceNodeId = SetPausedNode.Id;
+	SetPausedToSetExists.SourcePinId = SetPausedThenPin.Id;
+	SetPausedToSetExists.TargetNodeId = SetExistsNode.Id;
+	SetPausedToSetExists.TargetPinId = SetExistsExecPin.Id;
+	Document.Edges.Add(SetPausedToSetExists);
+
+	FVergilGraphEdge GetHandleToExists;
+	GetHandleToExists.Id = FGuid::NewGuid();
+	GetHandleToExists.SourceNodeId = GetHandleNode.Id;
+	GetHandleToExists.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToExists.TargetNodeId = ExistsNode.Id;
+	GetHandleToExists.TargetPinId = ExistsHandlePin.Id;
+	Document.Edges.Add(GetHandleToExists);
+
+	FVergilGraphEdge ExistsToSetExists;
+	ExistsToSetExists.Id = FGuid::NewGuid();
+	ExistsToSetExists.SourceNodeId = ExistsNode.Id;
+	ExistsToSetExists.SourcePinId = ExistsReturnPin.Id;
+	ExistsToSetExists.TargetNodeId = SetExistsNode.Id;
+	ExistsToSetExists.TargetPinId = SetExistsValuePin.Id;
+	Document.Edges.Add(ExistsToSetExists);
+
+	FVergilGraphEdge SetExistsToSetElapsed;
+	SetExistsToSetElapsed.Id = FGuid::NewGuid();
+	SetExistsToSetElapsed.SourceNodeId = SetExistsNode.Id;
+	SetExistsToSetElapsed.SourcePinId = SetExistsThenPin.Id;
+	SetExistsToSetElapsed.TargetNodeId = SetElapsedNode.Id;
+	SetExistsToSetElapsed.TargetPinId = SetElapsedExecPin.Id;
+	Document.Edges.Add(SetExistsToSetElapsed);
+
+	FVergilGraphEdge GetHandleToElapsed;
+	GetHandleToElapsed.Id = FGuid::NewGuid();
+	GetHandleToElapsed.SourceNodeId = GetHandleNode.Id;
+	GetHandleToElapsed.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToElapsed.TargetNodeId = ElapsedNode.Id;
+	GetHandleToElapsed.TargetPinId = ElapsedHandlePin.Id;
+	Document.Edges.Add(GetHandleToElapsed);
+
+	FVergilGraphEdge ElapsedToSetElapsed;
+	ElapsedToSetElapsed.Id = FGuid::NewGuid();
+	ElapsedToSetElapsed.SourceNodeId = ElapsedNode.Id;
+	ElapsedToSetElapsed.SourcePinId = ElapsedReturnPin.Id;
+	ElapsedToSetElapsed.TargetNodeId = SetElapsedNode.Id;
+	ElapsedToSetElapsed.TargetPinId = SetElapsedValuePin.Id;
+	Document.Edges.Add(ElapsedToSetElapsed);
+
+	FVergilGraphEdge SetElapsedToSetRemaining;
+	SetElapsedToSetRemaining.Id = FGuid::NewGuid();
+	SetElapsedToSetRemaining.SourceNodeId = SetElapsedNode.Id;
+	SetElapsedToSetRemaining.SourcePinId = SetElapsedThenPin.Id;
+	SetElapsedToSetRemaining.TargetNodeId = SetRemainingNode.Id;
+	SetElapsedToSetRemaining.TargetPinId = SetRemainingExecPin.Id;
+	Document.Edges.Add(SetElapsedToSetRemaining);
+
+	FVergilGraphEdge GetHandleToRemaining;
+	GetHandleToRemaining.Id = FGuid::NewGuid();
+	GetHandleToRemaining.SourceNodeId = GetHandleNode.Id;
+	GetHandleToRemaining.SourcePinId = GetHandleValuePin.Id;
+	GetHandleToRemaining.TargetNodeId = RemainingNode.Id;
+	GetHandleToRemaining.TargetPinId = RemainingHandlePin.Id;
+	Document.Edges.Add(GetHandleToRemaining);
+
+	FVergilGraphEdge RemainingToSetRemaining;
+	RemainingToSetRemaining.Id = FGuid::NewGuid();
+	RemainingToSetRemaining.SourceNodeId = RemainingNode.Id;
+	RemainingToSetRemaining.SourcePinId = RemainingReturnPin.Id;
+	RemainingToSetRemaining.TargetNodeId = SetRemainingNode.Id;
+	RemainingToSetRemaining.TargetPinId = SetRemainingValuePin.Id;
+	Document.Edges.Add(RemainingToSetRemaining);
+
+	FVergilGraphEdge SetRemainingToClearTimer;
+	SetRemainingToClearTimer.Id = FGuid::NewGuid();
+	SetRemainingToClearTimer.SourceNodeId = SetRemainingNode.Id;
+	SetRemainingToClearTimer.SourcePinId = SetRemainingThenPin.Id;
+	SetRemainingToClearTimer.TargetNodeId = ClearTimerNode.Id;
+	SetRemainingToClearTimer.TargetPinId = ClearTimerExecPin.Id;
+	Document.Edges.Add(SetRemainingToClearTimer);
 
 	FVergilGraphEdge GetHandleToClearTimer;
 	GetHandleToClearTimer.Id = FGuid::NewGuid();
@@ -12065,6 +12502,18 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	UK2Node_CallFunction* const SetTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, SetTimerNode.Id);
 	UK2Node_VariableSet* const SetHandleGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetHandleNode.Id);
 	UK2Node_VariableGet* const GetHandleGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, GetHandleNode.Id);
+	UK2Node_CallFunction* const PauseTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, PauseTimerNode.Id);
+	UK2Node_CallFunction* const UnPauseTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, UnPauseTimerNode.Id);
+	UK2Node_CallFunction* const IsActiveGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, IsActiveNode.Id);
+	UK2Node_CallFunction* const IsPausedGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, IsPausedNode.Id);
+	UK2Node_CallFunction* const ExistsGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ExistsNode.Id);
+	UK2Node_CallFunction* const ElapsedGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ElapsedNode.Id);
+	UK2Node_CallFunction* const RemainingGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, RemainingNode.Id);
+	UK2Node_VariableSet* const SetActiveGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetActiveNode.Id);
+	UK2Node_VariableSet* const SetPausedGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetPausedNode.Id);
+	UK2Node_VariableSet* const SetExistsGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetExistsNode.Id);
+	UK2Node_VariableSet* const SetElapsedGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetElapsedNode.Id);
+	UK2Node_VariableSet* const SetRemainingGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetRemainingNode.Id);
 	UK2Node_CallFunction* const ClearTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ClearTimerNode.Id);
 
 	TestNotNull(TEXT("BeginPlay event should exist."), EventNode);
@@ -12074,8 +12523,20 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("SetTimerDelegate call should exist."), SetTimerGraphNode);
 	TestNotNull(TEXT("TimerHandle setter should exist."), SetHandleGraphNode);
 	TestNotNull(TEXT("TimerHandle getter should exist."), GetHandleGraphNode);
+	TestNotNull(TEXT("PauseTimerHandle call should exist."), PauseTimerGraphNode);
+	TestNotNull(TEXT("UnPauseTimerHandle call should exist."), UnPauseTimerGraphNode);
+	TestNotNull(TEXT("IsTimerActiveHandle call should exist."), IsActiveGraphNode);
+	TestNotNull(TEXT("IsTimerPausedHandle call should exist."), IsPausedGraphNode);
+	TestNotNull(TEXT("TimerExistsHandle call should exist."), ExistsGraphNode);
+	TestNotNull(TEXT("GetTimerElapsedTimeHandle call should exist."), ElapsedGraphNode);
+	TestNotNull(TEXT("GetTimerRemainingTimeHandle call should exist."), RemainingGraphNode);
+	TestNotNull(TEXT("WasTimerActive setter should exist."), SetActiveGraphNode);
+	TestNotNull(TEXT("WasTimerPaused setter should exist."), SetPausedGraphNode);
+	TestNotNull(TEXT("DidTimerExist setter should exist."), SetExistsGraphNode);
+	TestNotNull(TEXT("ElapsedTimeValue setter should exist."), SetElapsedGraphNode);
+	TestNotNull(TEXT("RemainingTimeValue setter should exist."), SetRemainingGraphNode);
 	TestNotNull(TEXT("ClearAndInvalidateTimerHandle call should exist."), ClearTimerGraphNode);
-	if (EventNode == nullptr || TimerEventGraphNode == nullptr || SecondsGetterGraphNode == nullptr || LoopingGetterGraphNode == nullptr || SetTimerGraphNode == nullptr || SetHandleGraphNode == nullptr || GetHandleGraphNode == nullptr || ClearTimerGraphNode == nullptr)
+	if (EventNode == nullptr || TimerEventGraphNode == nullptr || SecondsGetterGraphNode == nullptr || LoopingGetterGraphNode == nullptr || SetTimerGraphNode == nullptr || SetHandleGraphNode == nullptr || GetHandleGraphNode == nullptr || PauseTimerGraphNode == nullptr || UnPauseTimerGraphNode == nullptr || IsActiveGraphNode == nullptr || IsPausedGraphNode == nullptr || ExistsGraphNode == nullptr || ElapsedGraphNode == nullptr || RemainingGraphNode == nullptr || SetActiveGraphNode == nullptr || SetPausedGraphNode == nullptr || SetExistsGraphNode == nullptr || SetElapsedGraphNode == nullptr || SetRemainingGraphNode == nullptr || ClearTimerGraphNode == nullptr)
 	{
 		return false;
 	}
@@ -12094,6 +12555,37 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	UEdGraphPin* const SetHandleThenGraphPin = SetHandleGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
 	UEdGraphPin* const SetHandleValueGraphPin = SetHandleGraphNode->FindPin(TEXT("TimerHandleVar"));
 	UEdGraphPin* const GetHandleGraphValuePin = GetHandleGraphNode->FindPin(TEXT("TimerHandleVar"));
+	UEdGraphPin* const PauseTimerExecGraphPin = PauseTimerGraphNode->GetExecPin();
+	UEdGraphPin* const PauseTimerHandleGraphPin = PauseTimerGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const PauseTimerThenGraphPin = PauseTimerGraphNode->GetThenPin();
+	UEdGraphPin* const UnPauseTimerExecGraphPin = UnPauseTimerGraphNode->GetExecPin();
+	UEdGraphPin* const UnPauseTimerHandleGraphPin = UnPauseTimerGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const UnPauseTimerThenGraphPin = UnPauseTimerGraphNode->GetThenPin();
+	UEdGraphPin* const IsActiveHandleGraphPin = IsActiveGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const IsActiveReturnGraphPin = IsActiveGraphNode->GetReturnValuePin();
+	UEdGraphPin* const IsPausedHandleGraphPin = IsPausedGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const IsPausedReturnGraphPin = IsPausedGraphNode->GetReturnValuePin();
+	UEdGraphPin* const ExistsHandleGraphPin = ExistsGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const ExistsReturnGraphPin = ExistsGraphNode->GetReturnValuePin();
+	UEdGraphPin* const ElapsedHandleGraphPin = ElapsedGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const ElapsedReturnGraphPin = ElapsedGraphNode->GetReturnValuePin();
+	UEdGraphPin* const RemainingHandleGraphPin = RemainingGraphNode->FindPin(TEXT("Handle"));
+	UEdGraphPin* const RemainingReturnGraphPin = RemainingGraphNode->GetReturnValuePin();
+	UEdGraphPin* const SetActiveExecGraphPin = SetActiveGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetActiveThenGraphPin = SetActiveGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetActiveValueGraphPin = SetActiveGraphNode->FindPin(TEXT("WasTimerActive"));
+	UEdGraphPin* const SetPausedExecGraphPin = SetPausedGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetPausedThenGraphPin = SetPausedGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetPausedValueGraphPin = SetPausedGraphNode->FindPin(TEXT("WasTimerPaused"));
+	UEdGraphPin* const SetExistsExecGraphPin = SetExistsGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetExistsThenGraphPin = SetExistsGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetExistsValueGraphPin = SetExistsGraphNode->FindPin(TEXT("DidTimerExist"));
+	UEdGraphPin* const SetElapsedExecGraphPin = SetElapsedGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetElapsedThenGraphPin = SetElapsedGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetElapsedValueGraphPin = SetElapsedGraphNode->FindPin(TEXT("ElapsedTimeValue"));
+	UEdGraphPin* const SetRemainingExecGraphPin = SetRemainingGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetRemainingThenGraphPin = SetRemainingGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetRemainingValueGraphPin = SetRemainingGraphNode->FindPin(TEXT("RemainingTimeValue"));
 	UEdGraphPin* const ClearTimerExecGraphPin = ClearTimerGraphNode->GetExecPin();
 	UEdGraphPin* const ClearTimerHandleGraphPin = ClearTimerGraphNode->FindPin(TEXT("Handle"));
 
@@ -12104,8 +12596,747 @@ bool FVergilTimerDelegateExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Looping getter should feed SetTimerDelegate bLooping."), LoopingGraphPin != nullptr && LoopingGraphPin->LinkedTo.Contains(SetTimerLoopingGraphInput));
 	TestTrue(TEXT("SetTimerDelegate return value should feed TimerHandle setter."), SetTimerReturnGraphPin != nullptr && SetTimerReturnGraphPin->LinkedTo.Contains(SetHandleValueGraphPin));
 	TestTrue(TEXT("SetTimerDelegate Then should feed TimerHandle setter execute."), SetTimerThenGraphPin != nullptr && SetTimerThenGraphPin->LinkedTo.Contains(SetHandleExecGraphPin));
-	TestTrue(TEXT("TimerHandle setter Then should feed ClearAndInvalidateTimerHandle execute."), SetHandleThenGraphPin != nullptr && SetHandleThenGraphPin->LinkedTo.Contains(ClearTimerExecGraphPin));
+	TestTrue(TEXT("PauseTimerHandle should resolve UKismetSystemLibrary::K2_PauseTimerHandle."), PauseTimerGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_PauseTimerHandle)));
+	TestTrue(TEXT("UnPauseTimerHandle should resolve UKismetSystemLibrary::K2_UnPauseTimerHandle."), UnPauseTimerGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_UnPauseTimerHandle)));
+	TestTrue(TEXT("IsTimerActiveHandle should resolve UKismetSystemLibrary::K2_IsTimerActiveHandle."), IsActiveGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_IsTimerActiveHandle)));
+	TestTrue(TEXT("IsTimerPausedHandle should resolve UKismetSystemLibrary::K2_IsTimerPausedHandle."), IsPausedGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_IsTimerPausedHandle)));
+	TestTrue(TEXT("TimerExistsHandle should resolve UKismetSystemLibrary::K2_TimerExistsHandle."), ExistsGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_TimerExistsHandle)));
+	TestTrue(TEXT("GetTimerElapsedTimeHandle should resolve UKismetSystemLibrary::K2_GetTimerElapsedTimeHandle."), ElapsedGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_GetTimerElapsedTimeHandle)));
+	TestTrue(TEXT("GetTimerRemainingTimeHandle should resolve UKismetSystemLibrary::K2_GetTimerRemainingTimeHandle."), RemainingGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_GetTimerRemainingTimeHandle)));
+	TestTrue(TEXT("Handle query nodes should remain pure."), IsActiveGraphNode->GetExecPin() == nullptr && IsPausedGraphNode->GetExecPin() == nullptr && ExistsGraphNode->GetExecPin() == nullptr && ElapsedGraphNode->GetExecPin() == nullptr && RemainingGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("TimerHandle setter Then should feed PauseTimerHandle execute."), SetHandleThenGraphPin != nullptr && SetHandleThenGraphPin->LinkedTo.Contains(PauseTimerExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed PauseTimerHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(PauseTimerHandleGraphPin));
+	TestTrue(TEXT("PauseTimerHandle Then should feed UnPauseTimerHandle execute."), PauseTimerThenGraphPin != nullptr && PauseTimerThenGraphPin->LinkedTo.Contains(UnPauseTimerExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed UnPauseTimerHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(UnPauseTimerHandleGraphPin));
+	TestTrue(TEXT("UnPauseTimerHandle Then should feed WasTimerActive setter execute."), UnPauseTimerThenGraphPin != nullptr && UnPauseTimerThenGraphPin->LinkedTo.Contains(SetActiveExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed IsTimerActiveHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(IsActiveHandleGraphPin));
+	TestTrue(TEXT("IsTimerActiveHandle return value should feed WasTimerActive setter."), IsActiveReturnGraphPin != nullptr && IsActiveReturnGraphPin->LinkedTo.Contains(SetActiveValueGraphPin));
+	TestTrue(TEXT("WasTimerActive setter Then should feed WasTimerPaused setter execute."), SetActiveThenGraphPin != nullptr && SetActiveThenGraphPin->LinkedTo.Contains(SetPausedExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed IsTimerPausedHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(IsPausedHandleGraphPin));
+	TestTrue(TEXT("IsTimerPausedHandle return value should feed WasTimerPaused setter."), IsPausedReturnGraphPin != nullptr && IsPausedReturnGraphPin->LinkedTo.Contains(SetPausedValueGraphPin));
+	TestTrue(TEXT("WasTimerPaused setter Then should feed DidTimerExist setter execute."), SetPausedThenGraphPin != nullptr && SetPausedThenGraphPin->LinkedTo.Contains(SetExistsExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed TimerExistsHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(ExistsHandleGraphPin));
+	TestTrue(TEXT("TimerExistsHandle return value should feed DidTimerExist setter."), ExistsReturnGraphPin != nullptr && ExistsReturnGraphPin->LinkedTo.Contains(SetExistsValueGraphPin));
+	TestTrue(TEXT("DidTimerExist setter Then should feed ElapsedTimeValue setter execute."), SetExistsThenGraphPin != nullptr && SetExistsThenGraphPin->LinkedTo.Contains(SetElapsedExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed GetTimerElapsedTimeHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(ElapsedHandleGraphPin));
+	TestTrue(TEXT("GetTimerElapsedTimeHandle return value should feed ElapsedTimeValue setter."), ElapsedReturnGraphPin != nullptr && ElapsedReturnGraphPin->LinkedTo.Contains(SetElapsedValueGraphPin));
+	TestTrue(TEXT("ElapsedTimeValue setter Then should feed RemainingTimeValue setter execute."), SetElapsedThenGraphPin != nullptr && SetElapsedThenGraphPin->LinkedTo.Contains(SetRemainingExecGraphPin));
+	TestTrue(TEXT("TimerHandle getter should feed GetTimerRemainingTimeHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(RemainingHandleGraphPin));
+	TestTrue(TEXT("GetTimerRemainingTimeHandle return value should feed RemainingTimeValue setter."), RemainingReturnGraphPin != nullptr && RemainingReturnGraphPin->LinkedTo.Contains(SetRemainingValueGraphPin));
+	TestTrue(TEXT("RemainingTimeValue setter Then should feed ClearAndInvalidateTimerHandle execute."), SetRemainingThenGraphPin != nullptr && SetRemainingThenGraphPin->LinkedTo.Contains(ClearTimerExecGraphPin));
 	TestTrue(TEXT("TimerHandle getter should feed ClearAndInvalidateTimerHandle Handle."), GetHandleGraphValuePin != nullptr && GetHandleGraphValuePin->LinkedTo.Contains(ClearTimerHandleGraphPin));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilTimerFunctionNameExecutionTest,
+	"Vergil.Scaffold.TimerFunctionNameExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilTimerFunctionNameExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType FloatType;
+	FloatType.PinCategory = UEdGraphSchema_K2::PC_Real;
+	FloatType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+	TestTrue(TEXT("TimerSeconds member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TimerSeconds"), FloatType, TEXT("0.25")));
+	TestTrue(TEXT("ElapsedTimeValue member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ElapsedTimeValue"), FloatType, TEXT("0.0")));
+	TestTrue(TEXT("RemainingTimeValue member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("RemainingTimeValue"), FloatType, TEXT("0.0")));
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("Looping member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("Looping"), BoolType, TEXT("false")));
+	TestTrue(TEXT("WasTimerActive member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("WasTimerActive"), BoolType, TEXT("false")));
+	TestTrue(TEXT("WasTimerPaused member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("WasTimerPaused"), BoolType, TEXT("false")));
+	TestTrue(TEXT("DidTimerExist member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("DidTimerExist"), BoolType, TEXT("false")));
+
+	FEdGraphPinType StringType;
+	StringType.PinCategory = UEdGraphSchema_K2::PC_String;
+	TestTrue(TEXT("TimerFunctionName member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TimerFunctionName"), StringType, TEXT("HandleTimer")));
+
+	FEdGraphPinType TimerHandleType;
+	TimerHandleType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+	TimerHandleType.PinSubCategoryObject = TBaseStructure<FTimerHandle>::Get();
+	TestTrue(TEXT("TimerHandleVar member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("TimerHandleVar"), TimerHandleType, FString()));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThen;
+	BeginPlayThen.Id = FGuid::NewGuid();
+	BeginPlayThen.Name = TEXT("Then");
+	BeginPlayThen.Direction = EVergilPinDirection::Output;
+	BeginPlayThen.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThen);
+
+	FVergilGraphNode SelfNode;
+	SelfNode.Id = FGuid::NewGuid();
+	SelfNode.Kind = EVergilNodeKind::Custom;
+	SelfNode.Descriptor = TEXT("K2.Self");
+	SelfNode.Position = FVector2D(0.0f, 200.0f);
+
+	FVergilGraphPin SelfOutputPin;
+	SelfOutputPin.Id = FGuid::NewGuid();
+	SelfOutputPin.Name = UEdGraphSchema_K2::PN_Self;
+	SelfOutputPin.Direction = EVergilPinDirection::Output;
+	SelfNode.Pins.Add(SelfOutputPin);
+
+	FVergilGraphNode TimerEventNode;
+	TimerEventNode.Id = FGuid::NewGuid();
+	TimerEventNode.Kind = EVergilNodeKind::Custom;
+	TimerEventNode.Descriptor = TEXT("K2.CustomEvent.HandleTimer");
+	TimerEventNode.Position = FVector2D(0.0f, 420.0f);
+
+	FVergilGraphNode FunctionNameGetterNode;
+	FunctionNameGetterNode.Id = FGuid::NewGuid();
+	FunctionNameGetterNode.Kind = EVergilNodeKind::VariableGet;
+	FunctionNameGetterNode.Descriptor = TEXT("K2.VarGet.TimerFunctionName");
+	FunctionNameGetterNode.Position = FVector2D(240.0f, -220.0f);
+
+	FVergilGraphPin FunctionNameValuePin;
+	FunctionNameValuePin.Id = FGuid::NewGuid();
+	FunctionNameValuePin.Name = TEXT("TimerFunctionName");
+	FunctionNameValuePin.Direction = EVergilPinDirection::Output;
+	FunctionNameGetterNode.Pins.Add(FunctionNameValuePin);
+
+	FVergilGraphNode SecondsGetterNode;
+	SecondsGetterNode.Id = FGuid::NewGuid();
+	SecondsGetterNode.Kind = EVergilNodeKind::VariableGet;
+	SecondsGetterNode.Descriptor = TEXT("K2.VarGet.TimerSeconds");
+	SecondsGetterNode.Position = FVector2D(240.0f, -60.0f);
+
+	FVergilGraphPin SecondsGetterValuePin;
+	SecondsGetterValuePin.Id = FGuid::NewGuid();
+	SecondsGetterValuePin.Name = TEXT("TimerSeconds");
+	SecondsGetterValuePin.Direction = EVergilPinDirection::Output;
+	SecondsGetterNode.Pins.Add(SecondsGetterValuePin);
+
+	FVergilGraphNode LoopingGetterNode;
+	LoopingGetterNode.Id = FGuid::NewGuid();
+	LoopingGetterNode.Kind = EVergilNodeKind::VariableGet;
+	LoopingGetterNode.Descriptor = TEXT("K2.VarGet.Looping");
+	LoopingGetterNode.Position = FVector2D(240.0f, 100.0f);
+
+	FVergilGraphPin LoopingGetterValuePin;
+	LoopingGetterValuePin.Id = FGuid::NewGuid();
+	LoopingGetterValuePin.Name = TEXT("Looping");
+	LoopingGetterValuePin.Direction = EVergilPinDirection::Output;
+	LoopingGetterNode.Pins.Add(LoopingGetterValuePin);
+
+	FVergilGraphNode SetTimerNode;
+	SetTimerNode.Id = FGuid::NewGuid();
+	SetTimerNode.Kind = EVergilNodeKind::Call;
+	SetTimerNode.Descriptor = TEXT("K2.Call.K2_SetTimer");
+	SetTimerNode.Position = FVector2D(660.0f, -20.0f);
+	SetTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin SetTimerExecPin;
+	SetTimerExecPin.Id = FGuid::NewGuid();
+	SetTimerExecPin.Name = TEXT("Execute");
+	SetTimerExecPin.Direction = EVergilPinDirection::Input;
+	SetTimerExecPin.bIsExec = true;
+	SetTimerNode.Pins.Add(SetTimerExecPin);
+
+	FVergilGraphPin SetTimerThenPin;
+	SetTimerThenPin.Id = FGuid::NewGuid();
+	SetTimerThenPin.Name = TEXT("Then");
+	SetTimerThenPin.Direction = EVergilPinDirection::Output;
+	SetTimerThenPin.bIsExec = true;
+	SetTimerNode.Pins.Add(SetTimerThenPin);
+
+	FVergilGraphPin SetTimerObjectPin;
+	SetTimerObjectPin.Id = FGuid::NewGuid();
+	SetTimerObjectPin.Name = TEXT("Object");
+	SetTimerObjectPin.Direction = EVergilPinDirection::Input;
+	SetTimerNode.Pins.Add(SetTimerObjectPin);
+
+	FVergilGraphPin SetTimerFunctionNamePin;
+	SetTimerFunctionNamePin.Id = FGuid::NewGuid();
+	SetTimerFunctionNamePin.Name = TEXT("FunctionName");
+	SetTimerFunctionNamePin.Direction = EVergilPinDirection::Input;
+	SetTimerNode.Pins.Add(SetTimerFunctionNamePin);
+
+	FVergilGraphPin SetTimerTimePin;
+	SetTimerTimePin.Id = FGuid::NewGuid();
+	SetTimerTimePin.Name = TEXT("Time");
+	SetTimerTimePin.Direction = EVergilPinDirection::Input;
+	SetTimerNode.Pins.Add(SetTimerTimePin);
+
+	FVergilGraphPin SetTimerLoopingPin;
+	SetTimerLoopingPin.Id = FGuid::NewGuid();
+	SetTimerLoopingPin.Name = TEXT("bLooping");
+	SetTimerLoopingPin.Direction = EVergilPinDirection::Input;
+	SetTimerNode.Pins.Add(SetTimerLoopingPin);
+
+	FVergilGraphPin SetTimerReturnPin;
+	SetTimerReturnPin.Id = FGuid::NewGuid();
+	SetTimerReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	SetTimerReturnPin.Direction = EVergilPinDirection::Output;
+	SetTimerNode.Pins.Add(SetTimerReturnPin);
+
+	FVergilGraphNode SetHandleNode;
+	SetHandleNode.Id = FGuid::NewGuid();
+	SetHandleNode.Kind = EVergilNodeKind::VariableSet;
+	SetHandleNode.Descriptor = TEXT("K2.VarSet.TimerHandleVar");
+	SetHandleNode.Position = FVector2D(1060.0f, -20.0f);
+
+	FVergilGraphPin SetHandleExecPin;
+	SetHandleExecPin.Id = FGuid::NewGuid();
+	SetHandleExecPin.Name = TEXT("Execute");
+	SetHandleExecPin.Direction = EVergilPinDirection::Input;
+	SetHandleExecPin.bIsExec = true;
+	SetHandleNode.Pins.Add(SetHandleExecPin);
+
+	FVergilGraphPin SetHandleThenPin;
+	SetHandleThenPin.Id = FGuid::NewGuid();
+	SetHandleThenPin.Name = TEXT("Then");
+	SetHandleThenPin.Direction = EVergilPinDirection::Output;
+	SetHandleThenPin.bIsExec = true;
+	SetHandleNode.Pins.Add(SetHandleThenPin);
+
+	FVergilGraphPin SetHandleValuePin;
+	SetHandleValuePin.Id = FGuid::NewGuid();
+	SetHandleValuePin.Name = TEXT("TimerHandleVar");
+	SetHandleValuePin.Direction = EVergilPinDirection::Input;
+	SetHandleNode.Pins.Add(SetHandleValuePin);
+
+	FVergilGraphNode PauseTimerNode;
+	PauseTimerNode.Id = FGuid::NewGuid();
+	PauseTimerNode.Kind = EVergilNodeKind::Call;
+	PauseTimerNode.Descriptor = TEXT("K2.Call.K2_PauseTimer");
+	PauseTimerNode.Position = FVector2D(1460.0f, -20.0f);
+	PauseTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin PauseTimerExecPin;
+	PauseTimerExecPin.Id = FGuid::NewGuid();
+	PauseTimerExecPin.Name = TEXT("Execute");
+	PauseTimerExecPin.Direction = EVergilPinDirection::Input;
+	PauseTimerExecPin.bIsExec = true;
+	PauseTimerNode.Pins.Add(PauseTimerExecPin);
+
+	FVergilGraphPin PauseTimerThenPin;
+	PauseTimerThenPin.Id = FGuid::NewGuid();
+	PauseTimerThenPin.Name = TEXT("Then");
+	PauseTimerThenPin.Direction = EVergilPinDirection::Output;
+	PauseTimerThenPin.bIsExec = true;
+	PauseTimerNode.Pins.Add(PauseTimerThenPin);
+
+	FVergilGraphPin PauseTimerObjectPin;
+	PauseTimerObjectPin.Id = FGuid::NewGuid();
+	PauseTimerObjectPin.Name = TEXT("Object");
+	PauseTimerObjectPin.Direction = EVergilPinDirection::Input;
+	PauseTimerNode.Pins.Add(PauseTimerObjectPin);
+
+	FVergilGraphPin PauseTimerFunctionNamePin;
+	PauseTimerFunctionNamePin.Id = FGuid::NewGuid();
+	PauseTimerFunctionNamePin.Name = TEXT("FunctionName");
+	PauseTimerFunctionNamePin.Direction = EVergilPinDirection::Input;
+	PauseTimerNode.Pins.Add(PauseTimerFunctionNamePin);
+
+	FVergilGraphNode UnPauseTimerNode;
+	UnPauseTimerNode.Id = FGuid::NewGuid();
+	UnPauseTimerNode.Kind = EVergilNodeKind::Call;
+	UnPauseTimerNode.Descriptor = TEXT("K2.Call.K2_UnPauseTimer");
+	UnPauseTimerNode.Position = FVector2D(1840.0f, -20.0f);
+	UnPauseTimerNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin UnPauseTimerExecPin;
+	UnPauseTimerExecPin.Id = FGuid::NewGuid();
+	UnPauseTimerExecPin.Name = TEXT("Execute");
+	UnPauseTimerExecPin.Direction = EVergilPinDirection::Input;
+	UnPauseTimerExecPin.bIsExec = true;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerExecPin);
+
+	FVergilGraphPin UnPauseTimerThenPin;
+	UnPauseTimerThenPin.Id = FGuid::NewGuid();
+	UnPauseTimerThenPin.Name = TEXT("Then");
+	UnPauseTimerThenPin.Direction = EVergilPinDirection::Output;
+	UnPauseTimerThenPin.bIsExec = true;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerThenPin);
+
+	FVergilGraphPin UnPauseTimerObjectPin;
+	UnPauseTimerObjectPin.Id = FGuid::NewGuid();
+	UnPauseTimerObjectPin.Name = TEXT("Object");
+	UnPauseTimerObjectPin.Direction = EVergilPinDirection::Input;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerObjectPin);
+
+	FVergilGraphPin UnPauseTimerFunctionNamePin;
+	UnPauseTimerFunctionNamePin.Id = FGuid::NewGuid();
+	UnPauseTimerFunctionNamePin.Name = TEXT("FunctionName");
+	UnPauseTimerFunctionNamePin.Direction = EVergilPinDirection::Input;
+	UnPauseTimerNode.Pins.Add(UnPauseTimerFunctionNamePin);
+
+	FVergilGraphNode IsActiveNode;
+	IsActiveNode.Id = FGuid::NewGuid();
+	IsActiveNode.Kind = EVergilNodeKind::Call;
+	IsActiveNode.Descriptor = TEXT("K2.Call.K2_IsTimerActive");
+	IsActiveNode.Position = FVector2D(1840.0f, 200.0f);
+	IsActiveNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin IsActiveObjectPin;
+	IsActiveObjectPin.Id = FGuid::NewGuid();
+	IsActiveObjectPin.Name = TEXT("Object");
+	IsActiveObjectPin.Direction = EVergilPinDirection::Input;
+	IsActiveNode.Pins.Add(IsActiveObjectPin);
+
+	FVergilGraphPin IsActiveFunctionNamePin;
+	IsActiveFunctionNamePin.Id = FGuid::NewGuid();
+	IsActiveFunctionNamePin.Name = TEXT("FunctionName");
+	IsActiveFunctionNamePin.Direction = EVergilPinDirection::Input;
+	IsActiveNode.Pins.Add(IsActiveFunctionNamePin);
+
+	FVergilGraphPin IsActiveReturnPin;
+	IsActiveReturnPin.Id = FGuid::NewGuid();
+	IsActiveReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	IsActiveReturnPin.Direction = EVergilPinDirection::Output;
+	IsActiveNode.Pins.Add(IsActiveReturnPin);
+
+	FVergilGraphNode IsPausedNode;
+	IsPausedNode.Id = FGuid::NewGuid();
+	IsPausedNode.Kind = EVergilNodeKind::Call;
+	IsPausedNode.Descriptor = TEXT("K2.Call.K2_IsTimerPaused");
+	IsPausedNode.Position = FVector2D(1840.0f, 360.0f);
+	IsPausedNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin IsPausedObjectPin;
+	IsPausedObjectPin.Id = FGuid::NewGuid();
+	IsPausedObjectPin.Name = TEXT("Object");
+	IsPausedObjectPin.Direction = EVergilPinDirection::Input;
+	IsPausedNode.Pins.Add(IsPausedObjectPin);
+
+	FVergilGraphPin IsPausedFunctionNamePin;
+	IsPausedFunctionNamePin.Id = FGuid::NewGuid();
+	IsPausedFunctionNamePin.Name = TEXT("FunctionName");
+	IsPausedFunctionNamePin.Direction = EVergilPinDirection::Input;
+	IsPausedNode.Pins.Add(IsPausedFunctionNamePin);
+
+	FVergilGraphPin IsPausedReturnPin;
+	IsPausedReturnPin.Id = FGuid::NewGuid();
+	IsPausedReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	IsPausedReturnPin.Direction = EVergilPinDirection::Output;
+	IsPausedNode.Pins.Add(IsPausedReturnPin);
+
+	FVergilGraphNode ExistsNode;
+	ExistsNode.Id = FGuid::NewGuid();
+	ExistsNode.Kind = EVergilNodeKind::Call;
+	ExistsNode.Descriptor = TEXT("K2.Call.K2_TimerExists");
+	ExistsNode.Position = FVector2D(1840.0f, 520.0f);
+	ExistsNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin ExistsObjectPin;
+	ExistsObjectPin.Id = FGuid::NewGuid();
+	ExistsObjectPin.Name = TEXT("Object");
+	ExistsObjectPin.Direction = EVergilPinDirection::Input;
+	ExistsNode.Pins.Add(ExistsObjectPin);
+
+	FVergilGraphPin ExistsFunctionNamePin;
+	ExistsFunctionNamePin.Id = FGuid::NewGuid();
+	ExistsFunctionNamePin.Name = TEXT("FunctionName");
+	ExistsFunctionNamePin.Direction = EVergilPinDirection::Input;
+	ExistsNode.Pins.Add(ExistsFunctionNamePin);
+
+	FVergilGraphPin ExistsReturnPin;
+	ExistsReturnPin.Id = FGuid::NewGuid();
+	ExistsReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	ExistsReturnPin.Direction = EVergilPinDirection::Output;
+	ExistsNode.Pins.Add(ExistsReturnPin);
+
+	FVergilGraphNode ElapsedNode;
+	ElapsedNode.Id = FGuid::NewGuid();
+	ElapsedNode.Kind = EVergilNodeKind::Call;
+	ElapsedNode.Descriptor = TEXT("K2.Call.K2_GetTimerElapsedTime");
+	ElapsedNode.Position = FVector2D(1840.0f, 680.0f);
+	ElapsedNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin ElapsedObjectPin;
+	ElapsedObjectPin.Id = FGuid::NewGuid();
+	ElapsedObjectPin.Name = TEXT("Object");
+	ElapsedObjectPin.Direction = EVergilPinDirection::Input;
+	ElapsedNode.Pins.Add(ElapsedObjectPin);
+
+	FVergilGraphPin ElapsedFunctionNamePin;
+	ElapsedFunctionNamePin.Id = FGuid::NewGuid();
+	ElapsedFunctionNamePin.Name = TEXT("FunctionName");
+	ElapsedFunctionNamePin.Direction = EVergilPinDirection::Input;
+	ElapsedNode.Pins.Add(ElapsedFunctionNamePin);
+
+	FVergilGraphPin ElapsedReturnPin;
+	ElapsedReturnPin.Id = FGuid::NewGuid();
+	ElapsedReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	ElapsedReturnPin.Direction = EVergilPinDirection::Output;
+	ElapsedNode.Pins.Add(ElapsedReturnPin);
+
+	FVergilGraphNode RemainingNode;
+	RemainingNode.Id = FGuid::NewGuid();
+	RemainingNode.Kind = EVergilNodeKind::Call;
+	RemainingNode.Descriptor = TEXT("K2.Call.K2_GetTimerRemainingTime");
+	RemainingNode.Position = FVector2D(1840.0f, 840.0f);
+	RemainingNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetSystemLibrary::StaticClass()->GetPathName());
+
+	FVergilGraphPin RemainingObjectPin;
+	RemainingObjectPin.Id = FGuid::NewGuid();
+	RemainingObjectPin.Name = TEXT("Object");
+	RemainingObjectPin.Direction = EVergilPinDirection::Input;
+	RemainingNode.Pins.Add(RemainingObjectPin);
+
+	FVergilGraphPin RemainingFunctionNamePin;
+	RemainingFunctionNamePin.Id = FGuid::NewGuid();
+	RemainingFunctionNamePin.Name = TEXT("FunctionName");
+	RemainingFunctionNamePin.Direction = EVergilPinDirection::Input;
+	RemainingNode.Pins.Add(RemainingFunctionNamePin);
+
+	FVergilGraphPin RemainingReturnPin;
+	RemainingReturnPin.Id = FGuid::NewGuid();
+	RemainingReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	RemainingReturnPin.Direction = EVergilPinDirection::Output;
+	RemainingNode.Pins.Add(RemainingReturnPin);
+
+	FVergilGraphNode SetActiveNode;
+	SetActiveNode.Id = FGuid::NewGuid();
+	SetActiveNode.Kind = EVergilNodeKind::VariableSet;
+	SetActiveNode.Descriptor = TEXT("K2.VarSet.WasTimerActive");
+	SetActiveNode.Position = FVector2D(2240.0f, 180.0f);
+
+	FVergilGraphPin SetActiveExecPin;
+	SetActiveExecPin.Id = FGuid::NewGuid();
+	SetActiveExecPin.Name = TEXT("Execute");
+	SetActiveExecPin.Direction = EVergilPinDirection::Input;
+	SetActiveExecPin.bIsExec = true;
+	SetActiveNode.Pins.Add(SetActiveExecPin);
+
+	FVergilGraphPin SetActiveThenPin;
+	SetActiveThenPin.Id = FGuid::NewGuid();
+	SetActiveThenPin.Name = TEXT("Then");
+	SetActiveThenPin.Direction = EVergilPinDirection::Output;
+	SetActiveThenPin.bIsExec = true;
+	SetActiveNode.Pins.Add(SetActiveThenPin);
+
+	FVergilGraphPin SetActiveValuePin;
+	SetActiveValuePin.Id = FGuid::NewGuid();
+	SetActiveValuePin.Name = TEXT("WasTimerActive");
+	SetActiveValuePin.Direction = EVergilPinDirection::Input;
+	SetActiveNode.Pins.Add(SetActiveValuePin);
+
+	FVergilGraphNode SetPausedNode;
+	SetPausedNode.Id = FGuid::NewGuid();
+	SetPausedNode.Kind = EVergilNodeKind::VariableSet;
+	SetPausedNode.Descriptor = TEXT("K2.VarSet.WasTimerPaused");
+	SetPausedNode.Position = FVector2D(2240.0f, 340.0f);
+
+	FVergilGraphPin SetPausedExecPin;
+	SetPausedExecPin.Id = FGuid::NewGuid();
+	SetPausedExecPin.Name = TEXT("Execute");
+	SetPausedExecPin.Direction = EVergilPinDirection::Input;
+	SetPausedExecPin.bIsExec = true;
+	SetPausedNode.Pins.Add(SetPausedExecPin);
+
+	FVergilGraphPin SetPausedThenPin;
+	SetPausedThenPin.Id = FGuid::NewGuid();
+	SetPausedThenPin.Name = TEXT("Then");
+	SetPausedThenPin.Direction = EVergilPinDirection::Output;
+	SetPausedThenPin.bIsExec = true;
+	SetPausedNode.Pins.Add(SetPausedThenPin);
+
+	FVergilGraphPin SetPausedValuePin;
+	SetPausedValuePin.Id = FGuid::NewGuid();
+	SetPausedValuePin.Name = TEXT("WasTimerPaused");
+	SetPausedValuePin.Direction = EVergilPinDirection::Input;
+	SetPausedNode.Pins.Add(SetPausedValuePin);
+
+	FVergilGraphNode SetExistsNode;
+	SetExistsNode.Id = FGuid::NewGuid();
+	SetExistsNode.Kind = EVergilNodeKind::VariableSet;
+	SetExistsNode.Descriptor = TEXT("K2.VarSet.DidTimerExist");
+	SetExistsNode.Position = FVector2D(2240.0f, 500.0f);
+
+	FVergilGraphPin SetExistsExecPin;
+	SetExistsExecPin.Id = FGuid::NewGuid();
+	SetExistsExecPin.Name = TEXT("Execute");
+	SetExistsExecPin.Direction = EVergilPinDirection::Input;
+	SetExistsExecPin.bIsExec = true;
+	SetExistsNode.Pins.Add(SetExistsExecPin);
+
+	FVergilGraphPin SetExistsThenPin;
+	SetExistsThenPin.Id = FGuid::NewGuid();
+	SetExistsThenPin.Name = TEXT("Then");
+	SetExistsThenPin.Direction = EVergilPinDirection::Output;
+	SetExistsThenPin.bIsExec = true;
+	SetExistsNode.Pins.Add(SetExistsThenPin);
+
+	FVergilGraphPin SetExistsValuePin;
+	SetExistsValuePin.Id = FGuid::NewGuid();
+	SetExistsValuePin.Name = TEXT("DidTimerExist");
+	SetExistsValuePin.Direction = EVergilPinDirection::Input;
+	SetExistsNode.Pins.Add(SetExistsValuePin);
+
+	FVergilGraphNode SetElapsedNode;
+	SetElapsedNode.Id = FGuid::NewGuid();
+	SetElapsedNode.Kind = EVergilNodeKind::VariableSet;
+	SetElapsedNode.Descriptor = TEXT("K2.VarSet.ElapsedTimeValue");
+	SetElapsedNode.Position = FVector2D(2240.0f, 660.0f);
+
+	FVergilGraphPin SetElapsedExecPin;
+	SetElapsedExecPin.Id = FGuid::NewGuid();
+	SetElapsedExecPin.Name = TEXT("Execute");
+	SetElapsedExecPin.Direction = EVergilPinDirection::Input;
+	SetElapsedExecPin.bIsExec = true;
+	SetElapsedNode.Pins.Add(SetElapsedExecPin);
+
+	FVergilGraphPin SetElapsedThenPin;
+	SetElapsedThenPin.Id = FGuid::NewGuid();
+	SetElapsedThenPin.Name = TEXT("Then");
+	SetElapsedThenPin.Direction = EVergilPinDirection::Output;
+	SetElapsedThenPin.bIsExec = true;
+	SetElapsedNode.Pins.Add(SetElapsedThenPin);
+
+	FVergilGraphPin SetElapsedValuePin;
+	SetElapsedValuePin.Id = FGuid::NewGuid();
+	SetElapsedValuePin.Name = TEXT("ElapsedTimeValue");
+	SetElapsedValuePin.Direction = EVergilPinDirection::Input;
+	SetElapsedNode.Pins.Add(SetElapsedValuePin);
+
+	FVergilGraphNode SetRemainingNode;
+	SetRemainingNode.Id = FGuid::NewGuid();
+	SetRemainingNode.Kind = EVergilNodeKind::VariableSet;
+	SetRemainingNode.Descriptor = TEXT("K2.VarSet.RemainingTimeValue");
+	SetRemainingNode.Position = FVector2D(2240.0f, 820.0f);
+
+	FVergilGraphPin SetRemainingExecPin;
+	SetRemainingExecPin.Id = FGuid::NewGuid();
+	SetRemainingExecPin.Name = TEXT("Execute");
+	SetRemainingExecPin.Direction = EVergilPinDirection::Input;
+	SetRemainingExecPin.bIsExec = true;
+	SetRemainingNode.Pins.Add(SetRemainingExecPin);
+
+	FVergilGraphPin SetRemainingValuePin;
+	SetRemainingValuePin.Id = FGuid::NewGuid();
+	SetRemainingValuePin.Name = TEXT("RemainingTimeValue");
+	SetRemainingValuePin.Direction = EVergilPinDirection::Input;
+	SetRemainingNode.Pins.Add(SetRemainingValuePin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilTimerFunctionNameExecution");
+	Document.Nodes = { BeginPlayNode, SelfNode, TimerEventNode, FunctionNameGetterNode, SecondsGetterNode, LoopingGetterNode, SetTimerNode, SetHandleNode, PauseTimerNode, UnPauseTimerNode, IsActiveNode, IsPausedNode, ExistsNode, ElapsedNode, RemainingNode, SetActiveNode, SetPausedNode, SetExistsNode, SetElapsedNode, SetRemainingNode };
+
+	auto AddEdge = [&Document](const FGuid& SourceNodeId, const FGuid& SourcePinId, const FGuid& TargetNodeId, const FGuid& TargetPinId)
+	{
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNodeId;
+		Edge.SourcePinId = SourcePinId;
+		Edge.TargetNodeId = TargetNodeId;
+		Edge.TargetPinId = TargetPinId;
+		Document.Edges.Add(Edge);
+	};
+
+	AddEdge(BeginPlayNode.Id, BeginPlayThen.Id, SetTimerNode.Id, SetTimerExecPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, SetTimerNode.Id, SetTimerObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, PauseTimerNode.Id, PauseTimerObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, UnPauseTimerNode.Id, UnPauseTimerObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, IsActiveNode.Id, IsActiveObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, IsPausedNode.Id, IsPausedObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, ExistsNode.Id, ExistsObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, ElapsedNode.Id, ElapsedObjectPin.Id);
+	AddEdge(SelfNode.Id, SelfOutputPin.Id, RemainingNode.Id, RemainingObjectPin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, SetTimerNode.Id, SetTimerFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, PauseTimerNode.Id, PauseTimerFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, UnPauseTimerNode.Id, UnPauseTimerFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, IsActiveNode.Id, IsActiveFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, IsPausedNode.Id, IsPausedFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, ExistsNode.Id, ExistsFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, ElapsedNode.Id, ElapsedFunctionNamePin.Id);
+	AddEdge(FunctionNameGetterNode.Id, FunctionNameValuePin.Id, RemainingNode.Id, RemainingFunctionNamePin.Id);
+	AddEdge(SecondsGetterNode.Id, SecondsGetterValuePin.Id, SetTimerNode.Id, SetTimerTimePin.Id);
+	AddEdge(LoopingGetterNode.Id, LoopingGetterValuePin.Id, SetTimerNode.Id, SetTimerLoopingPin.Id);
+	AddEdge(SetTimerNode.Id, SetTimerThenPin.Id, SetHandleNode.Id, SetHandleExecPin.Id);
+	AddEdge(SetTimerNode.Id, SetTimerReturnPin.Id, SetHandleNode.Id, SetHandleValuePin.Id);
+	AddEdge(SetHandleNode.Id, SetHandleThenPin.Id, PauseTimerNode.Id, PauseTimerExecPin.Id);
+	AddEdge(PauseTimerNode.Id, PauseTimerThenPin.Id, UnPauseTimerNode.Id, UnPauseTimerExecPin.Id);
+	AddEdge(UnPauseTimerNode.Id, UnPauseTimerThenPin.Id, SetActiveNode.Id, SetActiveExecPin.Id);
+	AddEdge(IsActiveNode.Id, IsActiveReturnPin.Id, SetActiveNode.Id, SetActiveValuePin.Id);
+	AddEdge(SetActiveNode.Id, SetActiveThenPin.Id, SetPausedNode.Id, SetPausedExecPin.Id);
+	AddEdge(IsPausedNode.Id, IsPausedReturnPin.Id, SetPausedNode.Id, SetPausedValuePin.Id);
+	AddEdge(SetPausedNode.Id, SetPausedThenPin.Id, SetExistsNode.Id, SetExistsExecPin.Id);
+	AddEdge(ExistsNode.Id, ExistsReturnPin.Id, SetExistsNode.Id, SetExistsValuePin.Id);
+	AddEdge(SetExistsNode.Id, SetExistsThenPin.Id, SetElapsedNode.Id, SetElapsedExecPin.Id);
+	AddEdge(ElapsedNode.Id, ElapsedReturnPin.Id, SetElapsedNode.Id, SetElapsedValuePin.Id);
+	AddEdge(SetElapsedNode.Id, SetElapsedThenPin.Id, SetRemainingNode.Id, SetRemainingExecPin.Id);
+	AddEdge(RemainingNode.Id, RemainingReturnPin.Id, SetRemainingNode.Id, SetRemainingValuePin.Id);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Timer function-name document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Timer function-name document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Timer function-name document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after timer function-name execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_Self* const SelfGraphNode = FindGraphNodeByGuid<UK2Node_Self>(EventGraph, SelfNode.Id);
+	UK2Node_CustomEvent* const TimerEventGraphNode = FindGraphNodeByGuid<UK2Node_CustomEvent>(EventGraph, TimerEventNode.Id);
+	UK2Node_VariableGet* const FunctionNameGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, FunctionNameGetterNode.Id);
+	UK2Node_VariableGet* const SecondsGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, SecondsGetterNode.Id);
+	UK2Node_VariableGet* const LoopingGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, LoopingGetterNode.Id);
+	UK2Node_CallFunction* const SetTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, SetTimerNode.Id);
+	UK2Node_VariableSet* const SetHandleGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetHandleNode.Id);
+	UK2Node_CallFunction* const PauseTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, PauseTimerNode.Id);
+	UK2Node_CallFunction* const UnPauseTimerGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, UnPauseTimerNode.Id);
+	UK2Node_CallFunction* const IsActiveGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, IsActiveNode.Id);
+	UK2Node_CallFunction* const IsPausedGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, IsPausedNode.Id);
+	UK2Node_CallFunction* const ExistsGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ExistsNode.Id);
+	UK2Node_CallFunction* const ElapsedGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, ElapsedNode.Id);
+	UK2Node_CallFunction* const RemainingGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, RemainingNode.Id);
+	UK2Node_VariableSet* const SetActiveGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetActiveNode.Id);
+	UK2Node_VariableSet* const SetPausedGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetPausedNode.Id);
+	UK2Node_VariableSet* const SetExistsGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetExistsNode.Id);
+	UK2Node_VariableSet* const SetElapsedGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetElapsedNode.Id);
+	UK2Node_VariableSet* const SetRemainingGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetRemainingNode.Id);
+
+	TestNotNull(TEXT("BeginPlay event should exist."), EventNode);
+	TestNotNull(TEXT("Self node should exist."), SelfGraphNode);
+	TestNotNull(TEXT("Target timer event should exist."), TimerEventGraphNode);
+	TestNotNull(TEXT("TimerFunctionName getter should exist."), FunctionNameGetterGraphNode);
+	TestNotNull(TEXT("TimerSeconds getter should exist."), SecondsGetterGraphNode);
+	TestNotNull(TEXT("Looping getter should exist."), LoopingGetterGraphNode);
+	TestNotNull(TEXT("SetTimer call should exist."), SetTimerGraphNode);
+	TestNotNull(TEXT("TimerHandle setter should exist."), SetHandleGraphNode);
+	TestNotNull(TEXT("PauseTimer call should exist."), PauseTimerGraphNode);
+	TestNotNull(TEXT("UnPauseTimer call should exist."), UnPauseTimerGraphNode);
+	TestNotNull(TEXT("IsTimerActive call should exist."), IsActiveGraphNode);
+	TestNotNull(TEXT("IsTimerPaused call should exist."), IsPausedGraphNode);
+	TestNotNull(TEXT("TimerExists call should exist."), ExistsGraphNode);
+	TestNotNull(TEXT("GetTimerElapsedTime call should exist."), ElapsedGraphNode);
+	TestNotNull(TEXT("GetTimerRemainingTime call should exist."), RemainingGraphNode);
+	TestNotNull(TEXT("WasTimerActive setter should exist."), SetActiveGraphNode);
+	TestNotNull(TEXT("WasTimerPaused setter should exist."), SetPausedGraphNode);
+	TestNotNull(TEXT("DidTimerExist setter should exist."), SetExistsGraphNode);
+	TestNotNull(TEXT("ElapsedTimeValue setter should exist."), SetElapsedGraphNode);
+	TestNotNull(TEXT("RemainingTimeValue setter should exist."), SetRemainingGraphNode);
+	if (EventNode == nullptr || SelfGraphNode == nullptr || TimerEventGraphNode == nullptr || FunctionNameGetterGraphNode == nullptr || SecondsGetterGraphNode == nullptr || LoopingGetterGraphNode == nullptr || SetTimerGraphNode == nullptr || SetHandleGraphNode == nullptr || PauseTimerGraphNode == nullptr || UnPauseTimerGraphNode == nullptr || IsActiveGraphNode == nullptr || IsPausedGraphNode == nullptr || ExistsGraphNode == nullptr || ElapsedGraphNode == nullptr || RemainingGraphNode == nullptr || SetActiveGraphNode == nullptr || SetPausedGraphNode == nullptr || SetExistsGraphNode == nullptr || SetElapsedGraphNode == nullptr || SetRemainingGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SelfGraphPin = SelfGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const FunctionNameGraphValuePin = FunctionNameGetterGraphNode->FindPin(TEXT("TimerFunctionName"));
+	UEdGraphPin* const SecondsGraphPin = SecondsGetterGraphNode->FindPin(TEXT("TimerSeconds"));
+	UEdGraphPin* const LoopingGraphPin = LoopingGetterGraphNode->FindPin(TEXT("Looping"));
+	UEdGraphPin* const SetTimerExecGraphPin = SetTimerGraphNode->GetExecPin();
+	UEdGraphPin* const SetTimerObjectGraphPin = SetTimerGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const SetTimerFunctionGraphPin = SetTimerGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const SetTimerTimeGraphPin = SetTimerGraphNode->FindPin(TEXT("Time"));
+	UEdGraphPin* const SetTimerLoopingGraphPin = SetTimerGraphNode->FindPin(TEXT("bLooping"));
+	UEdGraphPin* const SetTimerThenGraphPin = SetTimerGraphNode->GetThenPin();
+	UEdGraphPin* const SetTimerReturnGraphPin = SetTimerGraphNode->GetReturnValuePin();
+	UEdGraphPin* const SetHandleExecGraphPin = SetHandleGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetHandleThenGraphPin = SetHandleGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetHandleValueGraphPin = SetHandleGraphNode->FindPin(TEXT("TimerHandleVar"));
+	UEdGraphPin* const PauseExecGraphPin = PauseTimerGraphNode->GetExecPin();
+	UEdGraphPin* const PauseObjectGraphPin = PauseTimerGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const PauseFunctionNameGraphPin = PauseTimerGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const PauseThenGraphPin = PauseTimerGraphNode->GetThenPin();
+	UEdGraphPin* const UnPauseExecGraphPin = UnPauseTimerGraphNode->GetExecPin();
+	UEdGraphPin* const UnPauseObjectGraphPin = UnPauseTimerGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const UnPauseFunctionNameGraphPin = UnPauseTimerGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const UnPauseThenGraphPin = UnPauseTimerGraphNode->GetThenPin();
+	UEdGraphPin* const IsActiveObjectGraphPin = IsActiveGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const IsActiveFunctionNameGraphPin = IsActiveGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const IsActiveReturnGraphPin = IsActiveGraphNode->GetReturnValuePin();
+	UEdGraphPin* const IsPausedObjectGraphPin = IsPausedGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const IsPausedFunctionNameGraphPin = IsPausedGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const IsPausedReturnGraphPin = IsPausedGraphNode->GetReturnValuePin();
+	UEdGraphPin* const ExistsObjectGraphPin = ExistsGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const ExistsFunctionNameGraphPin = ExistsGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const ExistsReturnGraphPin = ExistsGraphNode->GetReturnValuePin();
+	UEdGraphPin* const ElapsedObjectGraphPin = ElapsedGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const ElapsedFunctionNameGraphPin = ElapsedGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const ElapsedReturnGraphPin = ElapsedGraphNode->GetReturnValuePin();
+	UEdGraphPin* const RemainingObjectGraphPin = RemainingGraphNode->FindPin(TEXT("Object"));
+	UEdGraphPin* const RemainingFunctionNameGraphPin = RemainingGraphNode->FindPin(TEXT("FunctionName"));
+	UEdGraphPin* const RemainingReturnGraphPin = RemainingGraphNode->GetReturnValuePin();
+	UEdGraphPin* const SetActiveExecGraphPin = SetActiveGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetActiveThenGraphPin = SetActiveGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetActiveValueGraphPin = SetActiveGraphNode->FindPin(TEXT("WasTimerActive"));
+	UEdGraphPin* const SetPausedExecGraphPin = SetPausedGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetPausedThenGraphPin = SetPausedGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetPausedValueGraphPin = SetPausedGraphNode->FindPin(TEXT("WasTimerPaused"));
+	UEdGraphPin* const SetExistsExecGraphPin = SetExistsGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetExistsThenGraphPin = SetExistsGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetExistsValueGraphPin = SetExistsGraphNode->FindPin(TEXT("DidTimerExist"));
+	UEdGraphPin* const SetElapsedExecGraphPin = SetElapsedGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetElapsedThenGraphPin = SetElapsedGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetElapsedValueGraphPin = SetElapsedGraphNode->FindPin(TEXT("ElapsedTimeValue"));
+	UEdGraphPin* const SetRemainingExecGraphPin = SetRemainingGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetRemainingValueGraphPin = SetRemainingGraphNode->FindPin(TEXT("RemainingTimeValue"));
+
+	TestTrue(TEXT("SetTimer should resolve UKismetSystemLibrary::K2_SetTimer."), SetTimerGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_SetTimer)));
+	TestTrue(TEXT("PauseTimer should resolve UKismetSystemLibrary::K2_PauseTimer."), PauseTimerGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_PauseTimer)));
+	TestTrue(TEXT("UnPauseTimer should resolve UKismetSystemLibrary::K2_UnPauseTimer."), UnPauseTimerGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_UnPauseTimer)));
+	TestTrue(TEXT("IsTimerActive should resolve UKismetSystemLibrary::K2_IsTimerActive."), IsActiveGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_IsTimerActive)));
+	TestTrue(TEXT("IsTimerPaused should resolve UKismetSystemLibrary::K2_IsTimerPaused."), IsPausedGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_IsTimerPaused)));
+	TestTrue(TEXT("TimerExists should resolve UKismetSystemLibrary::K2_TimerExists."), ExistsGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_TimerExists)));
+	TestTrue(TEXT("GetTimerElapsedTime should resolve UKismetSystemLibrary::K2_GetTimerElapsedTime."), ElapsedGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_GetTimerElapsedTime)));
+	TestTrue(TEXT("GetTimerRemainingTime should resolve UKismetSystemLibrary::K2_GetTimerRemainingTime."), RemainingGraphNode->GetTargetFunction() == UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_GetTimerRemainingTime)));
+	TestTrue(TEXT("SetTimer should expose a timer-handle return value."), SetTimerReturnGraphPin != nullptr
+		&& SetTimerReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Struct
+		&& SetTimerReturnGraphPin->PinType.PinSubCategoryObject.Get() == TBaseStructure<FTimerHandle>::Get());
+	TestTrue(TEXT("Function-name query nodes should remain pure."), IsActiveGraphNode->GetExecPin() == nullptr && IsPausedGraphNode->GetExecPin() == nullptr && ExistsGraphNode->GetExecPin() == nullptr && ElapsedGraphNode->GetExecPin() == nullptr && RemainingGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("BeginPlay should feed SetTimer execute."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(SetTimerExecGraphPin));
+	TestTrue(TEXT("Self should feed SetTimer Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(SetTimerObjectGraphPin));
+	TestTrue(TEXT("Self should feed PauseTimer Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(PauseObjectGraphPin));
+	TestTrue(TEXT("Self should feed UnPauseTimer Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(UnPauseObjectGraphPin));
+	TestTrue(TEXT("Self should feed IsTimerActive Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(IsActiveObjectGraphPin));
+	TestTrue(TEXT("Self should feed IsTimerPaused Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(IsPausedObjectGraphPin));
+	TestTrue(TEXT("Self should feed TimerExists Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(ExistsObjectGraphPin));
+	TestTrue(TEXT("Self should feed GetTimerElapsedTime Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(ElapsedObjectGraphPin));
+	TestTrue(TEXT("Self should feed GetTimerRemainingTime Object."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(RemainingObjectGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed SetTimer FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(SetTimerFunctionGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed PauseTimer FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(PauseFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed UnPauseTimer FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(UnPauseFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed IsTimerActive FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(IsActiveFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed IsTimerPaused FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(IsPausedFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed TimerExists FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(ExistsFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed GetTimerElapsedTime FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(ElapsedFunctionNameGraphPin));
+	TestTrue(TEXT("TimerFunctionName getter should feed GetTimerRemainingTime FunctionName."), FunctionNameGraphValuePin != nullptr && FunctionNameGraphValuePin->LinkedTo.Contains(RemainingFunctionNameGraphPin));
+	TestTrue(TEXT("TimerSeconds getter should feed SetTimer Time."), SecondsGraphPin != nullptr && SecondsGraphPin->LinkedTo.Contains(SetTimerTimeGraphPin));
+	TestTrue(TEXT("Looping getter should feed SetTimer bLooping."), LoopingGraphPin != nullptr && LoopingGraphPin->LinkedTo.Contains(SetTimerLoopingGraphPin));
+	TestTrue(TEXT("SetTimer Then should feed TimerHandle setter execute."), SetTimerThenGraphPin != nullptr && SetTimerThenGraphPin->LinkedTo.Contains(SetHandleExecGraphPin));
+	TestTrue(TEXT("SetTimer return value should feed TimerHandle setter."), SetTimerReturnGraphPin != nullptr && SetTimerReturnGraphPin->LinkedTo.Contains(SetHandleValueGraphPin));
+	TestTrue(TEXT("TimerHandle setter Then should feed PauseTimer execute."), SetHandleThenGraphPin != nullptr && SetHandleThenGraphPin->LinkedTo.Contains(PauseExecGraphPin));
+	TestTrue(TEXT("PauseTimer Then should feed UnPauseTimer execute."), PauseThenGraphPin != nullptr && PauseThenGraphPin->LinkedTo.Contains(UnPauseExecGraphPin));
+	TestTrue(TEXT("UnPauseTimer Then should feed WasTimerActive setter execute."), UnPauseThenGraphPin != nullptr && UnPauseThenGraphPin->LinkedTo.Contains(SetActiveExecGraphPin));
+	TestTrue(TEXT("IsTimerActive return value should feed WasTimerActive setter."), IsActiveReturnGraphPin != nullptr && IsActiveReturnGraphPin->LinkedTo.Contains(SetActiveValueGraphPin));
+	TestTrue(TEXT("WasTimerActive setter Then should feed WasTimerPaused setter execute."), SetActiveThenGraphPin != nullptr && SetActiveThenGraphPin->LinkedTo.Contains(SetPausedExecGraphPin));
+	TestTrue(TEXT("IsTimerPaused return value should feed WasTimerPaused setter."), IsPausedReturnGraphPin != nullptr && IsPausedReturnGraphPin->LinkedTo.Contains(SetPausedValueGraphPin));
+	TestTrue(TEXT("WasTimerPaused setter Then should feed DidTimerExist setter execute."), SetPausedThenGraphPin != nullptr && SetPausedThenGraphPin->LinkedTo.Contains(SetExistsExecGraphPin));
+	TestTrue(TEXT("TimerExists return value should feed DidTimerExist setter."), ExistsReturnGraphPin != nullptr && ExistsReturnGraphPin->LinkedTo.Contains(SetExistsValueGraphPin));
+	TestTrue(TEXT("DidTimerExist setter Then should feed ElapsedTimeValue setter execute."), SetExistsThenGraphPin != nullptr && SetExistsThenGraphPin->LinkedTo.Contains(SetElapsedExecGraphPin));
+	TestTrue(TEXT("GetTimerElapsedTime return value should feed ElapsedTimeValue setter."), ElapsedReturnGraphPin != nullptr && ElapsedReturnGraphPin->LinkedTo.Contains(SetElapsedValueGraphPin));
+	TestTrue(TEXT("ElapsedTimeValue setter Then should feed RemainingTimeValue setter execute."), SetElapsedThenGraphPin != nullptr && SetElapsedThenGraphPin->LinkedTo.Contains(SetRemainingExecGraphPin));
+	TestTrue(TEXT("GetTimerRemainingTime return value should feed RemainingTimeValue setter."), RemainingReturnGraphPin != nullptr && RemainingReturnGraphPin->LinkedTo.Contains(SetRemainingValueGraphPin));
 
 	return true;
 }

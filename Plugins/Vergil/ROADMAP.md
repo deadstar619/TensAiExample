@@ -322,7 +322,7 @@ Tickets:
 - [x] `VGR-5002` Add remaining variable node variants
 - [x] `VGR-5003` Add common macro-instance families such as `DoOnce` and `FlipFlop`
 - [x] `VGR-5004` Add deterministic `SpawnActor`
-- `VGR-5005` Add timer families beyond current delegate-driven coverage
+- [x] `VGR-5005` Add timer families beyond current delegate-driven coverage
 - `VGR-5006` Add more flow-control families
 - [x] `VGR-5007` Add select/switch diagnostics for unsupported type combinations
 - `VGR-5008` Document all supported node contracts
@@ -337,6 +337,13 @@ Session note for `VGR-5007` (2026-03-06):
 - `UE_5.7` select behavior is now enforced explicitly: semantic validation plus direct command-plan preflight reject `K2.Select` index categories outside `bool`, `int`, or `enum` before any node creation or transaction work starts.
 - Apply-time pin-connection failures for `K2.Select`, `K2.SwitchInt`, `K2.SwitchString`, and `K2.SwitchEnum` now emit dedicated unsupported-type diagnostics instead of only falling back to generic schema rejection text.
 - `Vergil.Scaffold.SemanticValidationPass`, `Vergil.Scaffold.CommandPlanValidation`, and `Vergil.Scaffold.SelectSwitchTypeDiagnostics` now cover the compiler, direct-command, and editor-execution paths for these unsupported type combinations.
+
+Session note for `VGR-5005` (2026-03-07):
+
+- `UE_5.7` timer coverage now extends past the existing delegate-driven `K2_SetTimerDelegate` plus `K2_ClearAndInvalidateTimerHandle` path to the non-delegate timer helpers that still lower through the generic `K2.Call.*` surface.
+- New `Vergil.Scaffold.TimerFunctionNameExecution` coverage authors `K2_SetTimer`, `K2_PauseTimer`, `K2_UnPauseTimer`, `K2_IsTimerActive`, `K2_IsTimerPaused`, `K2_TimerExists`, `K2_GetTimerElapsedTime`, and `K2_GetTimerRemainingTime` end-to-end against the real `UKismetSystemLibrary` nodes under `UE_5.7`.
+- `Vergil.Scaffold.TimerDelegateExecution` now also re-verifies the handle-based follow-on family end-to-end: `K2_PauseTimerHandle`, `K2_UnPauseTimerHandle`, `K2_IsTimerActiveHandle`, `K2_IsTimerPausedHandle`, `K2_TimerExistsHandle`, `K2_GetTimerElapsedTimeHandle`, `K2_GetTimerRemainingTimeHandle`, and the existing `K2_ClearAndInvalidateTimerHandle` path.
+- `mcp__tensai__build_project` succeeded in `Development`, targeted headless timer runs passed, and the full documented `Invoke-VergilScaffoldAutomation.ps1` rerun re-verified `Vergil.Scaffold.*` cleanly in this workspace.
 
 Session note for `VGR-5003` (2026-03-07):
 
@@ -514,11 +521,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5005`
-2. `VGR-5006`
-3. `VGR-5008`
-4. `VGR-7004`
-5. `VGR-8004`
+1. `VGR-5006`
+2. `VGR-5008`
+3. `VGR-7004`
+4. `VGR-8004`
+5. `VGR-6001`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
