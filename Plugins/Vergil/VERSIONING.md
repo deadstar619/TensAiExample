@@ -1,6 +1,6 @@
 # Vergil Versioning and Migration
 
-Vergil tracks the plugin release, document schema, serialized command-plan format, document/diagnostic/compile-result inspection formats, agent request/response/audit inspection formats, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
+Vergil tracks the plugin release, document schema, serialized command-plan format, document/diagnostic/compile-result inspection formats, agent request/response/audit inspection formats, the persisted agent audit-log format, and inspection-manifest format as separate version surfaces. They are related, but they do not move in lockstep.
 
 ## Current version surfaces
 
@@ -24,6 +24,8 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
   Source of truth: `Vergil::GetAgentResponseFormatName()` and `Vergil::GetAgentResponseFormatVersion()`
 - Agent audit-entry inspection format: `Vergil.AgentAuditEntry` version `1`
   Source of truth: `Vergil::GetAgentAuditEntryFormatName()` and `Vergil::GetAgentAuditEntryFormatVersion()`
+- Persisted agent audit-log format: `Vergil.AgentAuditLog` version `1`
+  Source of truth: `UVergilAgentSubsystem` persisted audit-log serialization in `VergilAgentSubsystem.cpp`
 - Command-plan serialization format: `Vergil.CommandPlan` version `1`
   Source of truth: `Vergil::GetCommandPlanFormatName()` and `Vergil::GetCommandPlanFormatVersion()`
 - Supported-contract inspection manifest: `Vergil.ContractManifest` version `1`
@@ -55,6 +57,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Bump the diagnostics inspection format version only for incompatible `Vergil.Diagnostics` JSON shape changes.
 - Bump the compile-result inspection format version only for incompatible `Vergil.CompileResult` JSON shape changes.
 - Bump the agent request, response, or audit-entry inspection format version only for incompatible `Vergil.AgentRequest`, `Vergil.AgentResponse`, or `Vergil.AgentAuditEntry` JSON shape changes.
+- Bump the persisted agent audit-log format version only for incompatible `Vergil.AgentAuditLog` wrapper changes in the saved on-disk audit trail.
 - Bump the command-plan format version only for incompatible serialized command-plan changes.
 - Bump the inspection-manifest version only for incompatible `Vergil.ContractManifest` JSON shape changes. Additive fields may remain on the same manifest version.
 
@@ -63,7 +66,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
 - Update `Vergil::SemanticVersionMajor`, `SemanticVersionMinor`, and `SemanticVersionPatch`.
 - Keep `Vergil.uplugin` `VersionName` and `Version` aligned with `VergilVersion.h`.
 - If the document schema changed, update `Vergil::SchemaVersion`, add the forward migration step, and extend migration automation.
-- If graph-document, diagnostics, compile-result, or agent request/response/audit inspection JSON changed incompatibly, update the corresponding inspection format version helper and extend inspection coverage.
+- If graph-document, diagnostics, compile-result, agent request/response/audit inspection JSON, or the persisted agent audit-log wrapper changed incompatibly, update the corresponding version surface and extend inspection or persistence coverage.
 - If serialized command plans changed incompatibly, update the command-plan format version and deserializer coverage.
 - If the supported-contract manifest changed incompatibly, update its manifest version and inspection coverage.
 - Update `README.md`, `SUPPORTED_DESCRIPTOR_CONTRACTS.md`, and `ROADMAP.md` when the public versioning or migration contract changes.

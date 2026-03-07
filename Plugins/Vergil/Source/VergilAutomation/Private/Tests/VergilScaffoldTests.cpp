@@ -292,6 +292,49 @@ namespace
 		FString PackageFilename;
 	};
 
+	struct FScopedAuditTrailFileBackup final
+	{
+		explicit FScopedAuditTrailFileBackup(const FString& InFilePath)
+			: FilePath(InFilePath)
+		{
+			IFileManager& FileManager = IFileManager::Get();
+			bHadOriginalFile = FileManager.FileExists(*FilePath);
+			if (bHadOriginalFile)
+			{
+				bBackupReady = FFileHelper::LoadFileToString(OriginalFileContents, *FilePath);
+			}
+			else
+			{
+				bBackupReady = true;
+			}
+		}
+
+		~FScopedAuditTrailFileBackup()
+		{
+			IFileManager& FileManager = IFileManager::Get();
+			if (bHadOriginalFile && bBackupReady)
+			{
+				FFileHelper::SaveStringToFile(OriginalFileContents, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+				return;
+			}
+
+			if (!bHadOriginalFile)
+			{
+				FileManager.Delete(*FilePath, false, true, true);
+			}
+		}
+
+		bool IsReady() const
+		{
+			return bBackupReady;
+		}
+
+		FString FilePath;
+		FString OriginalFileContents;
+		bool bHadOriginalFile = false;
+		bool bBackupReady = false;
+	};
+
 	FName MakeCastResultPinName(UClass* TargetClass)
 	{
 		check(TargetClass != nullptr);
@@ -2695,6 +2738,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.AgentRequestResponseContracts",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAgentAuditPersistenceTest,
+	"Vergil.Scaffold.AgentAuditPersistence",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -3163,6 +3211,101 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	AgentSubsystem->ClearAuditTrail();
 	return true;
 }
+
+bool FVergilAgentAuditPersistenceTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for persisted audit coverage."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	const FString PersistencePath = AgentSubsystem->GetAuditTrailPersistencePath();
+	FScopedAuditTrailFileBackup AuditTrailBackup(PersistencePath);
+	TestTrue(TEXT("Persisted audit tests should be able to preserve any existing audit-log file."), AuditTrailBackup.IsReady());
+	if (!AuditTrailBackup.IsReady())
+	{
+		return false;
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+	TestEqual(TEXT("Clearing the audit trail should clear in-memory entries."), AgentSubsystem->GetRecentAuditEntries().Num(), 0);
+	TestFalse(TEXT("Clearing the audit trail should remove the persisted audit-log file."), IFileManager::Get().FileExists(*PersistencePath));
+
+	FVergilGraphDocument PersistedDocument;
+	PersistedDocument.SchemaVersion = Vergil::SchemaVersion;
+	PersistedDocument.BlueprintPath = TEXT("/Game/Tests/BP_AgentAuditPersistence");
+	PersistedDocument.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Persisted audit coverage"));
+
+	FVergilAgentAuditEntry PersistedEntry;
+	PersistedEntry.Request.Context.RequestId = FGuid::NewGuid();
+	PersistedEntry.Request.Context.Summary = TEXT("Persist the audit entry.");
+	PersistedEntry.Request.Context.InputText = TEXT("Store the request and response to disk.");
+	PersistedEntry.Request.Context.Tags = { TEXT("Agent"), TEXT("Persistence") };
+	PersistedEntry.Request.Operation = EVergilAgentOperation::PlanDocument;
+	PersistedEntry.Request.Plan.TargetBlueprintPath = PersistedDocument.BlueprintPath;
+	PersistedEntry.Request.Plan.Document = PersistedDocument;
+	PersistedEntry.Request.Plan.TargetGraphName = TEXT("EventGraph");
+	PersistedEntry.Request.Plan.bAutoLayout = false;
+	PersistedEntry.Request.Plan.bGenerateComments = false;
+	PersistedEntry.Response.RequestId = PersistedEntry.Request.Context.RequestId;
+	PersistedEntry.Response.Operation = EVergilAgentOperation::PlanDocument;
+	PersistedEntry.Response.State = EVergilAgentExecutionState::Completed;
+	PersistedEntry.Response.Message = TEXT("Planning completed and persisted.");
+	PersistedEntry.Response.Result.bSucceeded = true;
+	PersistedEntry.Response.Result.Statistics.TargetGraphName = TEXT("EventGraph");
+	PersistedEntry.Response.Result.Statistics.RequestedSchemaVersion = Vergil::SchemaVersion;
+	PersistedEntry.Response.Result.Statistics.EffectiveSchemaVersion = Vergil::SchemaVersion;
+
+	AgentSubsystem->RecordAuditEntry(PersistedEntry);
+
+	const TArray<FVergilAgentAuditEntry> InMemoryEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Recording an audit entry should keep one in-memory record."), InMemoryEntries.Num(), 1);
+	if (InMemoryEntries.Num() != 1)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Recording an audit entry should write the persisted audit-log file."), IFileManager::Get().FileExists(*PersistencePath));
+	TestTrue(TEXT("Explicit audit-log flush should succeed."), AgentSubsystem->FlushAuditTrailToDisk());
+
+	FString PersistedAuditJson;
+	TestTrue(TEXT("The persisted audit-log file should be readable."), FFileHelper::LoadFileToString(PersistedAuditJson, *PersistencePath));
+	TestTrue(TEXT("The persisted audit-log file should advertise the persisted audit-log format."), PersistedAuditJson.Contains(TEXT("\"format\": \"Vergil.AgentAuditLog\"")));
+	TestTrue(TEXT("The persisted audit-log file should include the request summary."), PersistedAuditJson.Contains(TEXT("Persist the audit entry.")));
+	TestTrue(TEXT("The persisted audit-log file should include the response message."), PersistedAuditJson.Contains(TEXT("Planning completed and persisted.")));
+
+	TestTrue(TEXT("Reloading from a valid persisted audit-log file should succeed."), AgentSubsystem->ReloadAuditTrailFromDisk());
+
+	const TArray<FVergilAgentAuditEntry> ReloadedEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Reloading from disk should restore the one persisted audit entry."), ReloadedEntries.Num(), 1);
+	if (ReloadedEntries.Num() != 1)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Reloaded audit entries should preserve the request id."), ReloadedEntries[0].Request.Context.RequestId, PersistedEntry.Request.Context.RequestId);
+	TestEqual(TEXT("Reloaded audit entries should preserve the response state."), ReloadedEntries[0].Response.State, EVergilAgentExecutionState::Completed);
+	TestEqual(TEXT("Reloaded audit entries should preserve the Blueprint path."), ReloadedEntries[0].Request.Plan.TargetBlueprintPath, PersistedDocument.BlueprintPath);
+
+	TestTrue(
+		TEXT("The persisted audit-log file should be replaceable with invalid JSON for reload-failure coverage."),
+		FFileHelper::SaveStringToFile(TEXT("{invalid json"), *PersistencePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+	TestFalse(TEXT("Reloading from invalid audit-log JSON should fail."), AgentSubsystem->ReloadAuditTrailFromDisk());
+
+	const TArray<FVergilAgentAuditEntry> EntriesAfterFailedReload = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Failed reloads should preserve the last in-memory audit trail."), EntriesAfterFailedReload.Num(), 1);
+	if (EntriesAfterFailedReload.Num() == 1)
+	{
+		TestEqual(TEXT("Failed reloads should preserve the last in-memory request id."), EntriesAfterFailedReload[0].Request.Context.RequestId, PersistedEntry.Request.Context.RequestId);
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+	TestFalse(TEXT("Clearing the audit trail should delete the persisted audit-log file."), IFileManager::Get().FileExists(*PersistencePath));
+	return true;
+}
+
 bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 {
 	FVergilNodeRegistry::Get().Reset();

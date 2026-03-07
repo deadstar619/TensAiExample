@@ -28,7 +28,7 @@ This document describes the current scaffold contracts implemented in code today
 - `Vergil::DescribeGraphDocument(...)` / `SerializeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)` / `SerializeDiagnostics(...)`, and `Vergil::DescribeCompileResult(...)` / `SerializeCompileResult(...)` now expose the canonical document, diagnostic list, and compile result through stable human-readable descriptions plus deterministic JSON inspection payloads.
 - `UVergilEditorSubsystem` now exposes read-only command-plan, document, diagnostic, and compile-result inspection helpers, while `UVergilAgentSubsystem` mirrors those same helpers for tool-facing inspection without requiring callers to scrape logs.
 - `Vergil::GetSupportedContractManifest()` now exposes the current supported-contract surface as code-backed data, and `UVergilAgentSubsystem` exposes that manifest through read-only inspection helpers for structured data, descriptor-only inspection, deterministic JSON, and a human-readable summary.
-- The real agent-layer contract is now explicit and versioned. `PlanDocument` requests wrap `FVergilGraphDocument` plus target graph and compile flags, `ApplyCommandPlan` requests wrap explicit command plans plus target Blueprint path and expected fingerprint, responses wrap `FVergilCompileResult`, and audit entries store the request/response pair plus a UTC timestamp.
+- The real agent-layer contract is now explicit and versioned. `PlanDocument` requests wrap `FVergilGraphDocument` plus target graph and compile flags, `ApplyCommandPlan` requests wrap explicit command plans plus target Blueprint path and expected fingerprint, responses wrap `FVergilCompileResult`, audit entries store the request/response pair plus a UTC timestamp, and the persisted audit-log wrapper stores those normalized entries on disk.
 
 ## Inspection manifest contracts
 
@@ -46,6 +46,7 @@ This document describes the current scaffold contracts implemented in code today
 - The agent request format is `format="Vergil.AgentRequest"` with `version=1`, sourced from `Vergil::GetAgentRequestFormatName()` and `Vergil::GetAgentRequestFormatVersion()`.
 - The agent response format is `format="Vergil.AgentResponse"` with `version=1`, sourced from `Vergil::GetAgentResponseFormatName()` and `Vergil::GetAgentResponseFormatVersion()`.
 - The agent audit-entry format is `format="Vergil.AgentAuditEntry"` with `version=1`, sourced from `Vergil::GetAgentAuditEntryFormatName()` and `Vergil::GetAgentAuditEntryFormatVersion()`.
+- The persisted agent audit-log wrapper currently uses `format="Vergil.AgentAuditLog"` with `version=1` in `Saved/Vergil/AgentAuditTrail.json`.
 - `Vergil::DescribeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)`, `Vergil::DescribeCommandPlan(...)`, and `Vergil::DescribeCompileResult(...)` return stable human-readable inspection strings intended for tooling, logs, and previews.
 - `Vergil::SerializeGraphDocument(...)`, `Vergil::SerializeDiagnostics(...)`, and `Vergil::SerializeCompileResult(...)` return deterministic JSON inspection payloads. `Vergil::SerializeCompileResult(...)` nests the current diagnostics and command-plan payloads for the inspected result.
 - `UVergilEditorSubsystem` exposes `DescribeCommandPlan()`, `SerializeCommandPlan()`, `DescribeDocument()`, `SerializeDocument()`, `DescribeDiagnostics()`, `SerializeDiagnostics()`, `DescribeCompileResult()`, and `SerializeCompileResult()` as the supported editor-facing inspection surface.
@@ -63,11 +64,13 @@ This document describes the current scaffold contracts implemented in code today
 - `FVergilAgentRequest::IsWriteRequest()` returns `true` only for `ApplyCommandPlan`, which is the current contract boundary for future permission-gating work.
 - `FVergilAgentResponse` currently carries `RequestId`, `Operation`, `State`, `Message`, and `Result`. `Result` stays the existing `FVergilCompileResult` so agent orchestration reuses the same compile/apply diagnostics, plan statistics, and normalized command-plan payload already documented elsewhere.
 - `FVergilAgentAuditEntry` currently carries `Request`, `Response`, and `TimestampUtc`.
-- `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing `TimestampUtc` before appending the transient audit trail.
+- `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing `TimestampUtc` before appending the audit trail and immediately persisting it.
+- `UVergilAgentSubsystem::GetAuditTrailPersistencePath()`, `FlushAuditTrailToDisk()`, and `ReloadAuditTrailFromDisk()` expose the supported persistence surface for the current audit trail.
+- `UVergilAgentSubsystem::ClearAuditTrail()` clears both the in-memory audit trail and the persisted on-disk audit log.
 
 ## Versioning policy contracts
 
-- Vergil uses semantic versioning for the plugin release surface and separate integer versioning for document schema, serialized command plans, the graph-document/diagnostics/compile-result inspection payloads, the agent request/response/audit inspection payloads, and the supported-contract inspection manifest.
+- Vergil uses semantic versioning for the plugin release surface and separate integer versioning for document schema, serialized command plans, the graph-document/diagnostics/compile-result inspection payloads, the agent request/response/audit inspection payloads, the persisted agent audit-log wrapper, and the supported-contract inspection manifest.
 - The current plugin semantic version is sourced from `Vergil::GetSemanticVersionString()`. `Vergil.uplugin` `VersionName` is expected to stay aligned with that helper.
 - The current plugin descriptor version is sourced from `Vergil::PluginDescriptorVersion`. `Vergil.uplugin` `Version` is expected to stay aligned with that constant.
 - `Vergil::GetSupportedSchemaMigrationPaths()` exposes the exact supported forward schema-migration steps from the model layer, and the supported-contract manifest mirrors that list for agent/tool inspection.

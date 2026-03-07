@@ -53,6 +53,15 @@ public:
 	FString InspectAgentAuditEntryAsJson(const FVergilAgentAuditEntry& Entry, bool bPrettyPrint = true) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	FString GetAuditTrailPersistencePath() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
+	bool FlushAuditTrailToDisk();
+
+	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
+	bool ReloadAuditTrailFromDisk();
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString DescribeCommandPlan(const TArray<FVergilCompilerCommand>& Commands) const;
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
@@ -85,4 +94,8 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Vergil|Agent")
 	int32 MaxAuditEntries = 100;
+
+	void TrimAuditTrailToMaxEntries();
+	bool TryLoadAuditTrailFromDisk(TArray<FVergilAgentAuditEntry>& OutEntries, FString* OutErrorMessage = nullptr) const;
+	bool TryWriteAuditTrailToDisk(const TArray<FVergilAgentAuditEntry>& Entries, FString* OutErrorMessage = nullptr) const;
 };

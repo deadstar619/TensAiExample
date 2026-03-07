@@ -398,7 +398,7 @@ Goal:
 Tickets:
 
 - [x] `VGR-8001` Define agent request/response contracts
-- `VGR-8002` Persist audit data instead of keeping it transient only
+- [x] `VGR-8002` Persist audit data instead of keeping it transient only
 - `VGR-8003` Add plan/apply separation
 - `VGR-8004` Add permission gates around write/apply actions
 - [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
@@ -416,6 +416,12 @@ Session note for `VGR-8001` (2026-03-07):
 - The agent module now defines explicit `PlanDocument` and `ApplyCommandPlan` request envelopes plus typed response and audit-entry contracts in `FVergilAgentRequest`, `FVergilAgentResponse`, and `FVergilAgentAuditEntry`, instead of treating agent work as only an unstructured summary blob plus transient state string.
 - The new versioned inspection formats are `Vergil.AgentRequest`, `Vergil.AgentResponse`, and `Vergil.AgentAuditEntry`, each at version `1`, with deterministic JSON and human-readable descriptions exposed through both the namespace helpers and `UVergilAgentSubsystem`.
 - `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing UTC timestamps before appending the transient audit trail, and `Vergil.Scaffold.AgentRequestResponseContracts` covers request/response/audit inspection parity plus audit normalization.
+
+Session note for `VGR-8002` (2026-03-07):
+
+- `UVergilAgentSubsystem` now persists normalized audit entries to `Saved/Vergil/AgentAuditTrail.json` instead of keeping them in transient memory only, and it exposes `GetAuditTrailPersistencePath()`, `FlushAuditTrailToDisk()`, and `ReloadAuditTrailFromDisk()` for explicit operational control.
+- The persisted on-disk wrapper is versioned as `Vergil.AgentAuditLog` `v1`, so future agent audit-log changes have a dedicated migration/versioning boundary separate from the request/response/audit-entry inspection formats.
+- `Vergil.Scaffold.AgentAuditPersistence` now covers disk write, explicit reload, corruption handling, and clear/delete behavior while preserving any pre-existing audit-log file around the automation run.
 
 Session note for `VGR-8005` (2026-03-06):
 
@@ -466,11 +472,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-8002`
-2. `VGR-9004`
-3. `VGR-5002`
-4. `VGR-7002`
-5. `VGR-5003`
+1. `VGR-9004`
+2. `VGR-5002`
+3. `VGR-7002`
+4. `VGR-5003`
+5. `VGR-5004`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that inspection tooling is in place, the agent layer can inspect the code-backed support manifest, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
