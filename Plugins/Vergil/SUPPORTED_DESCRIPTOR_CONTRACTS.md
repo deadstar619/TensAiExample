@@ -39,9 +39,11 @@ This document describes the current scaffold contracts implemented in code today
 ## Inspection manifest contracts
 
 - The current inspection manifest format is `format="Vergil.ContractManifest"` with `version=1`.
-- `FVergilSupportedContractManifest` currently reports the plugin descriptor version, plugin semantic version, scaffold schema version, supported schema migration paths, command-plan serialization format/version, supported document fields, supported compile target graphs, supported Blueprint metadata keys, supported logical type categories, supported container types, supported explicit command types, and the supported node-descriptor contract table.
+- `FVergilSupportedContractManifest` currently reports the plugin descriptor version, plugin semantic version, scaffold schema version, supported schema migration paths, command-plan serialization format/version, supported document fields, supported compile target graphs, supported Blueprint metadata keys, supported logical type categories, supported container types, supported explicit command types, a node-support matrix summary/table, and the supported node-descriptor contract table.
 - `FVergilSupportedDescriptorContract` currently reports the descriptor contract string, how it matches authored nodes (`Exact`, `Prefix`, or `NodeKind`), the expected authored node kind label, required metadata keys, supported target graphs, and notes about the current scaffold behavior or limits.
-- `UVergilAgentSubsystem::InspectSupportedContracts()` returns the full structured manifest, `InspectSupportedDescriptorContracts()` returns just the descriptor table, `InspectSupportedContractsAsJson()` returns the deterministic JSON export, and `DescribeSupportedContracts()` returns a human-readable summary string.
+- `FVergilNodeSupportMatrixSummary` currently reports total supported/unsupported family counts plus how many currently route through the generic node-spawner path, an explicit specialized handler, or another direct-lowering path.
+- `FVergilNodeSupportMatrixEntry` currently reports a family label, whether that family is currently supported, which deterministic handling path it uses, the descriptor coverage labels attached to that family row, and notes about the current scaffold behavior or exclusions.
+- `UVergilAgentSubsystem::InspectSupportedContracts()` returns the full structured manifest, `InspectSupportedDescriptorContracts()` returns just the descriptor table, `InspectSupportedContractsAsJson()` returns the deterministic JSON export, and `DescribeSupportedContracts()` returns a human-readable summary string that now includes the node-support matrix summary and rows.
 - The manifest is read-only inspection data. It does not loosen validation or execution behavior; unsupported descriptors outside the documented table still fail explicitly.
 
 ## Inspector tooling contracts
@@ -338,6 +340,23 @@ This document describes the current scaffold contracts implemented in code today
 - The current parameter type resolver supports these logical categories: `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` categories require `ObjectPath` to resolve the referenced type, and whitespace-only object paths are treated as missing during structural validation.
 - Dispatchers are supported on regular Blueprints. Macro libraries are rejected explicitly.
+
+## Node support matrix
+
+This table is mirrored from the code-backed supported-contract manifest. `Vergil.Scaffold.SupportedNodeContractDocs` fails if the checked-in markdown drifts from `Vergil::DescribeNodeSupportMatrixAsMarkdownTable()`.
+
+<!-- BEGIN GENERATED NODE SUPPORT MATRIX TABLE -->
+| Family | Coverage | Handling | Descriptor coverage | Notes |
+| --- | --- | --- | --- | --- |
+| Event and custom-event entrypoints | `Supported` | `DirectLowering` | `K2.Event.<FunctionName>`, `K2.CustomEvent.<EventName>` | Standard events and authored custom events use explicit event-node lowering instead of the generic UK2Node spawner path. |
+| Call, message, and component-lookup nodes | `Supported` | `DirectLowering` | `K2.Call.<FunctionName>`, `K2.InterfaceCall.<FunctionName>`, `K2.InterfaceMessage.<FunctionName>`, `K2.Delay`, `K2.GetComponentByClass`, `K2.GetComponentsByClass`, `K2.FindComponentByTag`, `K2.GetComponentsByTag` | These families lower through explicit call/message handlers that resolve the target function surface deterministically instead of spawning a generic UK2Node class. |
+| Variable, struct, and delegate helpers | `Supported` | `DirectLowering` | `K2.VarGet.<VariableName>`, `K2.VarSet.<VariableName>`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.BindDelegate.<PropertyName>`, `K2.RemoveDelegate.<PropertyName>`, `K2.ClearDelegate.<PropertyName>`, `K2.CallDelegate.<PropertyName>`, `K2.CreateDelegate.<FunctionName>` | These families keep their dedicated deterministic handlers because they depend on variable-node variants, struct pin synthesis, or finalize-time delegate binding rather than plain UK2Node spawning. |
+| Standard macro families | `Supported` | `DirectLowering` | `K2.ForLoop`, `K2.ForLoopWithBreak`, `K2.DoOnce`, `K2.FlipFlop`, `K2.Gate`, `K2.WhileLoop` | Flow-control macro families resolve against UE_5.7 StandardMacros and materialize through the existing macro-instance lowering path. |
+| Generic UK2Node spawner families | `Supported` | `GenericNodeSpawner` | `K2.Self`, `K2.Branch`, `K2.Sequence`, `K2.Reroute`, `K2.Select`, `K2.SwitchInt`, `K2.SwitchString`, `K2.SwitchEnum`, `K2.FormatText`, `K2.MakeArray`, `K2.MakeSet`, `K2.MakeMap`, `K2.SpawnActor`, `K2.AddComponentByClass`, `K2.ClassCast`, `K2.Cast`, `K2.GetClassDefaults`, `K2.LoadAsset`, `K2.LoadAssetClass`, `K2.LoadAssets`, `K2.ConvertAsset`, `K2.AsyncAction.<FactoryFunctionName>` | These supported descriptor contracts now validate and instantiate their backing UK2Node classes through the shared generic spawner registry, with per-family setup for wildcard, class, asset, spawn, async, and expose-on-spawn surfaces. |
+| Specialized async-task families | `Supported` | `SpecializedHandler` | `K2.AIMoveTo`, `K2.PlayMontage` | These dedicated async-node families still require explicit specialized handlers to resolve the engine-owned factory function and delegate surface before the final UK2Node class is instantiated. |
+| Dedicated async nodes without a specialized handler | `Unsupported` | `Unsupported` | `K2.AsyncAction.<FactoryFunctionName> where the resolved factory class advertises HasDedicatedAsyncNode` | Factories that advertise HasDedicatedAsyncNode are intentionally rejected from the generic async-action path until they have an explicit specialized handler. |
+| Arbitrary unsupported descriptor-backed UK2Node families | `Unsupported` | `Unsupported` | `Descriptors outside the supported-contract table` | The generic fallback planner is not a blanket support promise; unsupported descriptor-backed UK2Node families still fail explicitly until they are added to the manifest and a deterministic handler path. |
+<!-- END GENERATED NODE SUPPORT MATRIX TABLE -->
 
 ## Supported node descriptor contracts
 

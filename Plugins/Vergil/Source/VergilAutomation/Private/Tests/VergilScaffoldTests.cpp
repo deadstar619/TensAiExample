@@ -225,6 +225,16 @@ namespace
 		});
 	}
 
+	const FVergilNodeSupportMatrixEntry* FindNodeSupportMatrixEntry(
+		const TArray<FVergilNodeSupportMatrixEntry>& Entries,
+		const FString& Family)
+	{
+		return Entries.FindByPredicate([&Family](const FVergilNodeSupportMatrixEntry& Entry)
+		{
+			return Entry.Family == Family;
+		});
+	}
+
 	struct FScopedPersistentTestBlueprint final
 	{
 		explicit FScopedPersistentTestBlueprint(const FString& BaseAssetName)
@@ -4853,6 +4863,39 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Supported-contract inspection should include SetBlueprintMetadata as a supported command type."), ContainsNameValue(Manifest.SupportedCommandTypes, TEXT("SetBlueprintMetadata")));
 	TestTrue(TEXT("Supported-contract inspection should include FinalizeNode as a supported command type."), ContainsNameValue(Manifest.SupportedCommandTypes, TEXT("FinalizeNode")));
 	TestTrue(TEXT("Supported-contract inspection should expose a non-empty descriptor catalog."), Manifest.SupportedDescriptors.Num() > 0);
+	TestEqual(TEXT("Supported-contract inspection should report a node-support matrix row for every summarized family."), Manifest.NodeSupportMatrixSummary.TotalFamilies, Manifest.NodeSupportMatrix.Num());
+	TestTrue(TEXT("Supported-contract inspection should report supported node-support families."), Manifest.NodeSupportMatrixSummary.SupportedFamilies > 0);
+	TestTrue(TEXT("Supported-contract inspection should report unsupported node-support families."), Manifest.NodeSupportMatrixSummary.UnsupportedFamilies > 0);
+	TestTrue(TEXT("Supported-contract inspection should report generic node-spawner coverage."), Manifest.NodeSupportMatrixSummary.GenericNodeSpawnerFamilies > 0);
+	TestTrue(TEXT("Supported-contract inspection should report specialized-handler coverage."), Manifest.NodeSupportMatrixSummary.SpecializedHandlerFamilies > 0);
+	TestTrue(TEXT("Supported-contract inspection should report direct-lowering coverage."), Manifest.NodeSupportMatrixSummary.DirectLoweringFamilies > 0);
+
+	const FVergilNodeSupportMatrixEntry* const GenericSpawnerEntry = FindNodeSupportMatrixEntry(Manifest.NodeSupportMatrix, TEXT("Generic UK2Node spawner families"));
+	TestNotNull(TEXT("Supported-contract inspection should include the generic UK2Node spawner family row."), GenericSpawnerEntry);
+	if (GenericSpawnerEntry != nullptr)
+	{
+		TestEqual(TEXT("Generic UK2Node spawner coverage should be marked supported."), GenericSpawnerEntry->Coverage, EVergilNodeSupportCoverage::Supported);
+		TestEqual(TEXT("Generic UK2Node spawner coverage should report the generic handling path."), GenericSpawnerEntry->Handling, EVergilNodeSupportHandling::GenericNodeSpawner);
+		TestTrue(TEXT("Generic UK2Node spawner coverage should include K2.SpawnActor."), ContainsStringValue(GenericSpawnerEntry->DescriptorCoverage, TEXT("K2.SpawnActor")));
+	}
+
+	const FVergilNodeSupportMatrixEntry* const SpecializedAsyncEntry = FindNodeSupportMatrixEntry(Manifest.NodeSupportMatrix, TEXT("Specialized async-task families"));
+	TestNotNull(TEXT("Supported-contract inspection should include the specialized async-task family row."), SpecializedAsyncEntry);
+	if (SpecializedAsyncEntry != nullptr)
+	{
+		TestEqual(TEXT("Specialized async-task coverage should be marked supported."), SpecializedAsyncEntry->Coverage, EVergilNodeSupportCoverage::Supported);
+		TestEqual(TEXT("Specialized async-task coverage should report specialized handling."), SpecializedAsyncEntry->Handling, EVergilNodeSupportHandling::SpecializedHandler);
+		TestTrue(TEXT("Specialized async-task coverage should include K2.AIMoveTo."), ContainsStringValue(SpecializedAsyncEntry->DescriptorCoverage, TEXT("K2.AIMoveTo")));
+	}
+
+	const FVergilNodeSupportMatrixEntry* const UnsupportedAsyncEntry = FindNodeSupportMatrixEntry(Manifest.NodeSupportMatrix, TEXT("Dedicated async nodes without a specialized handler"));
+	TestNotNull(TEXT("Supported-contract inspection should include the unsupported dedicated-async family row."), UnsupportedAsyncEntry);
+	if (UnsupportedAsyncEntry != nullptr)
+	{
+		TestEqual(TEXT("Dedicated async nodes without a specialized handler should be marked unsupported."), UnsupportedAsyncEntry->Coverage, EVergilNodeSupportCoverage::Unsupported);
+		TestEqual(TEXT("Dedicated async nodes without a specialized handler should report unsupported handling."), UnsupportedAsyncEntry->Handling, EVergilNodeSupportHandling::Unsupported);
+		TestTrue(TEXT("Dedicated async-node notes should mention HasDedicatedAsyncNode."), UnsupportedAsyncEntry->Notes.Contains(TEXT("HasDedicatedAsyncNode")));
+	}
 
 	const FVergilSupportedDescriptorContract* const SelectContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.Select"));
 	TestNotNull(TEXT("Supported-contract inspection should include K2.Select."), SelectContract);
@@ -4993,12 +5036,16 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 	const FString ContractDescription = AgentSubsystem->DescribeSupportedContracts();
 	TestTrue(TEXT("Supported-contract description should include the manifest format label."), ContractDescription.Contains(TEXT("Vergil.ContractManifest")));
 	TestTrue(TEXT("Supported-contract description should include K2.CreateDelegate.<FunctionName>."), ContractDescription.Contains(TEXT("K2.CreateDelegate.<FunctionName>")));
+	TestTrue(TEXT("Supported-contract description should include the node-support matrix summary."), ContractDescription.Contains(TEXT("nodeSupportMatrixSummary:")));
+	TestTrue(TEXT("Supported-contract description should include the generic UK2Node spawner family row."), ContractDescription.Contains(TEXT("Generic UK2Node spawner families")));
 
 	const FString ContractJson = AgentSubsystem->InspectSupportedContractsAsJson(false);
 	TestTrue(TEXT("Supported-contract JSON should include the manifest format field."), ContractJson.Contains(TEXT("\"format\":\"Vergil.ContractManifest\"")));
 	TestTrue(TEXT("Supported-contract JSON should include the command-plan format field."), ContractJson.Contains(TEXT("\"commandPlanFormat\":\"Vergil.CommandPlan\"")));
 	TestTrue(TEXT("Supported-contract JSON should include UserConstructionScript."), ContractJson.Contains(TEXT("UserConstructionScript")));
 	TestTrue(TEXT("Supported-contract JSON should include K2.MakeMap."), ContractJson.Contains(TEXT("K2.MakeMap")));
+	TestTrue(TEXT("Supported-contract JSON should include the node-support matrix summary."), ContractJson.Contains(TEXT("\"nodeSupportMatrixSummary\":")));
+	TestTrue(TEXT("Supported-contract JSON should include the unsupported dedicated-async family row."), ContractJson.Contains(TEXT("Dedicated async nodes without a specialized handler")));
 
 	return true;
 }
@@ -5027,6 +5074,21 @@ bool FVergilSupportedNodeContractDocsTest::RunTest(const FString& Parameters)
 		TEXT("The documented supported-node contract table should stay aligned with the code-backed manifest."),
 		NormalizeLineEndings(DocumentedTable).TrimStartAndEnd(),
 		ExpectedTable);
+
+	const FString MatrixBeginMarker = TEXT("<!-- BEGIN GENERATED NODE SUPPORT MATRIX TABLE -->");
+	const FString MatrixEndMarker = TEXT("<!-- END GENERATED NODE SUPPORT MATRIX TABLE -->");
+	FString DocumentedMatrixTable;
+	TestTrue(TEXT("The supported-contract markdown should contain the generated support-matrix begin marker."), TryExtractMarkedSection(ContractDocumentText, MatrixBeginMarker, MatrixEndMarker, DocumentedMatrixTable));
+	if (DocumentedMatrixTable.IsEmpty())
+	{
+		return false;
+	}
+
+	const FString ExpectedMatrixTable = NormalizeLineEndings(Vergil::DescribeNodeSupportMatrixAsMarkdownTable()).TrimStartAndEnd();
+	TestEqual(
+		TEXT("The documented node-support matrix should stay aligned with the code-backed manifest."),
+		NormalizeLineEndings(DocumentedMatrixTable).TrimStartAndEnd(),
+		ExpectedMatrixTable);
 
 	return true;
 }

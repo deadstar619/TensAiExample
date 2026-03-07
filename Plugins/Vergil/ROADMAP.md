@@ -394,7 +394,7 @@ Tickets:
 - [x] `VGR-6004` Add async task node families where deterministic setup is possible
 - [x] `VGR-6005` Add specialized handlers for nodes that cannot use the generic path
 - [x] `VGR-6006` Add a generic node-spawner path for arbitrary supported `UK2Node` classes
-- `VGR-6007` Build an explicit support matrix of generic vs specialized coverage
+- [x] `VGR-6007` Build an explicit support matrix of generic vs specialized coverage
 - `VGR-6008` Add unsupported-node reporting that enumerates exact missing families
 
 Acceptance criteria:
@@ -437,6 +437,12 @@ Session note for `VGR-6006` (2026-03-07):
 - `UE_5.7` editor execution now routes supported `UK2Node`-backed add-node commands through a shared generic node-spawner path instead of open-coding each class instantiation branch, while leaving macros, `K2.Call.*`, delegate helpers, variable nodes, and other non-`UK2Node` families on their existing explicit paths.
 - The generic node-spawner path now covers straightforward node classes such as `K2.Self`, `K2.Branch`, `K2.Sequence`, `K2.Reroute`, `K2.Select`, `K2.Switch*`, `K2.FormatText`, `K2.MakeArray`, `K2.MakeSet`, `K2.MakeMap`, plus the already-supported `UK2Node` families `K2.AsyncAction.*`, `K2.AIMoveTo`, `K2.PlayMontage`, `K2.SpawnActor`, `K2.AddComponentByClass`, `K2.ClassCast`, `K2.GetClassDefaults`, `K2.LoadAsset*`, and `K2.ConvertAsset`.
 - Direct command-plan preflight now validates those generic-spawn families through the same shared registry, and `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, `Vergil.Scaffold.AsyncActionExecution`, `Vergil.Scaffold.SpecializedAsyncTaskExecution`, `Vergil.Scaffold.ObjectClassReferenceExecution`, `Vergil.Scaffold.ComponentNodeExecution`, `Vergil.Scaffold.SelectExecution`, `Vergil.Scaffold.SwitchIntExecution`, `Vergil.Scaffold.SwitchEnumExecution`, `Vergil.Scaffold.FormatTextExecution`, `Vergil.Scaffold.MakeArrayExecution`, `Vergil.Scaffold.MakeSetExecution`, and `Vergil.Scaffold.MakeMapExecution` now cover that shared path end to end.
+
+Session note for `VGR-6007` (2026-03-07):
+
+- The supported-contract manifest now exposes a code-backed node-support matrix summary plus explicit family rows, so tooling can measure supported versus intentionally unsupported K2-family coverage and distinguish generic node-spawner coverage, specialized-handler coverage, and other direct-lowering paths without scraping roadmap prose.
+- The current matrix rows group event/custom-event entrypoints, call/message/component-lookup nodes, variable/struct/delegate helpers, standard macro families, generic `UK2Node` spawner families, specialized async-task families, dedicated async nodes that still require explicit handlers, and the remaining unsupported descriptor-backed `UK2Node` bucket that still fails explicitly.
+- `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now includes a generated support-matrix table alongside the generated descriptor-contract table, and `Vergil.Scaffold.SupportedContractInspection` plus `Vergil.Scaffold.SupportedNodeContractDocs` now cover the structured manifest fields, JSON/description output, and markdown sync for that matrix surface.
 
 ## Milestone 7: Editor Tooling
 Goal:

@@ -38,6 +38,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
   Source of truth: `Vergil::GetCommandPlanFormatName()` and `Vergil::GetCommandPlanFormatVersion()`
 - Supported-contract inspection manifest: `Vergil.ContractManifest` version `1`
   Source of truth: `FVergilSupportedContractManifest.ManifestVersion`
+  Current additive fields include the node-support matrix summary and node-support matrix rows.
 
 ## Semantic versioning policy
 

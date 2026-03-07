@@ -11,6 +11,22 @@ enum class EVergilDescriptorMatchKind : uint8
 	NodeKind
 };
 
+UENUM(BlueprintType)
+enum class EVergilNodeSupportCoverage : uint8
+{
+	Supported,
+	Unsupported
+};
+
+UENUM(BlueprintType)
+enum class EVergilNodeSupportHandling : uint8
+{
+	GenericNodeSpawner,
+	SpecializedHandler,
+	DirectLowering,
+	Unsupported
+};
+
 USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilSupportedDescriptorContract
 {
@@ -33,6 +49,55 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilSupportedDescriptorContract
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	FString Notes;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilNodeSupportMatrixEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString Family;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilNodeSupportCoverage Coverage = EVergilNodeSupportCoverage::Supported;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	EVergilNodeSupportHandling Handling = EVergilNodeSupportHandling::DirectLowering;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FString> DescriptorCoverage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString Notes;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilNodeSupportMatrixSummary
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 TotalFamilies = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 SupportedFamilies = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 UnsupportedFamilies = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 GenericNodeSpawnerFamilies = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 SpecializedHandlerFamilies = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 DirectLoweringFamilies = 0;
 
 	FString ToDisplayString() const;
 };
@@ -82,6 +147,12 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilSupportedContractManifest
 	TArray<FName> SupportedCommandTypes;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilNodeSupportMatrixSummary NodeSupportMatrixSummary;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	TArray<FVergilNodeSupportMatrixEntry> NodeSupportMatrix;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FVergilSupportedDescriptorContract> SupportedDescriptors;
 
 	FString ToDisplayString() const;
@@ -92,5 +163,6 @@ namespace Vergil
 	VERGILBLUEPRINTCOMPILER_API const FVergilSupportedContractManifest& GetSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString SerializeSupportedContractManifest(bool bPrettyPrint = true);
+	VERGILBLUEPRINTCOMPILER_API FString DescribeNodeSupportMatrixAsMarkdownTable();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedDescriptorContractsAsMarkdownTable();
 }

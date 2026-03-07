@@ -94,6 +94,20 @@ namespace
 		return MatchKindEnum->GetNameStringByValue(static_cast<int64>(MatchKind));
 	}
 
+	FString GetNodeSupportCoverageName(const EVergilNodeSupportCoverage Coverage)
+	{
+		const UEnum* const CoverageEnum = StaticEnum<EVergilNodeSupportCoverage>();
+		check(CoverageEnum != nullptr);
+		return CoverageEnum->GetNameStringByValue(static_cast<int64>(Coverage));
+	}
+
+	FString GetNodeSupportHandlingName(const EVergilNodeSupportHandling Handling)
+	{
+		const UEnum* const HandlingEnum = StaticEnum<EVergilNodeSupportHandling>();
+		check(HandlingEnum != nullptr);
+		return HandlingEnum->GetNameStringByValue(static_cast<int64>(Handling));
+	}
+
 	TArray<FName> BuildSupportedCommandTypes()
 	{
 		return {
@@ -138,6 +152,22 @@ namespace
 		Contract.RequiredMetadataKeys = RequiredMetadataKeys;
 		Contract.Notes = Notes;
 		return Contract;
+	}
+
+	FVergilNodeSupportMatrixEntry MakeSupportMatrixEntry(
+		const FString& Family,
+		const EVergilNodeSupportCoverage Coverage,
+		const EVergilNodeSupportHandling Handling,
+		const TArray<FString>& DescriptorCoverage,
+		const FString& Notes)
+	{
+		FVergilNodeSupportMatrixEntry Entry;
+		Entry.Family = Family;
+		Entry.Coverage = Coverage;
+		Entry.Handling = Handling;
+		Entry.DescriptorCoverage = DescriptorCoverage;
+		Entry.Notes = Notes;
+		return Entry;
 	}
 
 	TArray<FVergilSupportedDescriptorContract> BuildSupportedDescriptorContracts()
@@ -499,6 +529,146 @@ namespace
 		};
 	}
 
+	TArray<FVergilNodeSupportMatrixEntry> BuildNodeSupportMatrix()
+	{
+		return {
+			MakeSupportMatrixEntry(
+				TEXT("Event and custom-event entrypoints"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::DirectLowering,
+				{ TEXT("K2.Event.<FunctionName>"), TEXT("K2.CustomEvent.<EventName>") },
+				TEXT("Standard events and authored custom events use explicit event-node lowering instead of the generic UK2Node spawner path.")),
+			MakeSupportMatrixEntry(
+				TEXT("Call, message, and component-lookup nodes"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::DirectLowering,
+				{
+					TEXT("K2.Call.<FunctionName>"),
+					TEXT("K2.InterfaceCall.<FunctionName>"),
+					TEXT("K2.InterfaceMessage.<FunctionName>"),
+					TEXT("K2.Delay"),
+					TEXT("K2.GetComponentByClass"),
+					TEXT("K2.GetComponentsByClass"),
+					TEXT("K2.FindComponentByTag"),
+					TEXT("K2.GetComponentsByTag")
+				},
+				TEXT("These families lower through explicit call/message handlers that resolve the target function surface deterministically instead of spawning a generic UK2Node class.")),
+			MakeSupportMatrixEntry(
+				TEXT("Variable, struct, and delegate helpers"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::DirectLowering,
+				{
+					TEXT("K2.VarGet.<VariableName>"),
+					TEXT("K2.VarSet.<VariableName>"),
+					TEXT("K2.MakeStruct"),
+					TEXT("K2.BreakStruct"),
+					TEXT("K2.BindDelegate.<PropertyName>"),
+					TEXT("K2.RemoveDelegate.<PropertyName>"),
+					TEXT("K2.ClearDelegate.<PropertyName>"),
+					TEXT("K2.CallDelegate.<PropertyName>"),
+					TEXT("K2.CreateDelegate.<FunctionName>")
+				},
+				TEXT("These families keep their dedicated deterministic handlers because they depend on variable-node variants, struct pin synthesis, or finalize-time delegate binding rather than plain UK2Node spawning.")),
+			MakeSupportMatrixEntry(
+				TEXT("Standard macro families"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::DirectLowering,
+				{
+					TEXT("K2.ForLoop"),
+					TEXT("K2.ForLoopWithBreak"),
+					TEXT("K2.DoOnce"),
+					TEXT("K2.FlipFlop"),
+					TEXT("K2.Gate"),
+					TEXT("K2.WhileLoop")
+				},
+				TEXT("Flow-control macro families resolve against UE_5.7 StandardMacros and materialize through the existing macro-instance lowering path.")),
+			MakeSupportMatrixEntry(
+				TEXT("Generic UK2Node spawner families"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::GenericNodeSpawner,
+				{
+					TEXT("K2.Self"),
+					TEXT("K2.Branch"),
+					TEXT("K2.Sequence"),
+					TEXT("K2.Reroute"),
+					TEXT("K2.Select"),
+					TEXT("K2.SwitchInt"),
+					TEXT("K2.SwitchString"),
+					TEXT("K2.SwitchEnum"),
+					TEXT("K2.FormatText"),
+					TEXT("K2.MakeArray"),
+					TEXT("K2.MakeSet"),
+					TEXT("K2.MakeMap"),
+					TEXT("K2.SpawnActor"),
+					TEXT("K2.AddComponentByClass"),
+					TEXT("K2.ClassCast"),
+					TEXT("K2.Cast"),
+					TEXT("K2.GetClassDefaults"),
+					TEXT("K2.LoadAsset"),
+					TEXT("K2.LoadAssetClass"),
+					TEXT("K2.LoadAssets"),
+					TEXT("K2.ConvertAsset"),
+					TEXT("K2.AsyncAction.<FactoryFunctionName>")
+				},
+				TEXT("These supported descriptor contracts now validate and instantiate their backing UK2Node classes through the shared generic spawner registry, with per-family setup for wildcard, class, asset, spawn, async, and expose-on-spawn surfaces.")),
+			MakeSupportMatrixEntry(
+				TEXT("Specialized async-task families"),
+				EVergilNodeSupportCoverage::Supported,
+				EVergilNodeSupportHandling::SpecializedHandler,
+				{ TEXT("K2.AIMoveTo"), TEXT("K2.PlayMontage") },
+				TEXT("These dedicated async-node families still require explicit specialized handlers to resolve the engine-owned factory function and delegate surface before the final UK2Node class is instantiated.")),
+			MakeSupportMatrixEntry(
+				TEXT("Dedicated async nodes without a specialized handler"),
+				EVergilNodeSupportCoverage::Unsupported,
+				EVergilNodeSupportHandling::Unsupported,
+				{ TEXT("K2.AsyncAction.<FactoryFunctionName> where the resolved factory class advertises HasDedicatedAsyncNode") },
+				TEXT("Factories that advertise HasDedicatedAsyncNode are intentionally rejected from the generic async-action path until they have an explicit specialized handler.")),
+			MakeSupportMatrixEntry(
+				TEXT("Arbitrary unsupported descriptor-backed UK2Node families"),
+				EVergilNodeSupportCoverage::Unsupported,
+				EVergilNodeSupportHandling::Unsupported,
+				{ TEXT("Descriptors outside the supported-contract table") },
+				TEXT("The generic fallback planner is not a blanket support promise; unsupported descriptor-backed UK2Node families still fail explicitly until they are added to the manifest and a deterministic handler path.")),
+		};
+	}
+
+	FVergilNodeSupportMatrixSummary BuildNodeSupportMatrixSummary(const TArray<FVergilNodeSupportMatrixEntry>& Entries)
+	{
+		FVergilNodeSupportMatrixSummary Summary;
+		Summary.TotalFamilies = Entries.Num();
+
+		for (const FVergilNodeSupportMatrixEntry& Entry : Entries)
+		{
+			if (Entry.Coverage == EVergilNodeSupportCoverage::Supported)
+			{
+				++Summary.SupportedFamilies;
+			}
+			else
+			{
+				++Summary.UnsupportedFamilies;
+			}
+
+			switch (Entry.Handling)
+			{
+			case EVergilNodeSupportHandling::GenericNodeSpawner:
+				++Summary.GenericNodeSpawnerFamilies;
+				break;
+			case EVergilNodeSupportHandling::SpecializedHandler:
+				++Summary.SpecializedHandlerFamilies;
+				break;
+			case EVergilNodeSupportHandling::DirectLowering:
+				++Summary.DirectLoweringFamilies;
+				break;
+			case EVergilNodeSupportHandling::Unsupported:
+				break;
+			default:
+				break;
+			}
+		}
+
+		return Summary;
+	}
+
 	FVergilSupportedContractManifest BuildSupportedContractManifest()
 	{
 		FVergilSupportedContractManifest Manifest;
@@ -515,6 +685,8 @@ namespace
 		Manifest.SupportedTypeCategories = BuildSupportedTypeCategories();
 		Manifest.SupportedContainerTypes = BuildSupportedContainerTypes();
 		Manifest.SupportedCommandTypes = BuildSupportedCommandTypes();
+		Manifest.NodeSupportMatrix = BuildNodeSupportMatrix();
+		Manifest.NodeSupportMatrixSummary = BuildNodeSupportMatrixSummary(Manifest.NodeSupportMatrix);
 		Manifest.SupportedDescriptors = BuildSupportedDescriptorContracts();
 		return Manifest;
 	}
@@ -570,6 +742,18 @@ namespace
 		Writer.WriteObjectEnd();
 	}
 
+	template <typename PrintPolicy>
+	void WriteNodeSupportMatrixEntryJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilNodeSupportMatrixEntry& Entry)
+	{
+		Writer.WriteObjectStart();
+		Writer.WriteValue(TEXT("family"), Entry.Family);
+		Writer.WriteValue(TEXT("coverage"), GetNodeSupportCoverageName(Entry.Coverage));
+		Writer.WriteValue(TEXT("handling"), GetNodeSupportHandlingName(Entry.Handling));
+		WriteStringArray(Writer, TEXT("descriptorCoverage"), Entry.DescriptorCoverage);
+		Writer.WriteValue(TEXT("notes"), Entry.Notes);
+		Writer.WriteObjectEnd();
+	}
+
 	FString EscapeMarkdownTableCell(const FString& Value)
 	{
 		FString Escaped = Value;
@@ -601,6 +785,23 @@ namespace
 
 		return FString::Join(Tokens, TEXT(", "));
 	}
+
+	FString FormatMarkdownStringArray(const TArray<FString>& Values)
+	{
+		if (Values.IsEmpty())
+		{
+			return TEXT("`none`");
+		}
+
+		TArray<FString> Tokens;
+		Tokens.Reserve(Values.Num());
+		for (const FString& Value : Values)
+		{
+			Tokens.Add(FormatMarkdownInlineCode(Value));
+		}
+
+		return FString::Join(Tokens, TEXT(", "));
+	}
 }
 
 FString FVergilSupportedDescriptorContract::ToDisplayString() const
@@ -628,10 +829,42 @@ FString FVergilSupportedDescriptorContract::ToDisplayString() const
 	return FString::Join(Parts, TEXT(" "));
 }
 
+FString FVergilNodeSupportMatrixEntry::ToDisplayString() const
+{
+	TArray<FString> Parts;
+	Parts.Add(FString::Printf(TEXT("family=%s"), *Family));
+	Parts.Add(FString::Printf(TEXT("coverage=%s"), *GetNodeSupportCoverageName(Coverage)));
+	Parts.Add(FString::Printf(TEXT("handling=%s"), *GetNodeSupportHandlingName(Handling)));
+
+	if (DescriptorCoverage.Num() > 0)
+	{
+		Parts.Add(FString::Printf(TEXT("descriptors=[%s]"), *JoinStringArray(DescriptorCoverage)));
+	}
+
+	if (!Notes.IsEmpty())
+	{
+		Parts.Add(FString::Printf(TEXT("notes=%s"), *Notes));
+	}
+
+	return FString::Join(Parts, TEXT(" "));
+}
+
+FString FVergilNodeSupportMatrixSummary::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("families=%d supported=%d unsupported=%d generic=%d specialized=%d direct=%d"),
+		TotalFamilies,
+		SupportedFamilies,
+		UnsupportedFamilies,
+		GenericNodeSpawnerFamilies,
+		SpecializedHandlerFamilies,
+		DirectLoweringFamilies);
+}
+
 FString FVergilSupportedContractManifest::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("%s version=%d plugin=%s descriptorVersion=%d schema=%d commandPlanFormat=%s:%d schemaMigrations=%d documentFields=%d targetGraphs=%d metadataKeys=%d typeCategories=%d containerTypes=%d commandTypes=%d descriptors=%d"),
+		TEXT("%s version=%d plugin=%s descriptorVersion=%d schema=%d commandPlanFormat=%s:%d schemaMigrations=%d documentFields=%d targetGraphs=%d metadataKeys=%d typeCategories=%d containerTypes=%d commandTypes=%d matrixFamilies=%d descriptors=%d"),
 		SupportedContractManifestFormatName,
 		ManifestVersion,
 		*PluginSemanticVersion,
@@ -646,6 +879,7 @@ FString FVergilSupportedContractManifest::ToDisplayString() const
 		SupportedTypeCategories.Num(),
 		SupportedContainerTypes.Num(),
 		SupportedCommandTypes.Num(),
+		NodeSupportMatrix.Num(),
 		SupportedDescriptors.Num());
 }
 
@@ -660,7 +894,7 @@ FString Vergil::DescribeSupportedContractManifest()
 	const FVergilSupportedContractManifest& Manifest = GetSupportedContractManifest();
 
 	TArray<FString> Lines;
-	Lines.Reserve(6 + Manifest.SupportedDescriptors.Num());
+	Lines.Reserve(8 + Manifest.NodeSupportMatrix.Num() + Manifest.SupportedDescriptors.Num());
 	Lines.Add(Manifest.ToDisplayString());
 	Lines.Add(FString::Printf(TEXT("pluginSemanticVersion: %s"), *Manifest.PluginSemanticVersion));
 	Lines.Add(FString::Printf(TEXT("pluginDescriptorVersion: %d"), Manifest.PluginDescriptorVersion));
@@ -671,6 +905,12 @@ FString Vergil::DescribeSupportedContractManifest()
 	Lines.Add(FString::Printf(TEXT("typeCategories: %s"), *JoinStringArray(Manifest.SupportedTypeCategories)));
 	Lines.Add(FString::Printf(TEXT("containerTypes: %s"), *JoinStringArray(Manifest.SupportedContainerTypes)));
 	Lines.Add(FString::Printf(TEXT("commandTypes: %s"), *JoinNameArray(Manifest.SupportedCommandTypes)));
+	Lines.Add(FString::Printf(TEXT("nodeSupportMatrixSummary: %s"), *Manifest.NodeSupportMatrixSummary.ToDisplayString()));
+	Lines.Add(TEXT("nodeSupportMatrix:"));
+	for (const FVergilNodeSupportMatrixEntry& Entry : Manifest.NodeSupportMatrix)
+	{
+		Lines.Add(FString::Printf(TEXT("- %s"), *Entry.ToDisplayString()));
+	}
 	Lines.Add(TEXT("descriptors:"));
 	for (const FVergilSupportedDescriptorContract& Contract : Manifest.SupportedDescriptors)
 	{
@@ -703,6 +943,20 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 		WriteStringArray(*Writer, TEXT("supportedTypeCategories"), Manifest.SupportedTypeCategories);
 		WriteStringArray(*Writer, TEXT("supportedContainerTypes"), Manifest.SupportedContainerTypes);
 		WriteNameArray(*Writer, TEXT("supportedCommandTypes"), Manifest.SupportedCommandTypes);
+		Writer->WriteObjectStart(TEXT("nodeSupportMatrixSummary"));
+		Writer->WriteValue(TEXT("totalFamilies"), Manifest.NodeSupportMatrixSummary.TotalFamilies);
+		Writer->WriteValue(TEXT("supportedFamilies"), Manifest.NodeSupportMatrixSummary.SupportedFamilies);
+		Writer->WriteValue(TEXT("unsupportedFamilies"), Manifest.NodeSupportMatrixSummary.UnsupportedFamilies);
+		Writer->WriteValue(TEXT("genericNodeSpawnerFamilies"), Manifest.NodeSupportMatrixSummary.GenericNodeSpawnerFamilies);
+		Writer->WriteValue(TEXT("specializedHandlerFamilies"), Manifest.NodeSupportMatrixSummary.SpecializedHandlerFamilies);
+		Writer->WriteValue(TEXT("directLoweringFamilies"), Manifest.NodeSupportMatrixSummary.DirectLoweringFamilies);
+		Writer->WriteObjectEnd();
+		Writer->WriteArrayStart(TEXT("nodeSupportMatrix"));
+		for (const FVergilNodeSupportMatrixEntry& Entry : Manifest.NodeSupportMatrix)
+		{
+			WriteNodeSupportMatrixEntryJson(*Writer, Entry);
+		}
+		Writer->WriteArrayEnd();
 		Writer->WriteArrayStart(TEXT("supportedDescriptors"));
 		for (const FVergilSupportedDescriptorContract& Contract : Manifest.SupportedDescriptors)
 		{
@@ -730,6 +984,20 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 	WriteStringArray(*Writer, TEXT("supportedTypeCategories"), Manifest.SupportedTypeCategories);
 	WriteStringArray(*Writer, TEXT("supportedContainerTypes"), Manifest.SupportedContainerTypes);
 	WriteNameArray(*Writer, TEXT("supportedCommandTypes"), Manifest.SupportedCommandTypes);
+	Writer->WriteObjectStart(TEXT("nodeSupportMatrixSummary"));
+	Writer->WriteValue(TEXT("totalFamilies"), Manifest.NodeSupportMatrixSummary.TotalFamilies);
+	Writer->WriteValue(TEXT("supportedFamilies"), Manifest.NodeSupportMatrixSummary.SupportedFamilies);
+	Writer->WriteValue(TEXT("unsupportedFamilies"), Manifest.NodeSupportMatrixSummary.UnsupportedFamilies);
+	Writer->WriteValue(TEXT("genericNodeSpawnerFamilies"), Manifest.NodeSupportMatrixSummary.GenericNodeSpawnerFamilies);
+	Writer->WriteValue(TEXT("specializedHandlerFamilies"), Manifest.NodeSupportMatrixSummary.SpecializedHandlerFamilies);
+	Writer->WriteValue(TEXT("directLoweringFamilies"), Manifest.NodeSupportMatrixSummary.DirectLoweringFamilies);
+	Writer->WriteObjectEnd();
+	Writer->WriteArrayStart(TEXT("nodeSupportMatrix"));
+	for (const FVergilNodeSupportMatrixEntry& Entry : Manifest.NodeSupportMatrix)
+	{
+		WriteNodeSupportMatrixEntryJson(*Writer, Entry);
+	}
+	Writer->WriteArrayEnd();
 	Writer->WriteArrayStart(TEXT("supportedDescriptors"));
 	for (const FVergilSupportedDescriptorContract& Contract : Manifest.SupportedDescriptors)
 	{
@@ -739,6 +1007,29 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 	Writer->WriteObjectEnd();
 	Writer->Close();
 	return SerializedManifest;
+}
+
+FString Vergil::DescribeNodeSupportMatrixAsMarkdownTable()
+{
+	const FVergilSupportedContractManifest& Manifest = GetSupportedContractManifest();
+
+	TArray<FString> Lines;
+	Lines.Reserve(2 + Manifest.NodeSupportMatrix.Num());
+	Lines.Add(TEXT("| Family | Coverage | Handling | Descriptor coverage | Notes |"));
+	Lines.Add(TEXT("| --- | --- | --- | --- | --- |"));
+
+	for (const FVergilNodeSupportMatrixEntry& Entry : Manifest.NodeSupportMatrix)
+	{
+		Lines.Add(FString::Printf(
+			TEXT("| %s | %s | %s | %s | %s |"),
+			*EscapeMarkdownTableCell(Entry.Family),
+			*FormatMarkdownInlineCode(GetNodeSupportCoverageName(Entry.Coverage)),
+			*FormatMarkdownInlineCode(GetNodeSupportHandlingName(Entry.Handling)),
+			*FormatMarkdownStringArray(Entry.DescriptorCoverage),
+			*EscapeMarkdownTableCell(Entry.Notes.IsEmpty() ? TEXT("none") : Entry.Notes)));
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
 }
 
 FString Vergil::DescribeSupportedDescriptorContractsAsMarkdownTable()
