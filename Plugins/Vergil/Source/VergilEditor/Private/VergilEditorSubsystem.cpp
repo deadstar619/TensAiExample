@@ -128,7 +128,12 @@ namespace
 		Result.Statistics.bExecutionAttempted = true;
 		Result.Statistics.bExecutionUsedReturnedCommandPlan = true;
 		++Result.Statistics.ApplyInvocationCount;
-		Result.bApplied = Executor.Execute(Blueprint, Result.Commands, Result.Diagnostics, &Result.ExecutedCommandCount);
+		Result.bApplied = Executor.Execute(
+			Blueprint,
+			Result.Commands,
+			Result.Diagnostics,
+			&Result.ExecutedCommandCount,
+			&Result.Statistics.TransactionAudit);
 		RefreshCompileResultState(Result, bInferTargetGraphName);
 		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 		LogCompileResultMetadata(MetadataLabel, Result);

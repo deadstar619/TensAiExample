@@ -4407,6 +4407,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilTransactionAuditTest,
+	"Vergil.Scaffold.TransactionAudit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilDryRunApplyPlanningParityTest,
 	"Vergil.Scaffold.DryRunApplyPlanningParity",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -5729,6 +5734,7 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Dry-run compile should not report execution attempted."), CompileResult.Statistics.bExecutionAttempted);
 	TestTrue(TEXT("Compiler output should always record normalized command plans."), CompileResult.Statistics.bCommandPlanNormalized);
 	TestFalse(TEXT("Dry-run compile should not report execution using the returned plan."), CompileResult.Statistics.bExecutionUsedReturnedCommandPlan);
+	TestFalse(TEXT("Dry-run compile should not record a transaction audit."), CompileResult.Statistics.TransactionAudit.bRecorded);
 	TestEqual(TEXT("Dry-run compile should record one planning invocation."), CompileResult.Statistics.PlanningInvocationCount, 1);
 	TestEqual(TEXT("Dry-run compile should record zero apply invocations."), CompileResult.Statistics.ApplyInvocationCount, 0);
 	TestEqual(TEXT("Compile metadata should count target-graph nodes."), CompileResult.Statistics.SourceNodeCount, 1);
@@ -5810,6 +5816,12 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Compile+apply metadata should retain normalized command-plan state."), ApplyResult.Statistics.bCommandPlanNormalized);
 	TestEqual(TEXT("Compile+apply metadata should record one planning invocation."), ApplyResult.Statistics.PlanningInvocationCount, 1);
 	TestEqual(TEXT("Compile+apply metadata should record one apply invocation."), ApplyResult.Statistics.ApplyInvocationCount, 1);
+	TestTrue(TEXT("Compile+apply metadata should record a transaction audit."), ApplyResult.Statistics.TransactionAudit.bRecorded);
+	TestTrue(TEXT("Compile+apply metadata should record an opened scoped transaction."), ApplyResult.Statistics.TransactionAudit.bOpenedScopedTransaction);
+	TestEqual(TEXT("Compile+apply transaction audits should retain the Vergil transaction context."), ApplyResult.Statistics.TransactionAudit.TransactionContext, FString(TEXT("Vergil")));
+	TestEqual(TEXT("Compile+apply transaction audits should retain the transaction title."), ApplyResult.Statistics.TransactionAudit.TransactionTitle, FString(TEXT("Vergil Execute Command Plan")));
+	TestTrue(TEXT("Compile+apply transaction audits should expose a next undo entry after apply."), ApplyResult.Statistics.TransactionAudit.AfterState.NextUndoTransactionId.IsValid());
+	TestTrue(TEXT("Compile+apply transaction audits should report the Blueprint in the undo buffer after apply."), ApplyResult.Statistics.TransactionAudit.AfterState.bBlueprintReferencedByUndoBuffer);
 	TestEqual(TEXT("Compile+apply metadata should preserve the default target graph."), ApplyResult.Statistics.TargetGraphName, FName(TEXT("EventGraph")));
 	TestEqual(TEXT("Compile+apply metadata should count the authored comment node."), ApplyResult.Statistics.SourceNodeCount, 1);
 	TestEqual(TEXT("Compile+apply metadata should keep planned command counts in sync with returned commands."), ApplyResult.Statistics.PlannedCommandCount, ApplyResult.Commands.Num());
@@ -5818,6 +5830,62 @@ bool FVergilCompileResultMetadataTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Compile+apply metadata should retain a stable command-plan fingerprint."), ApplyResult.Statistics.CommandPlanFingerprint.IsEmpty());
 
 	FVergilNodeRegistry::Get().Reset();
+	return true;
+}
+
+bool FVergilTransactionAuditTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created for transaction-audit coverage."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FString OriginalDescription = Blueprint->BlueprintDescription;
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Game/Tests/BP_TransactionAudit");
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Transaction audit coverage"));
+
+	const FVergilCompileResult ApplyResult = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+	TestTrue(TEXT("Transaction-audit apply coverage should succeed."), ApplyResult.bSucceeded);
+	TestTrue(TEXT("Transaction-audit apply coverage should apply commands."), ApplyResult.bApplied);
+	if (!ApplyResult.bSucceeded || !ApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	const FVergilTransactionAudit& TransactionAudit = ApplyResult.Statistics.TransactionAudit;
+	TestTrue(TEXT("Transaction audits should be recorded for compile+apply."), TransactionAudit.bRecorded);
+	TestFalse(TEXT("Transaction-audit coverage should not nest into an already-active transaction."), TransactionAudit.bNestedInActiveTransaction);
+	TestTrue(TEXT("Transaction-audit coverage should open a scoped editor transaction."), TransactionAudit.bOpenedScopedTransaction);
+	TestEqual(TEXT("Transaction-audit coverage should preserve the Vergil transaction context."), TransactionAudit.TransactionContext, FString(TEXT("Vergil")));
+	TestEqual(TEXT("Transaction-audit coverage should preserve the transaction title."), TransactionAudit.TransactionTitle, FString(TEXT("Vergil Execute Command Plan")));
+	TestEqual(TEXT("Transaction-audit coverage should preserve the primary Blueprint object path."), TransactionAudit.PrimaryObjectPath, Blueprint->GetPathName());
+	TestTrue(TEXT("Transaction-audit coverage should expose an undo entry after apply."), TransactionAudit.AfterState.NextUndoTransactionId.IsValid());
+	TestEqual(TEXT("The next undo title should match the Vergil transaction title."), TransactionAudit.AfterState.NextUndoTitle, TransactionAudit.TransactionTitle);
+	TestEqual(TEXT("The next undo context should match the Vergil transaction context."), TransactionAudit.AfterState.NextUndoContext, TransactionAudit.TransactionContext);
+	TestEqual(TEXT("The next undo primary object should match the Blueprint path."), TransactionAudit.AfterState.NextUndoPrimaryObjectPath, Blueprint->GetPathName());
+	TestTrue(TEXT("Transaction-audit coverage should keep the Blueprint referenced by the undo buffer after apply."), TransactionAudit.AfterState.bBlueprintReferencedByUndoBuffer);
+	TestFalse(TEXT("Transaction-audit coverage should leave no redo entry immediately after apply."), TransactionAudit.AfterState.bCanRedo);
+	TestTrue(TEXT("Transaction-audit coverage should make the apply result inspectable through compile-result JSON."), Vergil::SerializeCompileResult(ApplyResult, false).Contains(TEXT("\"transactionAudit\":{")));
+	TestTrue(TEXT("Transaction-audit coverage should surface the audit in compile-result descriptions."), Vergil::DescribeCompileResult(ApplyResult).Contains(TEXT("transaction={recorded=true")));
+	TestEqual(TEXT("Applying the transaction-audit document should write the authored Blueprint description."), Blueprint->BlueprintDescription, FString(TEXT("Transaction audit coverage")));
+
+	TestTrue(TEXT("Undo should succeed for the recorded Vergil transaction."), GEditor->UndoTransaction());
+	TestEqual(TEXT("Undo should restore the original Blueprint description."), Blueprint->BlueprintDescription, OriginalDescription);
+
+	TestTrue(TEXT("Redo should succeed for the recorded Vergil transaction."), GEditor->RedoTransaction());
+	TestEqual(TEXT("Redo should restore the authored Blueprint description."), Blueprint->BlueprintDescription, FString(TEXT("Transaction audit coverage")));
+
 	return true;
 }
 

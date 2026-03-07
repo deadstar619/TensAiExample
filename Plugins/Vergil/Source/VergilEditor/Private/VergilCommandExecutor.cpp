@@ -8,6 +8,7 @@
 #include "EdGraph/EdGraphSchema.h"
 #include "EdGraphNode_Comment.h"
 #include "Engine/Blueprint.h"
+#include "Editor.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddComponentByClass.h"
 #include "K2Node_AddDelegate.h"
@@ -51,6 +52,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Editor/Transactor.h"
 #include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
 #include "VergilLog.h"
@@ -75,6 +77,7 @@ namespace
 	const FName GetClassDefaultsClassPinName(TEXT("Class"));
 	const FName ConvertAssetInputPinName(TEXT("Input"));
 	const FName ConvertAssetOutputPinName(TEXT("Output"));
+	const TCHAR* VergilTransactionContext = TEXT("Vergil");
 
 	struct FVergilExecutionState
 	{
@@ -132,6 +135,66 @@ namespace
 		bool bIsArray = false;
 		bool bIsClassAsset = false;
 	};
+
+	FString GetOptionalObjectPath(const UObject* Object)
+	{
+		return Object != nullptr ? Object->GetPathName() : FString();
+	}
+
+	void PopulateTransactionSnapshotContext(
+		const FTransactionContext& TransactionContext,
+		FGuid& OutTransactionId,
+		FString& OutTitle,
+		FString& OutContext,
+		FString& OutPrimaryObjectPath)
+	{
+		OutTransactionId = TransactionContext.TransactionId;
+		OutTitle = TransactionContext.Title.ToString();
+		OutContext = TransactionContext.Context;
+		OutPrimaryObjectPath = GetOptionalObjectPath(TransactionContext.PrimaryObject);
+	}
+
+	FVergilUndoRedoSnapshot CaptureUndoRedoSnapshot(UBlueprint* Blueprint)
+	{
+		FVergilUndoRedoSnapshot Snapshot;
+		if (GEditor == nullptr || GEditor->Trans == nullptr)
+		{
+			return Snapshot;
+		}
+
+		UTransactor* const Transactor = GEditor->Trans;
+		Snapshot.QueueLength = Transactor->GetQueueLength();
+		Snapshot.UndoCount = Transactor->GetUndoCount();
+		Snapshot.bBlueprintReferencedByUndoBuffer = Blueprint != nullptr && FKismetEditorUtilities::IsReferencedByUndoBuffer(Blueprint);
+
+		FText IgnoredReason;
+		Snapshot.bCanUndo = Transactor->CanUndo(&IgnoredReason);
+		Snapshot.bCanRedo = Transactor->CanRedo(&IgnoredReason);
+
+		if (Snapshot.bCanUndo)
+		{
+			const FTransactionContext UndoContext = Transactor->GetUndoContext(false);
+			PopulateTransactionSnapshotContext(
+				UndoContext,
+				Snapshot.NextUndoTransactionId,
+				Snapshot.NextUndoTitle,
+				Snapshot.NextUndoContext,
+				Snapshot.NextUndoPrimaryObjectPath);
+		}
+
+		if (Snapshot.bCanRedo)
+		{
+			const FTransactionContext RedoContext = Transactor->GetRedoContext();
+			PopulateTransactionSnapshotContext(
+				RedoContext,
+				Snapshot.NextRedoTransactionId,
+				Snapshot.NextRedoTitle,
+				Snapshot.NextRedoContext,
+				Snapshot.NextRedoPrimaryObjectPath);
+		}
+
+		return Snapshot;
+	}
 
 	const FVergilStandardMacroCommand* FindStandardMacroCommand(const FName CommandName)
 	{
@@ -6839,11 +6902,17 @@ bool FVergilCommandExecutor::Execute(
 	UBlueprint* Blueprint,
 	const TArray<FVergilCompilerCommand>& Commands,
 	TArray<FVergilDiagnostic>& Diagnostics,
-	int32* OutExecutedCommandCount) const
+	int32* OutExecutedCommandCount,
+	FVergilTransactionAudit* OutTransactionAudit) const
 {
 	if (OutExecutedCommandCount != nullptr)
 	{
 		*OutExecutedCommandCount = 0;
+	}
+
+	if (OutTransactionAudit != nullptr)
+	{
+		*OutTransactionAudit = FVergilTransactionAudit();
 	}
 
 	TArray<FVergilCompilerCommand> OrderedCommands = Commands;
@@ -6854,8 +6923,17 @@ bool FVergilCommandExecutor::Execute(
 		return false;
 	}
 
-	FScopedTransaction Transaction(NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan"));
-	Blueprint->Modify();
+	if (OutTransactionAudit != nullptr)
+	{
+		OutTransactionAudit->bRecorded = true;
+		OutTransactionAudit->bNestedInActiveTransaction = GEditor != nullptr && GEditor->IsTransactionActive();
+		OutTransactionAudit->TransactionContext = VergilTransactionContext;
+		OutTransactionAudit->TransactionTitle = NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan").ToString();
+		OutTransactionAudit->PrimaryObjectPath = GetOptionalObjectPath(Blueprint);
+		OutTransactionAudit->BeforeState = CaptureUndoRedoSnapshot(Blueprint);
+	}
+
+	Blueprint->SetFlags(RF_Transactional);
 
 	FVergilExecutionState State;
 	bool bExecutedBlueprintDefinitionChange = false;
@@ -6863,6 +6941,7 @@ bool FVergilCommandExecutor::Execute(
 	bool bExecutedFinalizeChange = false;
 	bool bExecutedPostBlueprintCompileChange = false;
 	bool bExecutedExplicitCompile = false;
+	bool bSucceeded = true;
 
 	auto ExecuteSingleCommand = [&](const FVergilCompilerCommand& Command, bool& bOutChanged) -> bool
 	{
@@ -6997,95 +7076,54 @@ bool FVergilCommandExecutor::Execute(
 		return bCommandSucceeded;
 	};
 
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
 	{
-		if (!IsBlueprintDefinitionCommand(Command))
+		FScopedTransaction Transaction(
+			VergilTransactionContext,
+			NSLOCTEXT("Vergil", "ExecuteCommandPlan", "Vergil Execute Command Plan"),
+			Blueprint);
+		if (OutTransactionAudit != nullptr)
 		{
-			continue;
+			OutTransactionAudit->bOpenedScopedTransaction = Transaction.IsOutstanding();
 		}
 
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedBlueprintDefinitionChange |= bCommandChanged;
-	}
+		Blueprint->Modify();
 
-	if (bExecutedBlueprintDefinitionChange)
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-		FKismetEditorUtilities::CompileBlueprint(Blueprint);
-	}
-
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
-	{
-		if (IsBlueprintDefinitionCommand(Command)
-			|| IsPostBlueprintCompileCommand(Command)
-			|| IsPostCompileFinalizeCommand(Command)
-			|| IsExplicitCompileCommand(Command)
-			|| Command.Type == EVergilCommandType::ConnectPins)
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
 		{
-			continue;
+			if (!IsBlueprintDefinitionCommand(Command))
+			{
+				continue;
+			}
+
+			bool bCommandChanged = false;
+			ExecuteSingleCommand(Command, bCommandChanged);
+			bExecutedBlueprintDefinitionChange |= bCommandChanged;
 		}
 
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedGraphStructuralChange |= bCommandChanged;
-	}
-
-	RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
-
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
-	{
-		if (Command.Type != EVergilCommandType::ConnectPins || IsExecConnectionCommand(Command, State))
+		if (bExecutedBlueprintDefinitionChange)
 		{
-			continue;
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint);
 		}
 
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedGraphStructuralChange |= bCommandChanged;
-	}
-
-	RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
-
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
-	{
-		if (Command.Type != EVergilCommandType::ConnectPins || !IsExecConnectionCommand(Command, State))
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
 		{
-			continue;
+			if (IsBlueprintDefinitionCommand(Command)
+				|| IsPostBlueprintCompileCommand(Command)
+				|| IsPostCompileFinalizeCommand(Command)
+				|| IsExplicitCompileCommand(Command)
+				|| Command.Type == EVergilCommandType::ConnectPins)
+			{
+				continue;
+			}
+
+			bool bCommandChanged = false;
+			ExecuteSingleCommand(Command, bCommandChanged);
+			bExecutedGraphStructuralChange |= bCommandChanged;
 		}
-
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedGraphStructuralChange |= bCommandChanged;
-	}
-
-	if (bExecutedGraphStructuralChange)
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-		FKismetEditorUtilities::CompileBlueprint(Blueprint);
-		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
-	}
-
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
-	{
-		if (!IsPostCompileFinalizeCommand(Command))
-		{
-			continue;
-		}
-
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedFinalizeChange |= bCommandChanged;
-	}
-
-	if (bExecutedFinalizeChange)
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-		FKismetEditorUtilities::CompileBlueprint(Blueprint);
 
 		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
 
-		bool bReappliedAnyConnection = false;
 		for (const FVergilCompilerCommand& Command : OrderedCommands)
 		{
 			if (Command.Type != EVergilCommandType::ConnectPins || IsExecConnectionCommand(Command, State))
@@ -7095,7 +7133,7 @@ bool FVergilCommandExecutor::Execute(
 
 			bool bCommandChanged = false;
 			ExecuteSingleCommand(Command, bCommandChanged);
-			bReappliedAnyConnection |= bCommandChanged;
+			bExecutedGraphStructuralChange |= bCommandChanged;
 		}
 
 		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
@@ -7109,51 +7147,110 @@ bool FVergilCommandExecutor::Execute(
 
 			bool bCommandChanged = false;
 			ExecuteSingleCommand(Command, bCommandChanged);
-			bReappliedAnyConnection |= bCommandChanged;
+			bExecutedGraphStructuralChange |= bCommandChanged;
 		}
 
-		if (bReappliedAnyConnection)
+		if (bExecutedGraphStructuralChange)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint);
+			RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
+		}
+
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
+		{
+			if (!IsPostCompileFinalizeCommand(Command))
+			{
+				continue;
+			}
+
+			bool bCommandChanged = false;
+			ExecuteSingleCommand(Command, bCommandChanged);
+			bExecutedFinalizeChange |= bCommandChanged;
+		}
+
+		if (bExecutedFinalizeChange)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+			FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+			RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
+
+			bool bReappliedAnyConnection = false;
+			for (const FVergilCompilerCommand& Command : OrderedCommands)
+			{
+				if (Command.Type != EVergilCommandType::ConnectPins || IsExecConnectionCommand(Command, State))
+				{
+					continue;
+				}
+
+				bool bCommandChanged = false;
+				ExecuteSingleCommand(Command, bCommandChanged);
+				bReappliedAnyConnection |= bCommandChanged;
+			}
+
+			RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
+
+			for (const FVergilCompilerCommand& Command : OrderedCommands)
+			{
+				if (Command.Type != EVergilCommandType::ConnectPins || !IsExecConnectionCommand(Command, State))
+				{
+					continue;
+				}
+
+				bool bCommandChanged = false;
+				ExecuteSingleCommand(Command, bCommandChanged);
+				bReappliedAnyConnection |= bCommandChanged;
+			}
+
+			if (bReappliedAnyConnection)
+			{
+				FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			}
+		}
+
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
+		{
+			if (!IsExplicitCompileCommand(Command))
+			{
+				continue;
+			}
+
+			bool bCommandChanged = false;
+			ExecuteSingleCommand(Command, bCommandChanged);
+			bExecutedExplicitCompile |= bCommandChanged;
+		}
+
+		if (bExecutedExplicitCompile)
+		{
+			RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
+		}
+
+		for (const FVergilCompilerCommand& Command : OrderedCommands)
+		{
+			if (!IsPostBlueprintCompileCommand(Command))
+			{
+				continue;
+			}
+
+			bool bCommandChanged = false;
+			ExecuteSingleCommand(Command, bCommandChanged);
+			bExecutedPostBlueprintCompileChange |= bCommandChanged;
+		}
+
+		if (!bExecutedBlueprintDefinitionChange
+			&& !bExecutedGraphStructuralChange
+			&& !bExecutedFinalizeChange
+			&& !bExecutedPostBlueprintCompileChange
+			&& !bExecutedExplicitCompile)
 		{
 			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 		}
 	}
 
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
+	if (OutTransactionAudit != nullptr)
 	{
-		if (!IsExplicitCompileCommand(Command))
-		{
-			continue;
-		}
-
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedExplicitCompile |= bCommandChanged;
-	}
-
-	if (bExecutedExplicitCompile)
-	{
-		RefreshRegisteredPins(Blueprint, OrderedCommands, State, Diagnostics);
-	}
-
-	for (const FVergilCompilerCommand& Command : OrderedCommands)
-	{
-		if (!IsPostBlueprintCompileCommand(Command))
-		{
-			continue;
-		}
-
-		bool bCommandChanged = false;
-		ExecuteSingleCommand(Command, bCommandChanged);
-		bExecutedPostBlueprintCompileChange |= bCommandChanged;
-	}
-
-	if (!bExecutedBlueprintDefinitionChange
-		&& !bExecutedGraphStructuralChange
-		&& !bExecutedFinalizeChange
-		&& !bExecutedPostBlueprintCompileChange
-		&& !bExecutedExplicitCompile)
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		OutTransactionAudit->AfterState = CaptureUndoRedoSnapshot(Blueprint);
 	}
 
 	for (const FVergilDiagnostic& Diagnostic : Diagnostics)
@@ -7181,10 +7278,11 @@ bool FVergilCommandExecutor::Execute(
 					*EmittedDiagnostic.Code.ToString(),
 					*EmittedDiagnostic.Message);
 			}
-			return false;
+			bSucceeded = false;
+			break;
 		}
 	}
 
-	return true;
+	return bSucceeded;
 }
 

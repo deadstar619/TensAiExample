@@ -431,7 +431,7 @@ Tickets:
 - [x] `VGR-7002` Add deterministic auto-layout pass API
 - [x] `VGR-7003` Add explicit comment generation pass API
 - [x] `VGR-7004` Add document diff and command-plan preview tooling
-- `VGR-7005` Add stronger undo/redo transaction auditing
+- [x] `VGR-7005` Add stronger undo/redo transaction auditing
 - `VGR-7006` Expand developer settings for compiler/layout/validation behavior
 - [x] `VGR-7007` Add runtime/reflection inspection/discovery utilities
 
@@ -463,6 +463,12 @@ Session note for `VGR-7004` (2026-03-07):
 - Vergil now exposes a deterministic `Vergil.DocumentDiff` inspection contract through `Vergil::DiffGraphDocuments(...)`, `DescribeDocumentDiff(...)`, and `SerializeDocumentDiff(...)`, reporting added, removed, and modified canonical-document paths plus before/after fingerprints without depending on Blueprint asset scraping.
 - `UVergilEditorSubsystem` now exposes `PreviewCompileRequest(...)`, `PreviewDocument(...)`, and `PreviewDocumentToGraph(...)`, returning a versioned `Vergil.CommandPlanPreview` payload that captures the authored request document, the effective post-migration working document, the document diff between them, and the existing dry-run `FVergilCompileResult`.
 - `UVergilAgentSubsystem` mirrors the new diff/preview inspection helpers, and `Vergil.Scaffold.DiffPreviewTooling` now covers namespace, editor-subsystem, and agent-subsystem parity for document diffs plus command-plan preview parity against the existing dry-run compile path.
+
+Session note for `VGR-7005` (2026-03-07):
+
+- `FVergilCompileResult.Statistics` now carries a code-backed `TransactionAudit` payload for apply paths, capturing whether Vergil opened a scoped editor transaction plus before/after undo-stack snapshots including queue length, undo count, next undo/redo transaction ids, titles, contexts, primary objects, and target-Blueprint undo-buffer presence.
+- `FVergilCommandExecutor::Execute(...)` now opens editor transactions with the explicit Vergil context and primary Blueprint object instead of the anonymous scoped-transaction path, which makes the resulting undo entry auditable through the returned compile/apply result and the editor's own undo history.
+- `Vergil.Scaffold.CompileResultMetadata` now asserts the new audit surface, and `Vergil.Scaffold.TransactionAudit` now proves the recorded transaction can be undone and redone end to end under the `UE_5.7` editor pipeline.
 
 Session note for `VGR-7007` (2026-03-07):
 
@@ -577,11 +583,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-7005`
-2. `VGR-8006`
-3. `VGR-6004`
-4. `VGR-6005`
-5. `VGR-6006`
+1. `VGR-8006`
+2. `VGR-6004`
+3. `VGR-6005`
+4. `VGR-6006`
+5. `VGR-7006`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

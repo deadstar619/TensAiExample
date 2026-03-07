@@ -13,5 +13,6 @@ public:
 		UBlueprint* Blueprint,
 		const TArray<FVergilCompilerCommand>& Commands,
 		TArray<FVergilDiagnostic>& Diagnostics,
-		int32* OutExecutedCommandCount = nullptr) const;
+		int32* OutExecutedCommandCount = nullptr,
+		FVergilTransactionAudit* OutTransactionAudit = nullptr) const;
 };

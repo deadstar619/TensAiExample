@@ -403,6 +403,41 @@ namespace
 	}
 
 	template <typename PrintPolicy>
+	void WriteUndoRedoSnapshotJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const TCHAR* FieldName, const FVergilUndoRedoSnapshot& Snapshot)
+	{
+		Writer.WriteObjectStart(FieldName);
+		Writer.WriteValue(TEXT("queueLength"), Snapshot.QueueLength);
+		Writer.WriteValue(TEXT("undoCount"), Snapshot.UndoCount);
+		Writer.WriteValue(TEXT("canUndo"), Snapshot.bCanUndo);
+		Writer.WriteValue(TEXT("canRedo"), Snapshot.bCanRedo);
+		Writer.WriteValue(TEXT("blueprintReferencedByUndoBuffer"), Snapshot.bBlueprintReferencedByUndoBuffer);
+		Writer.WriteValue(TEXT("nextUndoTransactionId"), LexGuidString(Snapshot.NextUndoTransactionId));
+		Writer.WriteValue(TEXT("nextUndoTitle"), Snapshot.NextUndoTitle);
+		Writer.WriteValue(TEXT("nextUndoContext"), Snapshot.NextUndoContext);
+		Writer.WriteValue(TEXT("nextUndoPrimaryObjectPath"), Snapshot.NextUndoPrimaryObjectPath);
+		Writer.WriteValue(TEXT("nextRedoTransactionId"), LexGuidString(Snapshot.NextRedoTransactionId));
+		Writer.WriteValue(TEXT("nextRedoTitle"), Snapshot.NextRedoTitle);
+		Writer.WriteValue(TEXT("nextRedoContext"), Snapshot.NextRedoContext);
+		Writer.WriteValue(TEXT("nextRedoPrimaryObjectPath"), Snapshot.NextRedoPrimaryObjectPath);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
+	void WriteTransactionAuditJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilTransactionAudit& TransactionAudit)
+	{
+		Writer.WriteObjectStart(TEXT("transactionAudit"));
+		Writer.WriteValue(TEXT("recorded"), TransactionAudit.bRecorded);
+		Writer.WriteValue(TEXT("nestedInActiveTransaction"), TransactionAudit.bNestedInActiveTransaction);
+		Writer.WriteValue(TEXT("openedScopedTransaction"), TransactionAudit.bOpenedScopedTransaction);
+		Writer.WriteValue(TEXT("transactionContext"), TransactionAudit.TransactionContext);
+		Writer.WriteValue(TEXT("transactionTitle"), TransactionAudit.TransactionTitle);
+		Writer.WriteValue(TEXT("primaryObjectPath"), TransactionAudit.PrimaryObjectPath);
+		WriteUndoRedoSnapshotJson(Writer, TEXT("before"), TransactionAudit.BeforeState);
+		WriteUndoRedoSnapshotJson(Writer, TEXT("after"), TransactionAudit.AfterState);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
 	void WriteCompileStatisticsJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilCompileStatistics& Statistics)
 	{
 		Writer.WriteObjectStart(TEXT("statistics"));
@@ -418,6 +453,7 @@ namespace
 		Writer.WriteValue(TEXT("executionUsedReturnedCommandPlan"), Statistics.bExecutionUsedReturnedCommandPlan);
 		Writer.WriteValue(TEXT("planningInvocationCount"), Statistics.PlanningInvocationCount);
 		Writer.WriteValue(TEXT("applyInvocationCount"), Statistics.ApplyInvocationCount);
+		WriteTransactionAuditJson(Writer, Statistics.TransactionAudit);
 		Writer.WriteValue(TEXT("sourceNodeCount"), Statistics.SourceNodeCount);
 		Writer.WriteValue(TEXT("sourceEdgeCount"), Statistics.SourceEdgeCount);
 		Writer.WriteValue(TEXT("plannedCommandCount"), Statistics.PlannedCommandCount);
@@ -778,6 +814,43 @@ FString FVergilCompilePassRecord::ToDisplayString() const
 		PlannedCommandCount);
 }
 
+FString FVergilUndoRedoSnapshot::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("queue=%d undoCount=%d canUndo=%s canRedo=%s undoBufferRef=%s nextUndo={id=%s title=\"%s\" context=\"%s\" primary=\"%s\"} nextRedo={id=%s title=\"%s\" context=\"%s\" primary=\"%s\"}"),
+		QueueLength,
+		UndoCount,
+		LexBoolString(bCanUndo),
+		LexBoolString(bCanRedo),
+		LexBoolString(bBlueprintReferencedByUndoBuffer),
+		NextUndoTransactionId.IsValid() ? *LexGuidString(NextUndoTransactionId) : TEXT("<none>"),
+		*EscapeDisplayValue(NextUndoTitle),
+		*EscapeDisplayValue(NextUndoContext),
+		NextUndoPrimaryObjectPath.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(NextUndoPrimaryObjectPath),
+		NextRedoTransactionId.IsValid() ? *LexGuidString(NextRedoTransactionId) : TEXT("<none>"),
+		*EscapeDisplayValue(NextRedoTitle),
+		*EscapeDisplayValue(NextRedoContext),
+		NextRedoPrimaryObjectPath.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(NextRedoPrimaryObjectPath));
+}
+
+FString FVergilTransactionAudit::ToDisplayString() const
+{
+	if (!bRecorded)
+	{
+		return TEXT("recorded=false");
+	}
+
+	return FString::Printf(
+		TEXT("recorded=true nested=%s opened=%s context=\"%s\" title=\"%s\" primary=\"%s\" before={%s} after={%s}"),
+		LexBoolString(bNestedInActiveTransaction),
+		LexBoolString(bOpenedScopedTransaction),
+		*EscapeDisplayValue(TransactionContext),
+		*EscapeDisplayValue(TransactionTitle),
+		PrimaryObjectPath.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(PrimaryObjectPath),
+		*BeforeState.ToDisplayString(),
+		*AfterState.ToDisplayString());
+}
+
 int32 FVergilCompileStatistics::GetCompletedPassCount() const
 {
 	return CompletedPassNames.Num();
@@ -856,7 +929,7 @@ void FVergilCompileStatistics::SetTargetDocumentStatistics(const FVergilGraphDoc
 FString FVergilCompileStatistics::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("graph=%s schema=%d->%d autoLayout=%s comments=%s applyRequested=%s executionAttempted=%s normalized=%s fingerprint=%s planCalls=%d applyCalls=%d reusedPlan=%s nodes=%d edges=%d planned=%d phases={blueprint=%d graph=%d connections=%d finalize=%d compile=%d post=%d} passes=%d last=%s failed=%s"),
+		TEXT("graph=%s schema=%d->%d autoLayout=%s comments=%s applyRequested=%s executionAttempted=%s normalized=%s fingerprint=%s planCalls=%d applyCalls=%d reusedPlan=%s transaction={%s} nodes=%d edges=%d planned=%d phases={blueprint=%d graph=%d connections=%d finalize=%d compile=%d post=%d} passes=%d last=%s failed=%s"),
 		*LexOptionalNameString(TargetGraphName),
 		RequestedSchemaVersion,
 		EffectiveSchemaVersion,
@@ -869,6 +942,7 @@ FString FVergilCompileStatistics::ToDisplayString() const
 		PlanningInvocationCount,
 		ApplyInvocationCount,
 		LexBoolString(bExecutionUsedReturnedCommandPlan),
+		*TransactionAudit.ToDisplayString(),
 		SourceNodeCount,
 		SourceEdgeCount,
 		PlannedCommandCount,

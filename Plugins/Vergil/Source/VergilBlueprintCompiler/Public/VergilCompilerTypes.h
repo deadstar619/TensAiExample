@@ -259,6 +259,85 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompilePassRecord
 };
 
 USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilUndoRedoSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 QueueLength = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	int32 UndoCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bCanUndo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bCanRedo = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bBlueprintReferencedByUndoBuffer = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid NextUndoTransactionId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextUndoTitle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextUndoContext;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextUndoPrimaryObjectPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FGuid NextRedoTransactionId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextRedoTitle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextRedoContext;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString NextRedoPrimaryObjectPath;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
+struct VERGILBLUEPRINTCOMPILER_API FVergilTransactionAudit
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bRecorded = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bNestedInActiveTransaction = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bOpenedScopedTransaction = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString TransactionContext;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString TransactionTitle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString PrimaryObjectPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilUndoRedoSnapshot BeforeState;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilUndoRedoSnapshot AfterState;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILBLUEPRINTCOMPILER_API FVergilCompileStatistics
 {
 	GENERATED_BODY()
@@ -298,6 +377,9 @@ struct VERGILBLUEPRINTCOMPILER_API FVergilCompileStatistics
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	int32 ApplyInvocationCount = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilTransactionAudit TransactionAudit;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	int32 SourceNodeCount = 0;
