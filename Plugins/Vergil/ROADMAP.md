@@ -593,7 +593,7 @@ Tickets:
 - `VGR-9003` Add large-graph performance benchmarks
 - [x] `VGR-9004` Add schema migration tests
 - [x] `VGR-9005` Add source-control diff tests
-- `VGR-9006` Add crash/recovery tests around compile/apply
+- [x] `VGR-9006` Add crash/recovery tests around compile/apply
 - [x] `VGR-9007` Add semantic versioning and migration docs
 - `VGR-9008` Add extension docs for custom handlers
 - `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
@@ -625,6 +625,12 @@ Session note for `VGR-9005` (2026-03-07):
 - The source-control diff fixture currently proves reviewed persisted changes across Blueprint metadata, variable defaults plus metadata, component transform and template properties, class defaults, primary event-graph layout, construction-script layout, and the resulting dry-run command-plan fingerprints.
 - The same test also cross-checks those persisted review-line changes against `Vergil.DocumentDiff`, asserting the update remains a modified-only canonical document diff with the expected metadata, variable, component, class-default, and node-position paths.
 - `Build.bat` `Development` succeeded, targeted `Vergil.Scaffold.SourceControlDiff` passed `1/1`, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `100/100` with zero Vergil, Blueprint, or automation warnings in this workspace.
+
+Session note for `VGR-9006` (2026-03-07):
+
+- `Vergil.Scaffold.CompileApplyRecoveryRoundtrip` now authors a real persisted `/Game/Tests/BP_CompileApplyRecovery_*` Blueprint baseline through the public compile/apply surface, then compiles a second update plan, forces a late apply failure with an injected invalid class-default command, and verifies Vergil's transaction recovery rolls the asset back before save.
+- The same regression explicitly saves and reloads the recovered Blueprint package after the failed apply, proving the rolled-back baseline description and stable variable survive the restart boundary while the transient failed-apply variable never persists to disk or the recompiled generated class.
+- `Build.bat` `Development` succeeded, targeted `CompileApplyRecoveryRoundtrip` passed `1/1`, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `101/101` with zero Vergil, Blueprint, or automation warnings in this workspace.
 
 Session note for `VGR-9007` (2026-03-06):
 
@@ -658,12 +664,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9006`
-2. `VGR-9003`
-3. `VGR-9008`
-4. `VGR-9009`
+1. `VGR-9008`
+2. `VGR-9009`
+3. `VGR-9003`
 
-This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
+This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus restart-boundary failed-apply recovery coverage and checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

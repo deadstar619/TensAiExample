@@ -4668,6 +4668,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilCompileApplyRecoveryRoundtripTest,
+	"Vergil.Scaffold.CompileApplyRecoveryRoundtrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilDryRunApplyPlanningParityTest,
 	"Vergil.Scaffold.DryRunApplyPlanningParity",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -6427,6 +6432,228 @@ bool FVergilPartialApplyRecoveryTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Partial-apply recovery should surface the recovery audit in compile-result descriptions."), Vergil::DescribeCompileResult(Result).Contains(TEXT("recovery={required=true attempted=true succeeded=true")));
 
 	return true;
+}
+
+bool FVergilCompileApplyRecoveryRoundtripTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FScopedPersistentTestBlueprint PersistentBlueprint(TEXT("BP_CompileApplyRecovery"));
+	UBlueprint* const Blueprint = PersistentBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Persistent recovery-roundtrip Blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	const FName StableVariableName(TEXT("StableFlag"));
+	const FName RecoveredTransientVariableName(TEXT("RecoveredTransientFlag"));
+	const FString BaselineDescription(TEXT("Persisted compile/apply recovery baseline."));
+	const FString UpdatedDescription(TEXT("Should be rolled back before save/reload."));
+	const FString StableTooltip(TEXT("Persists after failed apply recovery and reload."));
+	const FString RecoveryCategory(TEXT("Recovery"));
+
+	FVergilVariableDefinition StableVariable;
+	StableVariable.Name = StableVariableName;
+	StableVariable.Type.PinCategory = TEXT("bool");
+	StableVariable.DefaultValue = TEXT("true");
+	StableVariable.Category = RecoveryCategory;
+	StableVariable.Metadata.Add(TEXT("Tooltip"), StableTooltip);
+
+	FVergilGraphDocument BaselineDocument;
+	BaselineDocument.BlueprintPath = PersistentBlueprint.PackagePath;
+	BaselineDocument.Metadata.Add(TEXT("BlueprintDisplayName"), TEXT("Vergil Compile Apply Recovery"));
+	BaselineDocument.Metadata.Add(TEXT("BlueprintDescription"), BaselineDescription);
+	BaselineDocument.Variables.Add(StableVariable);
+
+	auto MakePhaseMessage = [](const TCHAR* Phase, const TCHAR* Message) -> FString
+	{
+		return FString::Printf(TEXT("%s: %s"), Phase, Message);
+	};
+
+	auto VerifyRecoveredBlueprintState = [&](UBlueprint* CandidateBlueprint, const TCHAR* Phase) -> bool
+	{
+		TestNotNull(*MakePhaseMessage(Phase, TEXT("Blueprint should exist.")), CandidateBlueprint);
+		if (CandidateBlueprint == nullptr)
+		{
+			return false;
+		}
+
+		TestEqual(*MakePhaseMessage(Phase, TEXT("Blueprint description should remain on the baseline value.")),
+			CandidateBlueprint->BlueprintDescription,
+			BaselineDescription);
+
+		const FBPVariableDescription* const StableVariableDescription = FindBlueprintVariableDescription(CandidateBlueprint, StableVariableName);
+		const FBPVariableDescription* const RecoveredTransientVariableDescription = FindBlueprintVariableDescription(CandidateBlueprint, RecoveredTransientVariableName);
+		TestNotNull(*MakePhaseMessage(Phase, TEXT("Stable variable should still exist after recovery.")), StableVariableDescription);
+		TestNull(*MakePhaseMessage(Phase, TEXT("Failed-apply transient variable should not survive recovery.")), RecoveredTransientVariableDescription);
+		if (StableVariableDescription == nullptr || RecoveredTransientVariableDescription != nullptr)
+		{
+			return false;
+		}
+
+		TestTrue(*MakePhaseMessage(Phase, TEXT("Stable variable should remain a bool.")),
+			StableVariableDescription->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+		TestEqual(*MakePhaseMessage(Phase, TEXT("Stable variable category should persist.")),
+			FBlueprintEditorUtils::GetBlueprintVariableCategory(CandidateBlueprint, StableVariableName, nullptr).ToString(),
+			RecoveryCategory);
+
+		FString TooltipValue;
+		TestTrue(*MakePhaseMessage(Phase, TEXT("Stable variable tooltip should still exist.")),
+			FBlueprintEditorUtils::GetBlueprintVariableMetaData(CandidateBlueprint, StableVariableName, nullptr, TEXT("Tooltip"), TooltipValue));
+		TestEqual(*MakePhaseMessage(Phase, TEXT("Stable variable tooltip should persist.")),
+			TooltipValue,
+			StableTooltip);
+		return true;
+	};
+
+	const FVergilCompileResult BaselineApplyResult = EditorSubsystem->CompileDocument(Blueprint, BaselineDocument, false, false, true);
+	TestTrue(TEXT("Baseline compile/apply should succeed before crash-recovery verification."), BaselineApplyResult.bSucceeded);
+	TestTrue(TEXT("Baseline compile/apply should mutate the persistent Blueprint."), BaselineApplyResult.bApplied);
+	if (!BaselineApplyResult.bSucceeded || !BaselineApplyResult.bApplied)
+	{
+		return false;
+	}
+
+	if (!VerifyRecoveredBlueprintState(Blueprint, TEXT("Baseline apply")))
+	{
+		return false;
+	}
+
+	FString SaveErrorMessage;
+	const bool bSavedBaseline = PersistentBlueprint.Save(Blueprint, &SaveErrorMessage);
+	TestTrue(TEXT("Baseline persistent recovery-roundtrip Blueprint should save cleanly."), bSavedBaseline);
+	if (!SaveErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Recovery baseline save status: %s"), *SaveErrorMessage));
+	}
+	if (!bSavedBaseline)
+	{
+		return false;
+	}
+
+	FString ReloadErrorMessage;
+	UBlueprint* ReloadedBlueprint = PersistentBlueprint.Reload(&ReloadErrorMessage);
+	TestNotNull(TEXT("Recovery-roundtrip Blueprint should reload from disk before the failing apply."), ReloadedBlueprint);
+	if (!ReloadErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Recovery baseline reload status: %s"), *ReloadErrorMessage));
+	}
+	if (ReloadedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	if (!VerifyRecoveredBlueprintState(ReloadedBlueprint, TEXT("Post-baseline reload")))
+	{
+		return false;
+	}
+
+	FVergilGraphDocument UpdatedDocument = BaselineDocument;
+	UpdatedDocument.Metadata.Add(TEXT("BlueprintDescription"), UpdatedDescription);
+
+	FVergilVariableDefinition RecoveredTransientVariable;
+	RecoveredTransientVariable.Name = RecoveredTransientVariableName;
+	RecoveredTransientVariable.Type.PinCategory = TEXT("bool");
+	RecoveredTransientVariable.DefaultValue = TEXT("false");
+	RecoveredTransientVariable.Category = RecoveryCategory;
+	RecoveredTransientVariable.Metadata.Add(TEXT("Tooltip"), TEXT("Should never persist because the apply will be rolled back."));
+	UpdatedDocument.Variables.Add(RecoveredTransientVariable);
+
+	const FVergilCompileResult PlannedUpdateResult = EditorSubsystem->CompileDocument(ReloadedBlueprint, UpdatedDocument, false, false, false);
+	TestTrue(TEXT("The updated recovery-roundtrip document should compile into a command plan."), PlannedUpdateResult.bSucceeded);
+	TestFalse(TEXT("Dry-run compile should not apply the updated recovery-roundtrip document."), PlannedUpdateResult.bApplied);
+	TestTrue(TEXT("The updated recovery-roundtrip document should produce commands before the forced apply failure."), PlannedUpdateResult.Commands.Num() > 0);
+	if (!PlannedUpdateResult.bSucceeded || PlannedUpdateResult.Commands.Num() == 0)
+	{
+		return false;
+	}
+
+	TArray<FVergilCompilerCommand> FailingCommands = PlannedUpdateResult.Commands;
+
+	FVergilCompilerCommand ExplicitCompile;
+	ExplicitCompile.Type = EVergilCommandType::CompileBlueprint;
+	FailingCommands.Add(ExplicitCompile);
+
+	FVergilCompilerCommand InvalidClassDefault;
+	InvalidClassDefault.Type = EVergilCommandType::SetClassDefault;
+	InvalidClassDefault.Name = TEXT("DefinitelyMissingProperty");
+	InvalidClassDefault.StringValue = TEXT("42");
+	FailingCommands.Add(InvalidClassDefault);
+
+	const FVergilCompileResult FailedApplyResult = EditorSubsystem->ExecuteCommandPlan(ReloadedBlueprint, FailingCommands);
+	TestFalse(TEXT("The forced recovery-roundtrip apply should fail."), FailedApplyResult.bSucceeded);
+	TestFalse(TEXT("Recovered failed applies should not be reported as applied."), FailedApplyResult.bApplied);
+	TestTrue(TEXT("The forced recovery-roundtrip apply should execute at least one command before failing."), FailedApplyResult.ExecutedCommandCount > 0);
+	TestTrue(
+		TEXT("The forced recovery-roundtrip apply should surface the missing class-default property diagnostic."),
+		FailedApplyResult.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == TEXT("ClassDefaultPropertyMissing");
+		}));
+
+	const FVergilTransactionAudit& TransactionAudit = FailedApplyResult.Statistics.TransactionAudit;
+	TestTrue(TEXT("The forced recovery-roundtrip apply should still record the transaction audit."), TransactionAudit.bRecorded);
+	TestTrue(TEXT("The forced recovery-roundtrip apply should require recovery."), TransactionAudit.bRecoveryRequired);
+	TestTrue(TEXT("The forced recovery-roundtrip apply should attempt recovery."), TransactionAudit.bRecoveryAttempted);
+	TestTrue(TEXT("The forced recovery-roundtrip apply should succeed at recovery."), TransactionAudit.bRecoverySucceeded);
+	TestTrue(TEXT("The forced recovery-roundtrip apply should report that the failed transaction was rolled back."), TransactionAudit.RecoveryMessage.Contains(TEXT("without leaving a redo entry")));
+	if (!FailedApplyResult.bSucceeded && !VerifyRecoveredBlueprintState(ReloadedBlueprint, TEXT("Recovered in-memory state")))
+	{
+		return false;
+	}
+
+	SaveErrorMessage.Reset();
+	const bool bSavedRecoveredBlueprint = PersistentBlueprint.Save(ReloadedBlueprint, &SaveErrorMessage);
+	TestTrue(TEXT("Recovered Blueprint state should still save cleanly after the failed apply."), bSavedRecoveredBlueprint);
+	if (!SaveErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Recovery post-failure save status: %s"), *SaveErrorMessage));
+	}
+	if (!bSavedRecoveredBlueprint)
+	{
+		return false;
+	}
+
+	ReloadErrorMessage.Reset();
+	ReloadedBlueprint = PersistentBlueprint.Reload(&ReloadErrorMessage);
+	TestNotNull(TEXT("Recovered Blueprint should reload from disk after the failed apply."), ReloadedBlueprint);
+	if (!ReloadErrorMessage.IsEmpty())
+	{
+		AddInfo(FString::Printf(TEXT("Recovery post-failure reload status: %s"), *ReloadErrorMessage));
+	}
+	if (ReloadedBlueprint == nullptr)
+	{
+		return false;
+	}
+
+	if (!VerifyRecoveredBlueprintState(ReloadedBlueprint, TEXT("Recovered persisted state")))
+	{
+		return false;
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(ReloadedBlueprint);
+	TestTrue(TEXT("Recovered Blueprint should still compile cleanly after save/reload."), ReloadedBlueprint->IsUpToDate());
+	TestNotNull(TEXT("Recovered Blueprint should still retain a generated class after save/reload."), ReloadedBlueprint->GeneratedClass.Get());
+	if (ReloadedBlueprint->GeneratedClass == nullptr)
+	{
+		return false;
+	}
+
+	AActor* const BlueprintCDO = Cast<AActor>(ReloadedBlueprint->GeneratedClass->GetDefaultObject());
+	FBoolProperty* const StableProperty = FindFProperty<FBoolProperty>(ReloadedBlueprint->GeneratedClass, StableVariableName);
+	FBoolProperty* const RecoveredTransientProperty = FindFProperty<FBoolProperty>(ReloadedBlueprint->GeneratedClass, RecoveredTransientVariableName);
+	TestNotNull(TEXT("Recovered Blueprint CDO should exist after native compile."), BlueprintCDO);
+	TestNotNull(TEXT("Recovered Blueprint generated class should still expose the stable variable."), StableProperty);
+	TestNull(TEXT("Recovered Blueprint generated class should not expose the rolled-back transient variable."), RecoveredTransientProperty);
+	TestTrue(TEXT("Recovered Blueprint generated class should preserve the stable variable default."), BlueprintCDO != nullptr && StableProperty != nullptr && StableProperty->GetPropertyValue_InContainer(BlueprintCDO));
+
+	return BlueprintCDO != nullptr && StableProperty != nullptr && RecoveredTransientProperty == nullptr;
 }
 
 bool FVergilDryRunApplyPlanningParityTest::RunTest(const FString& Parameters)
