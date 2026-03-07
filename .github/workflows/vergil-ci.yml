@@ -1,0 +1,89 @@
+name: Vergil CI
+
+on:
+  push:
+    branches:
+      - Experimental
+    paths:
+      - '.github/workflows/vergil-ci.yml'
+      - 'Config/**'
+      - 'Plugins/**'
+      - 'Source/**'
+      - 'TensAiExample.uproject'
+  pull_request:
+    paths:
+      - '.github/workflows/vergil-ci.yml'
+      - 'Config/**'
+      - 'Plugins/**'
+      - 'Source/**'
+      - 'TensAiExample.uproject'
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: 'Vergil CI lane to run'
+        required: true
+        default: 'All'
+        type: choice
+        options:
+          - All
+          - Build
+          - HeadlessAutomation
+          - GoldenTests
+          - PIRuntime
+          - PerfSmoke
+
+concurrency:
+  group: vergil-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vergil-ci:
+    name: Vergil CI
+    runs-on:
+      - self-hosted
+      - windows
+    timeout-minutes: 240
+    env:
+      UE_5_7_ROOT: ${{ vars.UE_5_7_ROOT }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show selected lane
+        run: |
+          $lane = "${{ github.event.inputs.lane }}"
+          if ([string]::IsNullOrWhiteSpace($lane)) {
+            $lane = 'All'
+          }
+
+          Write-Host "Selected lane: $lane"
+
+      - name: Run Vergil CI
+        run: |
+          $lane = "${{ github.event.inputs.lane }}"
+          if ([string]::IsNullOrWhiteSpace($lane)) {
+            $lane = 'All'
+          }
+
+          if ($lane -in @('All', 'Build')) {
+            powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilCILane.ps1 -Lane $lane
+          }
+          else {
+            powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilCILane.ps1 -Lane Build
+            powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilCILane.ps1 -Lane $lane
+          }
+
+      - name: Upload Vergil CI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vergil-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          path: |
+            Saved/Logs/VergilCI
+            Saved/Vergil/GoldenAssets

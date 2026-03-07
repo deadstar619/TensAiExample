@@ -596,7 +596,7 @@ Tickets:
 - [x] `VGR-9006` Add crash/recovery tests around compile/apply
 - [x] `VGR-9007` Add semantic versioning and migration docs
 - [x] `VGR-9008` Add extension docs for custom handlers
-- `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
+- [x] `VGR-9009` Add CI pipelines for build, headless automation, golden tests, and perf smoke
 - [x] `VGR-9010` Add runtime-safe automation fixtures
 
 Acceptance criteria:
@@ -644,6 +644,12 @@ Session note for `VGR-9008` (2026-03-07):
 - `README.md` and `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now link that guide back to the code-backed node-support matrix and the existing node-lowering contracts, so extension work has one explicit checklist covering manifest updates, earlier-pass normalization, executor integration, diagnostics, and automation.
 - `Vergil.Scaffold.SupportedNodeContractDocs` re-verified cleanly after the doc updates in this workspace.
 
+Session note for `VGR-9009` (2026-03-07):
+
+- Repo-level GitHub Actions coverage now exists in `.github/workflows/vergil-ci.yml`, targeting a self-hosted Windows Unreal runner and reusing checked-in PowerShell entrypoints instead of hardcoding engine commands directly into the workflow.
+- `Plugins/Vergil/Tools/Invoke-VergilProjectBuild.ps1` now builds the `TensAiExampleEditor` target through `UnrealBuildTool.exe`, `Invoke-VergilCILane.ps1` exposes explicit `Build`, `HeadlessAutomation`, `GoldenTests`, `PIRuntime`, `PerfSmoke`, and `All` lanes, and the workflow uploads `Saved/Logs/VergilCI` plus any saved golden-artifact mismatches on every run.
+- The current `PerfSmoke` lane time-bounds representative persisted and PIE regressions (`GoldenAssetSnapshot`, `SourceControlDiff`, `CompileApplyRecoveryRoundtrip`, and `PIERuntime`) as a release-hardening guard until `VGR-9003` lands dedicated large-graph benchmarks.
+
 Session note for `VGR-9004` (2026-03-07):
 
 - `Vergil.Scaffold.LegacySchemaExecutionCoverage` now iterates every supported legacy starting schema and proves representative legacy documents survive migration, compile, and apply through the current `UE_5.7` editor pipeline.
@@ -670,8 +676,7 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-9009`
-2. `VGR-9003`
+1. `VGR-9003`
 
 This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus restart-boundary failed-apply recovery coverage and checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
 
