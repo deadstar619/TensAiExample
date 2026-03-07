@@ -92,4 +92,5 @@ namespace Vergil
 	VERGILBLUEPRINTCOMPILER_API const FVergilSupportedContractManifest& GetSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedContractManifest();
 	VERGILBLUEPRINTCOMPILER_API FString SerializeSupportedContractManifest(bool bPrettyPrint = true);
+	VERGILBLUEPRINTCOMPILER_API FString DescribeSupportedDescriptorContractsAsMarkdownTable();
 }

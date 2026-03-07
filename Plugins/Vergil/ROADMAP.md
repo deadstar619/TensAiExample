@@ -325,7 +325,7 @@ Tickets:
 - [x] `VGR-5005` Add timer families beyond current delegate-driven coverage
 - [x] `VGR-5006` Add more flow-control families
 - [x] `VGR-5007` Add select/switch diagnostics for unsupported type combinations
-- `VGR-5008` Document all supported node contracts
+- [x] `VGR-5008` Document all supported node contracts
 
 Acceptance criteria:
 
@@ -374,6 +374,12 @@ Session note for `VGR-5002` (2026-03-07):
 - `UE_5.7` variable getters now support the remaining built-in variants: bool branch getters plus validated object/class/soft-reference getters, in addition to the existing pure read shape.
 - Compiler symbol resolution, direct command-plan preflight, and editor execution now all reject unsupported impure getter types explicitly instead of falling back to generic pin-registration failures.
 - `Vergil.Scaffold.SymbolResolutionPass`, `Vergil.Scaffold.CommandPlanValidation`, and `Vergil.Scaffold.VariableGetterVariantsExecution` now cover the compiler, direct-command, and editor-apply paths for these getter variants.
+
+Session note for `VGR-5008` (2026-03-07):
+
+- `SUPPORTED_DESCRIPTOR_CONTRACTS.md` now carries a full supported-node contract table with descriptor match kind, expected node kind, supported target graphs, required metadata keys, and the current code-backed notes for every supported descriptor family.
+- `Vergil::DescribeSupportedDescriptorContractsAsMarkdownTable()` now renders that table directly from the code-backed contract manifest, so the checked-in markdown can be kept in sync without manually re-deriving rows from `VergilContractInfo.cpp`.
+- `Vergil.Scaffold.SupportedNodeContractDocs` now loads the markdown file and fails if the generated contract-table section drifts from the manifest-backed markdown export, turning `VGR-5008` into an enforced documentation contract instead of a one-off doc pass.
 
 ## Milestone 6: Advanced K2 Coverage
 Goal:
@@ -534,11 +540,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5008`
-2. `VGR-7004`
-3. `VGR-8004`
-4. `VGR-6001`
-5. `VGR-6002`
+1. `VGR-7004`
+2. `VGR-8004`
+3. `VGR-6001`
+4. `VGR-6002`
+5. `VGR-6003`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

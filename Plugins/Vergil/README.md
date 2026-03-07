@@ -42,7 +42,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 
 ## Current supported contracts
 
-- The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md).
+- The scaffold only supports the document fields and descriptor families documented in [SUPPORTED_DESCRIPTOR_CONTRACTS.md](SUPPORTED_DESCRIPTOR_CONTRACTS.md). The supported-node contract table in that file is kept aligned with the code-backed manifest by `Vergil.Scaffold.SupportedNodeContractDocs`.
 - `UVergilAgentSubsystem` now exposes read-only supported-contract inspection helpers backed by code, so callers can inspect the current plugin semantic version, schema migration paths, supported document fields, target graphs, metadata keys, command types, and descriptor contracts without scraping markdown.
 - `UVergilEditorSubsystem` and `UVergilAgentSubsystem` now also expose read-only inspection helpers for command plans, graph documents, diagnostics, and compile results, including deterministic JSON exports for the document, diagnostics, and compile-result surfaces.
 - `UVergilEditorSubsystem` and `UVergilAgentSubsystem` now also expose read-only runtime/reflection inspection and discovery helpers for classes, structs, and enums through simple string queries, with versioned `Vergil.ReflectionSymbol` and `Vergil.ReflectionDiscovery` payloads that remain usable from a generic Python bridge call.
@@ -69,7 +69,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-7001`, `VGR-7002`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8005`, and `VGR-9007` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-5008`, `VGR-7001`, `VGR-7002`, `VGR-7003`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8005`, `VGR-9004`, and `VGR-9007` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.

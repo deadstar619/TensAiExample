@@ -456,6 +456,38 @@ namespace
 		Writer.WriteValue(TEXT("notes"), Contract.Notes);
 		Writer.WriteObjectEnd();
 	}
+
+	FString EscapeMarkdownTableCell(const FString& Value)
+	{
+		FString Escaped = Value;
+		Escaped.ReplaceInline(TEXT("\r\n"), TEXT(" "));
+		Escaped.ReplaceInline(TEXT("\n"), TEXT(" "));
+		Escaped.ReplaceInline(TEXT("\r"), TEXT(" "));
+		Escaped.ReplaceInline(TEXT("|"), TEXT("\\|"));
+		return Escaped;
+	}
+
+	FString FormatMarkdownInlineCode(const FString& Value)
+	{
+		return FString::Printf(TEXT("`%s`"), *EscapeMarkdownTableCell(Value));
+	}
+
+	FString FormatMarkdownNameArray(const TArray<FName>& Values)
+	{
+		if (Values.IsEmpty())
+		{
+			return TEXT("`none`");
+		}
+
+		TArray<FString> Tokens;
+		Tokens.Reserve(Values.Num());
+		for (const FName Value : Values)
+		{
+			Tokens.Add(FormatMarkdownInlineCode(Value.ToString()));
+		}
+
+		return FString::Join(Tokens, TEXT(", "));
+	}
 }
 
 FString FVergilSupportedDescriptorContract::ToDisplayString() const
@@ -594,4 +626,28 @@ FString Vergil::SerializeSupportedContractManifest(const bool bPrettyPrint)
 	Writer->WriteObjectEnd();
 	Writer->Close();
 	return SerializedManifest;
+}
+
+FString Vergil::DescribeSupportedDescriptorContractsAsMarkdownTable()
+{
+	const FVergilSupportedContractManifest& Manifest = GetSupportedContractManifest();
+
+	TArray<FString> Lines;
+	Lines.Reserve(2 + Manifest.SupportedDescriptors.Num());
+	Lines.Add(TEXT("| Descriptor contract | Match | Expected kind | Target graphs | Required metadata | Notes |"));
+	Lines.Add(TEXT("| --- | --- | --- | --- | --- | --- |"));
+
+	for (const FVergilSupportedDescriptorContract& Contract : Manifest.SupportedDescriptors)
+	{
+		Lines.Add(FString::Printf(
+			TEXT("| %s | %s | %s | %s | %s | %s |"),
+			*FormatMarkdownInlineCode(Contract.DescriptorContract),
+			*FormatMarkdownInlineCode(GetDescriptorMatchKindName(Contract.MatchKind)),
+			*FormatMarkdownInlineCode(Contract.ExpectedNodeKind.IsEmpty() ? TEXT("any") : Contract.ExpectedNodeKind),
+			*FormatMarkdownNameArray(Contract.SupportedTargetGraphs),
+			*FormatMarkdownNameArray(Contract.RequiredMetadataKeys),
+			*EscapeMarkdownTableCell(Contract.Notes.IsEmpty() ? TEXT("none") : Contract.Notes)));
+	}
+
+	return FString::Join(Lines, TEXT("\n"));
 }

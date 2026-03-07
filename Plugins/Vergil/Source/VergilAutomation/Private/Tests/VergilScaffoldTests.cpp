@@ -169,6 +169,36 @@ namespace
 		});
 	}
 
+	FString NormalizeLineEndings(FString Value)
+	{
+		Value.ReplaceInline(TEXT("\r\n"), TEXT("\n"));
+		Value.ReplaceInline(TEXT("\r"), TEXT("\n"));
+		return Value;
+	}
+
+	bool TryExtractMarkedSection(
+		const FString& SourceText,
+		const FString& BeginMarker,
+		const FString& EndMarker,
+		FString& OutSection)
+	{
+		const int32 BeginIndex = SourceText.Find(BeginMarker, ESearchCase::CaseSensitive);
+		if (BeginIndex == INDEX_NONE)
+		{
+			return false;
+		}
+
+		const int32 ContentStartIndex = BeginIndex + BeginMarker.Len();
+		const int32 EndIndex = SourceText.Find(EndMarker, ESearchCase::CaseSensitive, ESearchDir::FromStart, ContentStartIndex);
+		if (EndIndex == INDEX_NONE || EndIndex < ContentStartIndex)
+		{
+			return false;
+		}
+
+		OutSection = SourceText.Mid(ContentStartIndex, EndIndex - ContentStartIndex).TrimStartAndEnd();
+		return true;
+	}
+
 	const FVergilSupportedDescriptorContract* FindSupportedDescriptorContract(
 		const TArray<FVergilSupportedDescriptorContract>& Contracts,
 		const FString& DescriptorContract)
@@ -3391,6 +3421,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSupportedNodeContractDocsTest,
+	"Vergil.Scaffold.SupportedNodeContractDocs",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilInspectorToolingTest,
 	"Vergil.Scaffold.InspectorTooling",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -3596,6 +3631,34 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Supported-contract JSON should include the command-plan format field."), ContractJson.Contains(TEXT("\"commandPlanFormat\":\"Vergil.CommandPlan\"")));
 	TestTrue(TEXT("Supported-contract JSON should include UserConstructionScript."), ContractJson.Contains(TEXT("UserConstructionScript")));
 	TestTrue(TEXT("Supported-contract JSON should include K2.MakeMap."), ContractJson.Contains(TEXT("K2.MakeMap")));
+
+	return true;
+}
+
+bool FVergilSupportedNodeContractDocsTest::RunTest(const FString& Parameters)
+{
+	const FString ContractDocumentPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/Vergil/SUPPORTED_DESCRIPTOR_CONTRACTS.md"));
+	FString ContractDocumentText;
+	TestTrue(TEXT("The supported-contract markdown should load for doc-sync coverage."), FFileHelper::LoadFileToString(ContractDocumentText, *ContractDocumentPath));
+	if (ContractDocumentText.IsEmpty())
+	{
+		return false;
+	}
+
+	const FString BeginMarker = TEXT("<!-- BEGIN GENERATED SUPPORTED NODE CONTRACT TABLE -->");
+	const FString EndMarker = TEXT("<!-- END GENERATED SUPPORTED NODE CONTRACT TABLE -->");
+	FString DocumentedTable;
+	TestTrue(TEXT("The supported-contract markdown should contain the generated node-contract begin marker."), TryExtractMarkedSection(ContractDocumentText, BeginMarker, EndMarker, DocumentedTable));
+	if (DocumentedTable.IsEmpty())
+	{
+		return false;
+	}
+
+	const FString ExpectedTable = NormalizeLineEndings(Vergil::DescribeSupportedDescriptorContractsAsMarkdownTable()).TrimStartAndEnd();
+	TestEqual(
+		TEXT("The documented supported-node contract table should stay aligned with the code-backed manifest."),
+		NormalizeLineEndings(DocumentedTable).TrimStartAndEnd(),
+		ExpectedTable);
 
 	return true;
 }
