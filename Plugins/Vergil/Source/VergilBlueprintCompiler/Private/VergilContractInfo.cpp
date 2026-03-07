@@ -216,6 +216,13 @@ namespace
 				{},
 				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros ForLoop and are validated before planning.")),
 			MakeDescriptorContract(
+				TEXT("K2.ForLoopWithBreak"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros ForLoopWithBreak and are validated before planning.")),
+			MakeDescriptorContract(
 				TEXT("K2.DoOnce"),
 				EVergilDescriptorMatchKind::Exact,
 				TEXT("any"),
@@ -229,6 +236,20 @@ namespace
 				SupportedGraphs,
 				{},
 				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros FlipFlop and are validated before planning. The input exec pin maps to the engine macro's unnamed entry exec pin, while outputs remain A, B, and IsA.")),
+			MakeDescriptorContract(
+				TEXT("K2.Gate"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros Gate and are validated before planning. The primary exec input follows the engine name 'Enter', and authored StartClosed pins normalize to the engine bool input 'bStartClosed'.")),
+			MakeDescriptorContract(
+				TEXT("K2.WhileLoop"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{},
+				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros WhileLoop and are validated before planning.")),
 			MakeDescriptorContract(
 				TEXT("K2.SpawnActor"),
 				EVergilDescriptorMatchKind::Exact,

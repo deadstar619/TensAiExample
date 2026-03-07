@@ -92,8 +92,11 @@ namespace
 		static const FVergilStandardMacroCommand Commands[] =
 		{
 			{ TEXT("Vergil.K2.ForLoop"), TEXT("ForLoop"), TEXT("ForLoopMacroNotFound") },
+			{ TEXT("Vergil.K2.ForLoopWithBreak"), TEXT("ForLoopWithBreak"), TEXT("ForLoopWithBreakMacroNotFound") },
 			{ TEXT("Vergil.K2.DoOnce"), TEXT("DoOnce"), TEXT("DoOnceMacroNotFound") },
 			{ TEXT("Vergil.K2.FlipFlop"), TEXT("FlipFlop"), TEXT("FlipFlopMacroNotFound") },
+			{ TEXT("Vergil.K2.Gate"), TEXT("Gate"), TEXT("GateMacroNotFound") },
+			{ TEXT("Vergil.K2.WhileLoop"), TEXT("WhileLoop"), TEXT("WhileLoopMacroNotFound") },
 		};
 
 		for (const FVergilStandardMacroCommand& Candidate : Commands)
@@ -1264,13 +1267,34 @@ namespace
 			}
 		}
 
-		if (Command.Name == TEXT("Vergil.K2.DoOnce") && PlannedPin.Name == TEXT("StartClosed"))
+		if ((Command.Name == TEXT("Vergil.K2.DoOnce") || Command.Name == TEXT("Vergil.K2.Gate")) && PlannedPin.Name == TEXT("StartClosed"))
 		{
+			const FName EnginePinName = Command.Name == TEXT("Vergil.K2.Gate")
+				? FName(TEXT("bStartClosed"))
+				: FName(TEXT("Start Closed"));
+
 			for (UEdGraphPin* Pin : Node->Pins)
 			{
 				if (Pin != nullptr
 					&& Pin->Direction == (PlannedPin.bIsInput ? EGPD_Input : EGPD_Output)
-					&& Pin->PinName == TEXT("Start Closed"))
+					&& Pin->PinName == EnginePinName)
+				{
+					return Pin;
+				}
+			}
+		}
+
+		if (Command.Name == TEXT("Vergil.K2.Gate")
+			&& PlannedPin.bIsInput
+			&& PlannedPin.bIsExec
+			&& (PlannedPin.Name == UEdGraphSchema_K2::PN_Execute || PlannedPin.Name == TEXT("Execute") || PlannedPin.Name == TEXT("Exec")))
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin != nullptr
+					&& Pin->Direction == EGPD_Input
+					&& Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec
+					&& Pin->PinName == TEXT("Enter"))
 				{
 					return Pin;
 				}
@@ -5267,8 +5291,11 @@ namespace
 					|| Command.Name == TEXT("Vergil.K2.Branch")
 					|| Command.Name == TEXT("Vergil.K2.Sequence")
 					|| Command.Name == TEXT("Vergil.K2.ForLoop")
+					|| Command.Name == TEXT("Vergil.K2.ForLoopWithBreak")
 					|| Command.Name == TEXT("Vergil.K2.DoOnce")
 					|| Command.Name == TEXT("Vergil.K2.FlipFlop")
+					|| Command.Name == TEXT("Vergil.K2.Gate")
+					|| Command.Name == TEXT("Vergil.K2.WhileLoop")
 					|| Command.Name == TEXT("Vergil.K2.Delay")
 					|| Command.Name == TEXT("Vergil.K2.Self")
 					|| Command.Name == TEXT("Vergil.K2.Reroute"))

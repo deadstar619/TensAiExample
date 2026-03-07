@@ -46,8 +46,11 @@ namespace
 		static const FVergilStandardMacroDescriptor Descriptors[] =
 		{
 			{ TEXT("K2.ForLoop"), TEXT("Vergil.K2.ForLoop"), TEXT("ForLoop"), TEXT("ForLoopMacroNotFound") },
+			{ TEXT("K2.ForLoopWithBreak"), TEXT("Vergil.K2.ForLoopWithBreak"), TEXT("ForLoopWithBreak"), TEXT("ForLoopWithBreakMacroNotFound") },
 			{ TEXT("K2.DoOnce"), TEXT("Vergil.K2.DoOnce"), TEXT("DoOnce"), TEXT("DoOnceMacroNotFound") },
 			{ TEXT("K2.FlipFlop"), TEXT("Vergil.K2.FlipFlop"), TEXT("FlipFlop"), TEXT("FlipFlopMacroNotFound") },
+			{ TEXT("K2.Gate"), TEXT("Vergil.K2.Gate"), TEXT("Gate"), TEXT("GateMacroNotFound") },
+			{ TEXT("K2.WhileLoop"), TEXT("Vergil.K2.WhileLoop"), TEXT("WhileLoop"), TEXT("WhileLoopMacroNotFound") },
 		};
 
 		for (const FVergilStandardMacroDescriptor& Candidate : Descriptors)
@@ -1891,13 +1894,26 @@ namespace
 		const FVergilStandardMacroDescriptor& MacroDescriptor,
 		FVergilCompilerCommand& Command)
 	{
-		if (MacroDescriptor.Descriptor == TEXT("K2.DoOnce"))
+		if (MacroDescriptor.Descriptor == TEXT("K2.DoOnce") || MacroDescriptor.Descriptor == TEXT("K2.Gate"))
 		{
 			for (FVergilPlannedPin& PlannedPin : Command.PlannedPins)
 			{
-				if (PlannedPin.Name == TEXT("StartClosed"))
+				if (MacroDescriptor.Descriptor == TEXT("K2.DoOnce") && PlannedPin.Name == TEXT("StartClosed"))
 				{
 					PlannedPin.Name = TEXT("Start Closed");
+				}
+
+				if (MacroDescriptor.Descriptor == TEXT("K2.Gate") && PlannedPin.Name == TEXT("StartClosed"))
+				{
+					PlannedPin.Name = TEXT("bStartClosed");
+				}
+
+				if (MacroDescriptor.Descriptor == TEXT("K2.Gate")
+					&& PlannedPin.bIsInput
+					&& PlannedPin.bIsExec
+					&& (PlannedPin.Name == UEdGraphSchema_K2::PN_Execute || PlannedPin.Name == TEXT("Execute") || PlannedPin.Name == TEXT("Exec")))
+				{
+					PlannedPin.Name = TEXT("Enter");
 				}
 			}
 		}
@@ -3504,8 +3520,11 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBranchNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSequenceNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.ForLoop"))));
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.ForLoopWithBreak"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.DoOnce"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.FlipFlop"))));
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.Gate"))));
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.WhileLoop"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilDelayNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSpawnActorNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBindDelegateNodeHandler, ESPMode::ThreadSafe>());

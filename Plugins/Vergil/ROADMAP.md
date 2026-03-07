@@ -323,7 +323,7 @@ Tickets:
 - [x] `VGR-5003` Add common macro-instance families such as `DoOnce` and `FlipFlop`
 - [x] `VGR-5004` Add deterministic `SpawnActor`
 - [x] `VGR-5005` Add timer families beyond current delegate-driven coverage
-- `VGR-5006` Add more flow-control families
+- [x] `VGR-5006` Add more flow-control families
 - [x] `VGR-5007` Add select/switch diagnostics for unsupported type combinations
 - `VGR-5008` Document all supported node contracts
 
@@ -344,6 +344,12 @@ Session note for `VGR-5005` (2026-03-07):
 - New `Vergil.Scaffold.TimerFunctionNameExecution` coverage authors `K2_SetTimer`, `K2_PauseTimer`, `K2_UnPauseTimer`, `K2_IsTimerActive`, `K2_IsTimerPaused`, `K2_TimerExists`, `K2_GetTimerElapsedTime`, and `K2_GetTimerRemainingTime` end-to-end against the real `UKismetSystemLibrary` nodes under `UE_5.7`.
 - `Vergil.Scaffold.TimerDelegateExecution` now also re-verifies the handle-based follow-on family end-to-end: `K2_PauseTimerHandle`, `K2_UnPauseTimerHandle`, `K2_IsTimerActiveHandle`, `K2_IsTimerPausedHandle`, `K2_TimerExistsHandle`, `K2_GetTimerElapsedTimeHandle`, `K2_GetTimerRemainingTimeHandle`, and the existing `K2_ClearAndInvalidateTimerHandle` path.
 - `mcp__tensai__build_project` succeeded in `Development`, targeted headless timer runs passed, and the full documented `Invoke-VergilScaffoldAutomation.ps1` rerun re-verified `Vergil.Scaffold.*` cleanly in this workspace.
+
+Session note for `VGR-5006` (2026-03-07):
+
+- `UE_5.7` StandardMacros-backed `K2.ForLoopWithBreak`, `K2.Gate`, and `K2.WhileLoop` now share the existing macro-instance resolution/apply path with `K2.ForLoop`, `K2.DoOnce`, and `K2.FlipFlop`, including optional `MacroBlueprintPath` / `MacroGraphName` overrides and symbol-pass validation of the selected macro graph.
+- Planning now emits dedicated `Vergil.K2.ForLoopWithBreak`, `Vergil.K2.Gate`, and `Vergil.K2.WhileLoop` add-node commands, while editor execution instantiates real `UK2Node_MacroInstance` nodes against the resolved `StandardMacros` graphs under `UE_5.7`.
+- The Gate contract now normalizes authored `StartClosed` pins to the engine bool input `bStartClosed`, and `Vergil.Scaffold.SymbolResolutionPass` plus the new `Vergil.Scaffold.FlowControlMacroExecution` test now cover invalid override diagnostics and end-to-end authoring of these additional flow-control macro families.
 
 Session note for `VGR-5003` (2026-03-07):
 
@@ -528,11 +534,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-5006`
-2. `VGR-5008`
-3. `VGR-7004`
-4. `VGR-8004`
-5. `VGR-6001`
+1. `VGR-5008`
+2. `VGR-7004`
+3. `VGR-8004`
+4. `VGR-6001`
+5. `VGR-6002`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 

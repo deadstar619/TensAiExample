@@ -2118,6 +2118,25 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilGraphNode InvalidForLoopWithBreakNode;
+		InvalidForLoopWithBreakNode.Id = FGuid::NewGuid();
+		InvalidForLoopWithBreakNode.Kind = EVergilNodeKind::Custom;
+		InvalidForLoopWithBreakNode.Descriptor = TEXT("K2.ForLoopWithBreak");
+		InvalidForLoopWithBreakNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidForLoopWithBreakNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidForLoopWithBreak");
+		Request.Document.Nodes.Add(InvalidForLoopWithBreakNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid ForLoopWithBreak macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid ForLoopWithBreak macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid ForLoopWithBreak macro references should report ForLoopWithBreakMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("ForLoopWithBreakMacroNotFound")));
+	}
+
+	{
 		FVergilGraphNode InvalidDoOnceNode;
 		InvalidDoOnceNode.Id = FGuid::NewGuid();
 		InvalidDoOnceNode.Kind = EVergilNodeKind::Custom;
@@ -2153,6 +2172,44 @@ bool FVergilSymbolResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid FlipFlop macro references should fail symbol resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid FlipFlop macro references should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid FlipFlop macro references should report FlipFlopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("FlipFlopMacroNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidGateNode;
+		InvalidGateNode.Id = FGuid::NewGuid();
+		InvalidGateNode.Kind = EVergilNodeKind::Custom;
+		InvalidGateNode.Descriptor = TEXT("K2.Gate");
+		InvalidGateNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidGateNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidGate");
+		Request.Document.Nodes.Add(InvalidGateNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid Gate macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid Gate macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid Gate macro references should report GateMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("GateMacroNotFound")));
+	}
+
+	{
+		FVergilGraphNode InvalidWhileLoopNode;
+		InvalidWhileLoopNode.Id = FGuid::NewGuid();
+		InvalidWhileLoopNode.Kind = EVergilNodeKind::Custom;
+		InvalidWhileLoopNode.Descriptor = TEXT("K2.WhileLoop");
+		InvalidWhileLoopNode.Metadata.Add(TEXT("MacroBlueprintPath"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+		InvalidWhileLoopNode.Metadata.Add(TEXT("MacroGraphName"), TEXT("DoesNotExist"));
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SymbolResolution_InvalidWhileLoop");
+		Request.Document.Nodes.Add(InvalidWhileLoopNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Invalid WhileLoop macro references should fail symbol resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid WhileLoop macro references should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid WhileLoop macro references should report WhileLoopMacroNotFound."), ContainsDiagnostic(Result.Diagnostics, TEXT("WhileLoopMacroNotFound")));
 	}
 
 	return true;
@@ -10988,9 +11045,546 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilFlowControlMacroExecutionTest,
+	"Vergil.Scaffold.FlowControlMacroExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilSpawnActorExecutionTest,
 	"Vergil.Scaffold.SpawnActorExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("GateStartsClosed member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("GateStartsClosed"), BoolType, TEXT("false")));
+	TestTrue(TEXT("ShouldContinue member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ShouldContinue"), BoolType, TEXT("true")));
+	TestTrue(TEXT("LoopBodyHit member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LoopBodyHit"), BoolType, TEXT("false")));
+
+	FEdGraphPinType IntType;
+	IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+	TestTrue(TEXT("FirstIndex member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("FirstIndex"), IntType, TEXT("0")));
+	TestTrue(TEXT("LastIndex member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastIndex"), IntType, TEXT("2")));
+	TestTrue(TEXT("CurrentIndex member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("CurrentIndex"), IntType, TEXT("0")));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode GateStartsClosedGetterNode;
+	GateStartsClosedGetterNode.Id = FGuid::NewGuid();
+	GateStartsClosedGetterNode.Kind = EVergilNodeKind::VariableGet;
+	GateStartsClosedGetterNode.Descriptor = TEXT("K2.VarGet.GateStartsClosed");
+	GateStartsClosedGetterNode.Position = FVector2D(220.0f, -240.0f);
+
+	FVergilGraphPin GateStartsClosedGetterValuePin;
+	GateStartsClosedGetterValuePin.Id = FGuid::NewGuid();
+	GateStartsClosedGetterValuePin.Name = TEXT("GateStartsClosed");
+	GateStartsClosedGetterValuePin.Direction = EVergilPinDirection::Output;
+	GateStartsClosedGetterNode.Pins.Add(GateStartsClosedGetterValuePin);
+
+	FVergilGraphNode FirstGetterNode;
+	FirstGetterNode.Id = FGuid::NewGuid();
+	FirstGetterNode.Kind = EVergilNodeKind::VariableGet;
+	FirstGetterNode.Descriptor = TEXT("K2.VarGet.FirstIndex");
+	FirstGetterNode.Position = FVector2D(520.0f, -240.0f);
+
+	FVergilGraphPin FirstGetterValuePin;
+	FirstGetterValuePin.Id = FGuid::NewGuid();
+	FirstGetterValuePin.Name = TEXT("FirstIndex");
+	FirstGetterValuePin.Direction = EVergilPinDirection::Output;
+	FirstGetterNode.Pins.Add(FirstGetterValuePin);
+
+	FVergilGraphNode LastGetterNode;
+	LastGetterNode.Id = FGuid::NewGuid();
+	LastGetterNode.Kind = EVergilNodeKind::VariableGet;
+	LastGetterNode.Descriptor = TEXT("K2.VarGet.LastIndex");
+	LastGetterNode.Position = FVector2D(520.0f, -80.0f);
+
+	FVergilGraphPin LastGetterValuePin;
+	LastGetterValuePin.Id = FGuid::NewGuid();
+	LastGetterValuePin.Name = TEXT("LastIndex");
+	LastGetterValuePin.Direction = EVergilPinDirection::Output;
+	LastGetterNode.Pins.Add(LastGetterValuePin);
+
+	FVergilGraphNode ShouldContinueGetterNode;
+	ShouldContinueGetterNode.Id = FGuid::NewGuid();
+	ShouldContinueGetterNode.Kind = EVergilNodeKind::VariableGet;
+	ShouldContinueGetterNode.Descriptor = TEXT("K2.VarGet.ShouldContinue");
+	ShouldContinueGetterNode.Position = FVector2D(1080.0f, 40.0f);
+
+	FVergilGraphPin ShouldContinueGetterValuePin;
+	ShouldContinueGetterValuePin.Id = FGuid::NewGuid();
+	ShouldContinueGetterValuePin.Name = TEXT("ShouldContinue");
+	ShouldContinueGetterValuePin.Direction = EVergilPinDirection::Output;
+	ShouldContinueGetterNode.Pins.Add(ShouldContinueGetterValuePin);
+
+	FVergilGraphNode GateNode;
+	GateNode.Id = FGuid::NewGuid();
+	GateNode.Kind = EVergilNodeKind::Custom;
+	GateNode.Descriptor = TEXT("K2.Gate");
+	GateNode.Position = FVector2D(240.0f, -20.0f);
+
+	FVergilGraphPin GateEnterPin;
+	GateEnterPin.Id = FGuid::NewGuid();
+	GateEnterPin.Name = UEdGraphSchema_K2::PN_Execute;
+	GateEnterPin.Direction = EVergilPinDirection::Input;
+	GateEnterPin.bIsExec = true;
+	GateNode.Pins.Add(GateEnterPin);
+
+	FVergilGraphPin GateOpenPin;
+	GateOpenPin.Id = FGuid::NewGuid();
+	GateOpenPin.Name = TEXT("Open");
+	GateOpenPin.Direction = EVergilPinDirection::Input;
+	GateOpenPin.bIsExec = true;
+	GateNode.Pins.Add(GateOpenPin);
+
+	FVergilGraphPin GateClosePin;
+	GateClosePin.Id = FGuid::NewGuid();
+	GateClosePin.Name = TEXT("Close");
+	GateClosePin.Direction = EVergilPinDirection::Input;
+	GateClosePin.bIsExec = true;
+	GateNode.Pins.Add(GateClosePin);
+
+	FVergilGraphPin GateTogglePin;
+	GateTogglePin.Id = FGuid::NewGuid();
+	GateTogglePin.Name = TEXT("Toggle");
+	GateTogglePin.Direction = EVergilPinDirection::Input;
+	GateTogglePin.bIsExec = true;
+	GateNode.Pins.Add(GateTogglePin);
+
+	FVergilGraphPin GateStartClosedPin;
+	GateStartClosedPin.Id = FGuid::NewGuid();
+	GateStartClosedPin.Name = TEXT("StartClosed");
+	GateStartClosedPin.Direction = EVergilPinDirection::Input;
+	GateNode.Pins.Add(GateStartClosedPin);
+
+	FVergilGraphPin GateExitPin;
+	GateExitPin.Id = FGuid::NewGuid();
+	GateExitPin.Name = TEXT("Exit");
+	GateExitPin.Direction = EVergilPinDirection::Output;
+	GateExitPin.bIsExec = true;
+	GateNode.Pins.Add(GateExitPin);
+
+	FVergilGraphNode ForLoopWithBreakNode;
+	ForLoopWithBreakNode.Id = FGuid::NewGuid();
+	ForLoopWithBreakNode.Kind = EVergilNodeKind::Custom;
+	ForLoopWithBreakNode.Descriptor = TEXT("K2.ForLoopWithBreak");
+	ForLoopWithBreakNode.Position = FVector2D(560.0f, -20.0f);
+
+	FVergilGraphPin LoopExecPin;
+	LoopExecPin.Id = FGuid::NewGuid();
+	LoopExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	LoopExecPin.Direction = EVergilPinDirection::Input;
+	LoopExecPin.bIsExec = true;
+	ForLoopWithBreakNode.Pins.Add(LoopExecPin);
+
+	FVergilGraphPin LoopFirstPin;
+	LoopFirstPin.Id = FGuid::NewGuid();
+	LoopFirstPin.Name = TEXT("FirstIndex");
+	LoopFirstPin.Direction = EVergilPinDirection::Input;
+	ForLoopWithBreakNode.Pins.Add(LoopFirstPin);
+
+	FVergilGraphPin LoopLastPin;
+	LoopLastPin.Id = FGuid::NewGuid();
+	LoopLastPin.Name = TEXT("LastIndex");
+	LoopLastPin.Direction = EVergilPinDirection::Input;
+	ForLoopWithBreakNode.Pins.Add(LoopLastPin);
+
+	FVergilGraphPin LoopBodyPin;
+	LoopBodyPin.Id = FGuid::NewGuid();
+	LoopBodyPin.Name = TEXT("LoopBody");
+	LoopBodyPin.Direction = EVergilPinDirection::Output;
+	LoopBodyPin.bIsExec = true;
+	ForLoopWithBreakNode.Pins.Add(LoopBodyPin);
+
+	FVergilGraphPin LoopBreakPin;
+	LoopBreakPin.Id = FGuid::NewGuid();
+	LoopBreakPin.Name = TEXT("Break");
+	LoopBreakPin.Direction = EVergilPinDirection::Input;
+	LoopBreakPin.bIsExec = true;
+	ForLoopWithBreakNode.Pins.Add(LoopBreakPin);
+
+	FVergilGraphPin LoopIndexPin;
+	LoopIndexPin.Id = FGuid::NewGuid();
+	LoopIndexPin.Name = TEXT("Index");
+	LoopIndexPin.Direction = EVergilPinDirection::Output;
+	ForLoopWithBreakNode.Pins.Add(LoopIndexPin);
+
+	FVergilGraphPin LoopCompletedPin;
+	LoopCompletedPin.Id = FGuid::NewGuid();
+	LoopCompletedPin.Name = TEXT("Completed");
+	LoopCompletedPin.Direction = EVergilPinDirection::Output;
+	LoopCompletedPin.bIsExec = true;
+	ForLoopWithBreakNode.Pins.Add(LoopCompletedPin);
+
+	FVergilGraphNode WhileLoopNode;
+	WhileLoopNode.Id = FGuid::NewGuid();
+	WhileLoopNode.Kind = EVergilNodeKind::Custom;
+	WhileLoopNode.Descriptor = TEXT("K2.WhileLoop");
+	WhileLoopNode.Position = FVector2D(1360.0f, -20.0f);
+
+	FVergilGraphPin WhileLoopExecPin;
+	WhileLoopExecPin.Id = FGuid::NewGuid();
+	WhileLoopExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	WhileLoopExecPin.Direction = EVergilPinDirection::Input;
+	WhileLoopExecPin.bIsExec = true;
+	WhileLoopNode.Pins.Add(WhileLoopExecPin);
+
+	FVergilGraphPin WhileLoopConditionPin;
+	WhileLoopConditionPin.Id = FGuid::NewGuid();
+	WhileLoopConditionPin.Name = TEXT("Condition");
+	WhileLoopConditionPin.Direction = EVergilPinDirection::Input;
+	WhileLoopNode.Pins.Add(WhileLoopConditionPin);
+
+	FVergilGraphPin WhileLoopBodyPin;
+	WhileLoopBodyPin.Id = FGuid::NewGuid();
+	WhileLoopBodyPin.Name = TEXT("LoopBody");
+	WhileLoopBodyPin.Direction = EVergilPinDirection::Output;
+	WhileLoopBodyPin.bIsExec = true;
+	WhileLoopNode.Pins.Add(WhileLoopBodyPin);
+
+	FVergilGraphPin WhileLoopCompletedPin;
+	WhileLoopCompletedPin.Id = FGuid::NewGuid();
+	WhileLoopCompletedPin.Name = TEXT("Completed");
+	WhileLoopCompletedPin.Direction = EVergilPinDirection::Output;
+	WhileLoopCompletedPin.bIsExec = true;
+	WhileLoopNode.Pins.Add(WhileLoopCompletedPin);
+
+	FVergilGraphNode SetIndexNode;
+	SetIndexNode.Id = FGuid::NewGuid();
+	SetIndexNode.Kind = EVergilNodeKind::VariableSet;
+	SetIndexNode.Descriptor = TEXT("K2.VarSet.CurrentIndex");
+	SetIndexNode.Position = FVector2D(920.0f, -120.0f);
+
+	FVergilGraphPin SetIndexExecPin;
+	SetIndexExecPin.Id = FGuid::NewGuid();
+	SetIndexExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetIndexExecPin.Direction = EVergilPinDirection::Input;
+	SetIndexExecPin.bIsExec = true;
+	SetIndexNode.Pins.Add(SetIndexExecPin);
+
+	FVergilGraphPin SetIndexValuePin;
+	SetIndexValuePin.Id = FGuid::NewGuid();
+	SetIndexValuePin.Name = TEXT("CurrentIndex");
+	SetIndexValuePin.Direction = EVergilPinDirection::Input;
+	SetIndexNode.Pins.Add(SetIndexValuePin);
+
+	FVergilGraphNode SetLoopBodyHitNode;
+	SetLoopBodyHitNode.Id = FGuid::NewGuid();
+	SetLoopBodyHitNode.Kind = EVergilNodeKind::VariableSet;
+	SetLoopBodyHitNode.Descriptor = TEXT("K2.VarSet.LoopBodyHit");
+	SetLoopBodyHitNode.Position = FVector2D(1680.0f, -140.0f);
+
+	FVergilGraphPin SetLoopBodyHitExecPin;
+	SetLoopBodyHitExecPin.Id = FGuid::NewGuid();
+	SetLoopBodyHitExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetLoopBodyHitExecPin.Direction = EVergilPinDirection::Input;
+	SetLoopBodyHitExecPin.bIsExec = true;
+	SetLoopBodyHitNode.Pins.Add(SetLoopBodyHitExecPin);
+
+	FVergilGraphPin SetLoopBodyHitValuePin;
+	SetLoopBodyHitValuePin.Id = FGuid::NewGuid();
+	SetLoopBodyHitValuePin.Name = TEXT("LoopBodyHit");
+	SetLoopBodyHitValuePin.Direction = EVergilPinDirection::Input;
+	SetLoopBodyHitNode.Pins.Add(SetLoopBodyHitValuePin);
+
+	FVergilGraphNode CallNode;
+	CallNode.Id = FGuid::NewGuid();
+	CallNode.Kind = EVergilNodeKind::Call;
+	CallNode.Descriptor = TEXT("K2.Call.K2_DestroyActor");
+	CallNode.Position = FVector2D(1900.0f, 80.0f);
+
+	FVergilGraphPin CallExecPin;
+	CallExecPin.Id = FGuid::NewGuid();
+	CallExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	CallExecPin.Direction = EVergilPinDirection::Input;
+	CallExecPin.bIsExec = true;
+	CallNode.Pins.Add(CallExecPin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilFlowControlMacroExecution");
+	Document.Nodes =
+	{
+		BeginPlayNode,
+		GateStartsClosedGetterNode,
+		FirstGetterNode,
+		LastGetterNode,
+		ShouldContinueGetterNode,
+		GateNode,
+		ForLoopWithBreakNode,
+		WhileLoopNode,
+		SetIndexNode,
+		SetLoopBodyHitNode,
+		CallNode
+	};
+
+	FVergilGraphEdge EventToGate;
+	EventToGate.Id = FGuid::NewGuid();
+	EventToGate.SourceNodeId = BeginPlayNode.Id;
+	EventToGate.SourcePinId = BeginPlayThenPin.Id;
+	EventToGate.TargetNodeId = GateNode.Id;
+	EventToGate.TargetPinId = GateEnterPin.Id;
+	Document.Edges.Add(EventToGate);
+
+	FVergilGraphEdge GateStartsClosedToGate;
+	GateStartsClosedToGate.Id = FGuid::NewGuid();
+	GateStartsClosedToGate.SourceNodeId = GateStartsClosedGetterNode.Id;
+	GateStartsClosedToGate.SourcePinId = GateStartsClosedGetterValuePin.Id;
+	GateStartsClosedToGate.TargetNodeId = GateNode.Id;
+	GateStartsClosedToGate.TargetPinId = GateStartClosedPin.Id;
+	Document.Edges.Add(GateStartsClosedToGate);
+
+	FVergilGraphEdge GateExitToLoop;
+	GateExitToLoop.Id = FGuid::NewGuid();
+	GateExitToLoop.SourceNodeId = GateNode.Id;
+	GateExitToLoop.SourcePinId = GateExitPin.Id;
+	GateExitToLoop.TargetNodeId = ForLoopWithBreakNode.Id;
+	GateExitToLoop.TargetPinId = LoopExecPin.Id;
+	Document.Edges.Add(GateExitToLoop);
+
+	FVergilGraphEdge FirstToLoop;
+	FirstToLoop.Id = FGuid::NewGuid();
+	FirstToLoop.SourceNodeId = FirstGetterNode.Id;
+	FirstToLoop.SourcePinId = FirstGetterValuePin.Id;
+	FirstToLoop.TargetNodeId = ForLoopWithBreakNode.Id;
+	FirstToLoop.TargetPinId = LoopFirstPin.Id;
+	Document.Edges.Add(FirstToLoop);
+
+	FVergilGraphEdge LastToLoop;
+	LastToLoop.Id = FGuid::NewGuid();
+	LastToLoop.SourceNodeId = LastGetterNode.Id;
+	LastToLoop.SourcePinId = LastGetterValuePin.Id;
+	LastToLoop.TargetNodeId = ForLoopWithBreakNode.Id;
+	LastToLoop.TargetPinId = LoopLastPin.Id;
+	Document.Edges.Add(LastToLoop);
+
+	FVergilGraphEdge LoopBodyToSetter;
+	LoopBodyToSetter.Id = FGuid::NewGuid();
+	LoopBodyToSetter.SourceNodeId = ForLoopWithBreakNode.Id;
+	LoopBodyToSetter.SourcePinId = LoopBodyPin.Id;
+	LoopBodyToSetter.TargetNodeId = SetIndexNode.Id;
+	LoopBodyToSetter.TargetPinId = SetIndexExecPin.Id;
+	Document.Edges.Add(LoopBodyToSetter);
+
+	FVergilGraphEdge LoopIndexToSetter;
+	LoopIndexToSetter.Id = FGuid::NewGuid();
+	LoopIndexToSetter.SourceNodeId = ForLoopWithBreakNode.Id;
+	LoopIndexToSetter.SourcePinId = LoopIndexPin.Id;
+	LoopIndexToSetter.TargetNodeId = SetIndexNode.Id;
+	LoopIndexToSetter.TargetPinId = SetIndexValuePin.Id;
+	Document.Edges.Add(LoopIndexToSetter);
+
+	FVergilGraphEdge LoopCompletedToWhileLoop;
+	LoopCompletedToWhileLoop.Id = FGuid::NewGuid();
+	LoopCompletedToWhileLoop.SourceNodeId = ForLoopWithBreakNode.Id;
+	LoopCompletedToWhileLoop.SourcePinId = LoopCompletedPin.Id;
+	LoopCompletedToWhileLoop.TargetNodeId = WhileLoopNode.Id;
+	LoopCompletedToWhileLoop.TargetPinId = WhileLoopExecPin.Id;
+	Document.Edges.Add(LoopCompletedToWhileLoop);
+
+	FVergilGraphEdge ShouldContinueToWhileCondition;
+	ShouldContinueToWhileCondition.Id = FGuid::NewGuid();
+	ShouldContinueToWhileCondition.SourceNodeId = ShouldContinueGetterNode.Id;
+	ShouldContinueToWhileCondition.SourcePinId = ShouldContinueGetterValuePin.Id;
+	ShouldContinueToWhileCondition.TargetNodeId = WhileLoopNode.Id;
+	ShouldContinueToWhileCondition.TargetPinId = WhileLoopConditionPin.Id;
+	Document.Edges.Add(ShouldContinueToWhileCondition);
+
+	FVergilGraphEdge WhileLoopBodyToSetter;
+	WhileLoopBodyToSetter.Id = FGuid::NewGuid();
+	WhileLoopBodyToSetter.SourceNodeId = WhileLoopNode.Id;
+	WhileLoopBodyToSetter.SourcePinId = WhileLoopBodyPin.Id;
+	WhileLoopBodyToSetter.TargetNodeId = SetLoopBodyHitNode.Id;
+	WhileLoopBodyToSetter.TargetPinId = SetLoopBodyHitExecPin.Id;
+	Document.Edges.Add(WhileLoopBodyToSetter);
+
+	FVergilGraphEdge ShouldContinueToLoopBodySetter;
+	ShouldContinueToLoopBodySetter.Id = FGuid::NewGuid();
+	ShouldContinueToLoopBodySetter.SourceNodeId = ShouldContinueGetterNode.Id;
+	ShouldContinueToLoopBodySetter.SourcePinId = ShouldContinueGetterValuePin.Id;
+	ShouldContinueToLoopBodySetter.TargetNodeId = SetLoopBodyHitNode.Id;
+	ShouldContinueToLoopBodySetter.TargetPinId = SetLoopBodyHitValuePin.Id;
+	Document.Edges.Add(ShouldContinueToLoopBodySetter);
+
+	FVergilGraphEdge WhileLoopCompletedToCall;
+	WhileLoopCompletedToCall.Id = FGuid::NewGuid();
+	WhileLoopCompletedToCall.SourceNodeId = WhileLoopNode.Id;
+	WhileLoopCompletedToCall.SourcePinId = WhileLoopCompletedPin.Id;
+	WhileLoopCompletedToCall.TargetNodeId = CallNode.Id;
+	WhileLoopCompletedToCall.TargetPinId = CallExecPin.Id;
+	Document.Edges.Add(WhileLoopCompletedToCall);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Flow-control macro document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Flow-control macro document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Flow-control macro document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const GateCommand = FindNodeCommand(Result.Commands, GateNode.Id);
+	const FVergilCompilerCommand* const ForLoopCommand = FindNodeCommand(Result.Commands, ForLoopWithBreakNode.Id);
+	const FVergilCompilerCommand* const WhileLoopCommand = FindNodeCommand(Result.Commands, WhileLoopNode.Id);
+	TestNotNull(TEXT("Gate should lower into an AddNode command."), GateCommand);
+	TestNotNull(TEXT("ForLoopWithBreak should lower into an AddNode command."), ForLoopCommand);
+	TestNotNull(TEXT("WhileLoop should lower into an AddNode command."), WhileLoopCommand);
+	if (GateCommand == nullptr || ForLoopCommand == nullptr || WhileLoopCommand == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Gate should lower into its dedicated command name."), GateCommand->Name, FName(TEXT("Vergil.K2.Gate")));
+	TestEqual(TEXT("ForLoopWithBreak should lower into its dedicated command name."), ForLoopCommand->Name, FName(TEXT("Vergil.K2.ForLoopWithBreak")));
+	TestEqual(TEXT("WhileLoop should lower into its dedicated command name."), WhileLoopCommand->Name, FName(TEXT("Vergil.K2.WhileLoop")));
+	TestEqual(TEXT("Gate should default to the UE_5.7 StandardMacros asset."), GateCommand->Attributes.FindRef(TEXT("MacroBlueprintPath")), FString(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+	TestEqual(TEXT("Gate should default to the Gate macro graph."), GateCommand->Attributes.FindRef(TEXT("MacroGraphName")), FString(TEXT("Gate")));
+	TestEqual(TEXT("ForLoopWithBreak should default to the UE_5.7 StandardMacros asset."), ForLoopCommand->Attributes.FindRef(TEXT("MacroBlueprintPath")), FString(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+	TestEqual(TEXT("ForLoopWithBreak should default to the ForLoopWithBreak macro graph."), ForLoopCommand->Attributes.FindRef(TEXT("MacroGraphName")), FString(TEXT("ForLoopWithBreak")));
+	TestEqual(TEXT("WhileLoop should default to the UE_5.7 StandardMacros asset."), WhileLoopCommand->Attributes.FindRef(TEXT("MacroBlueprintPath")), FString(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+	TestEqual(TEXT("WhileLoop should default to the WhileLoop macro graph."), WhileLoopCommand->Attributes.FindRef(TEXT("MacroGraphName")), FString(TEXT("WhileLoop")));
+	TestTrue(TEXT("Gate planned pins should normalize the Execute alias to Enter."), ContainsPlannedPin(*GateCommand, TEXT("Enter"), true, true));
+	TestTrue(TEXT("Gate planned pins should normalize the StartClosed alias to the engine pin name."), ContainsPlannedPin(*GateCommand, TEXT("bStartClosed"), true, false));
+	TestTrue(TEXT("ForLoopWithBreak planned pins should include Break."), ContainsPlannedPin(*ForLoopCommand, TEXT("Break"), true, true));
+	TestTrue(TEXT("WhileLoop planned pins should include Condition."), ContainsPlannedPin(*WhileLoopCommand, TEXT("Condition"), true, false));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after flow-control macro execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_VariableGet* const GateStartsClosedGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, GateStartsClosedGetterNode.Id);
+	UK2Node_VariableGet* const FirstGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, FirstGetterNode.Id);
+	UK2Node_VariableGet* const LastGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, LastGetterNode.Id);
+	UK2Node_VariableGet* const ShouldContinueGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, ShouldContinueGetterNode.Id);
+	UK2Node_MacroInstance* const GateGraphNode = FindGraphNodeByGuid<UK2Node_MacroInstance>(EventGraph, GateNode.Id);
+	UK2Node_MacroInstance* const ForLoopGraphNode = FindGraphNodeByGuid<UK2Node_MacroInstance>(EventGraph, ForLoopWithBreakNode.Id);
+	UK2Node_MacroInstance* const WhileLoopGraphNode = FindGraphNodeByGuid<UK2Node_MacroInstance>(EventGraph, WhileLoopNode.Id);
+	UK2Node_VariableSet* const SetIndexGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetIndexNode.Id);
+	UK2Node_VariableSet* const SetLoopBodyHitGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetLoopBodyHitNode.Id);
+	UK2Node_CallFunction* const CallGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, CallNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventNode);
+	TestNotNull(TEXT("GateStartsClosed getter node should exist."), GateStartsClosedGetterGraphNode);
+	TestNotNull(TEXT("FirstIndex getter node should exist."), FirstGetterGraphNode);
+	TestNotNull(TEXT("LastIndex getter node should exist."), LastGetterGraphNode);
+	TestNotNull(TEXT("ShouldContinue getter node should exist."), ShouldContinueGetterGraphNode);
+	TestNotNull(TEXT("Gate macro node should exist."), GateGraphNode);
+	TestNotNull(TEXT("ForLoopWithBreak macro node should exist."), ForLoopGraphNode);
+	TestNotNull(TEXT("WhileLoop macro node should exist."), WhileLoopGraphNode);
+	TestNotNull(TEXT("CurrentIndex setter node should exist."), SetIndexGraphNode);
+	TestNotNull(TEXT("LoopBodyHit setter node should exist."), SetLoopBodyHitGraphNode);
+	TestNotNull(TEXT("DestroyActor call node should exist."), CallGraphNode);
+	if (EventNode == nullptr
+		|| GateStartsClosedGetterGraphNode == nullptr
+		|| FirstGetterGraphNode == nullptr
+		|| LastGetterGraphNode == nullptr
+		|| ShouldContinueGetterGraphNode == nullptr
+		|| GateGraphNode == nullptr
+		|| ForLoopGraphNode == nullptr
+		|| WhileLoopGraphNode == nullptr
+		|| SetIndexGraphNode == nullptr
+		|| SetLoopBodyHitGraphNode == nullptr
+		|| CallGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const GateStartsClosedGetterGraphPin = GateStartsClosedGetterGraphNode->FindPin(TEXT("GateStartsClosed"));
+	UEdGraphPin* const FirstGetterGraphPin = FirstGetterGraphNode->FindPin(TEXT("FirstIndex"));
+	UEdGraphPin* const LastGetterGraphPin = LastGetterGraphNode->FindPin(TEXT("LastIndex"));
+	UEdGraphPin* const ShouldContinueGetterGraphPin = ShouldContinueGetterGraphNode->FindPin(TEXT("ShouldContinue"));
+	UEdGraphPin* const GateEnterGraphPin = GateGraphNode->FindPin(TEXT("Enter"));
+	UEdGraphPin* const GateOpenGraphPin = GateGraphNode->FindPin(TEXT("Open"));
+	UEdGraphPin* const GateCloseGraphPin = GateGraphNode->FindPin(TEXT("Close"));
+	UEdGraphPin* const GateToggleGraphPin = GateGraphNode->FindPin(TEXT("Toggle"));
+	UEdGraphPin* const GateStartClosedGraphPin = GateGraphNode->FindPin(TEXT("bStartClosed"));
+	UEdGraphPin* const GateExitGraphPin = GateGraphNode->FindPin(TEXT("Exit"));
+	UEdGraphPin* const ForLoopExecGraphPin = ForLoopGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const ForLoopFirstGraphPin = ForLoopGraphNode->FindPin(TEXT("FirstIndex"));
+	UEdGraphPin* const ForLoopLastGraphPin = ForLoopGraphNode->FindPin(TEXT("LastIndex"));
+	UEdGraphPin* const ForLoopLoopBodyGraphPin = ForLoopGraphNode->FindPin(TEXT("LoopBody"));
+	UEdGraphPin* const ForLoopBreakGraphPin = ForLoopGraphNode->FindPin(TEXT("Break"));
+	UEdGraphPin* const ForLoopIndexGraphPin = ForLoopGraphNode->FindPin(TEXT("Index"));
+	UEdGraphPin* const ForLoopCompletedGraphPin = ForLoopGraphNode->FindPin(TEXT("Completed"));
+	UEdGraphPin* const WhileLoopExecGraphPin = WhileLoopGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const WhileLoopConditionGraphPin = WhileLoopGraphNode->FindPin(TEXT("Condition"));
+	UEdGraphPin* const WhileLoopBodyGraphPin = WhileLoopGraphNode->FindPin(TEXT("LoopBody"));
+	UEdGraphPin* const WhileLoopCompletedGraphPin = WhileLoopGraphNode->FindPin(TEXT("Completed"));
+	UEdGraphPin* const SetIndexExecGraphPin = SetIndexGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetIndexValueGraphPin = SetIndexGraphNode->FindPin(TEXT("CurrentIndex"));
+	UEdGraphPin* const SetLoopBodyHitExecGraphPin = SetLoopBodyHitGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetLoopBodyHitValueGraphPin = SetLoopBodyHitGraphNode->FindPin(TEXT("LoopBodyHit"));
+	UEdGraphPin* const CallExecGraphPin = CallGraphNode->GetExecPin();
+
+	TestTrue(TEXT("GateStartsClosed getter should remain pure."), GateStartsClosedGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("FirstIndex getter should remain pure."), FirstGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("LastIndex getter should remain pure."), LastGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("ShouldContinue getter should remain pure."), ShouldContinueGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("Gate should resolve the UE_5.7 StandardMacros Gate graph."), GateGraphNode->GetMacroGraph() != nullptr && GateGraphNode->GetMacroGraph()->GetFName() == TEXT("Gate"));
+	TestTrue(TEXT("ForLoopWithBreak should resolve the UE_5.7 StandardMacros ForLoopWithBreak graph."), ForLoopGraphNode->GetMacroGraph() != nullptr && ForLoopGraphNode->GetMacroGraph()->GetFName() == TEXT("ForLoopWithBreak"));
+	TestTrue(TEXT("WhileLoop should resolve the UE_5.7 StandardMacros WhileLoop graph."), WhileLoopGraphNode->GetMacroGraph() != nullptr && WhileLoopGraphNode->GetMacroGraph()->GetFName() == TEXT("WhileLoop"));
+	TestNotNull(TEXT("Gate should expose Open, Close, Toggle, and Exit pins."), GateOpenGraphPin);
+	TestNotNull(TEXT("Gate should expose a Close pin."), GateCloseGraphPin);
+	TestNotNull(TEXT("Gate should expose a Toggle pin."), GateToggleGraphPin);
+	TestNotNull(TEXT("ForLoopWithBreak should expose a Break pin."), ForLoopBreakGraphPin);
+	TestTrue(TEXT("Event should feed Gate Enter."), EventThenGraphPin != nullptr && GateEnterGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(GateEnterGraphPin));
+	TestTrue(TEXT("GateStartsClosed getter should feed Gate bStartClosed."), GateStartsClosedGetterGraphPin != nullptr && GateStartClosedGraphPin != nullptr && GateStartsClosedGetterGraphPin->LinkedTo.Contains(GateStartClosedGraphPin));
+	TestTrue(TEXT("Gate Exit should feed ForLoopWithBreak exec."), GateExitGraphPin != nullptr && ForLoopExecGraphPin != nullptr && GateExitGraphPin->LinkedTo.Contains(ForLoopExecGraphPin));
+	TestTrue(TEXT("FirstIndex getter should feed ForLoopWithBreak FirstIndex."), FirstGetterGraphPin != nullptr && ForLoopFirstGraphPin != nullptr && FirstGetterGraphPin->LinkedTo.Contains(ForLoopFirstGraphPin));
+	TestTrue(TEXT("LastIndex getter should feed ForLoopWithBreak LastIndex."), LastGetterGraphPin != nullptr && ForLoopLastGraphPin != nullptr && LastGetterGraphPin->LinkedTo.Contains(ForLoopLastGraphPin));
+	TestTrue(TEXT("ForLoopWithBreak LoopBody should feed CurrentIndex setter exec."), ForLoopLoopBodyGraphPin != nullptr && SetIndexExecGraphPin != nullptr && ForLoopLoopBodyGraphPin->LinkedTo.Contains(SetIndexExecGraphPin));
+	TestTrue(TEXT("ForLoopWithBreak Index should feed CurrentIndex setter value."), ForLoopIndexGraphPin != nullptr && SetIndexValueGraphPin != nullptr && ForLoopIndexGraphPin->LinkedTo.Contains(SetIndexValueGraphPin));
+	TestTrue(TEXT("ForLoopWithBreak Completed should feed WhileLoop exec."), ForLoopCompletedGraphPin != nullptr && WhileLoopExecGraphPin != nullptr && ForLoopCompletedGraphPin->LinkedTo.Contains(WhileLoopExecGraphPin));
+	TestTrue(TEXT("ShouldContinue getter should feed WhileLoop Condition."), ShouldContinueGetterGraphPin != nullptr && WhileLoopConditionGraphPin != nullptr && ShouldContinueGetterGraphPin->LinkedTo.Contains(WhileLoopConditionGraphPin));
+	TestTrue(TEXT("WhileLoop LoopBody should feed LoopBodyHit setter exec."), WhileLoopBodyGraphPin != nullptr && SetLoopBodyHitExecGraphPin != nullptr && WhileLoopBodyGraphPin->LinkedTo.Contains(SetLoopBodyHitExecGraphPin));
+	TestTrue(TEXT("ShouldContinue getter should feed LoopBodyHit setter value."), ShouldContinueGetterGraphPin != nullptr && SetLoopBodyHitValueGraphPin != nullptr && ShouldContinueGetterGraphPin->LinkedTo.Contains(SetLoopBodyHitValueGraphPin));
+	TestTrue(TEXT("WhileLoop Completed should feed DestroyActor exec."), WhileLoopCompletedGraphPin != nullptr && CallExecGraphPin != nullptr && WhileLoopCompletedGraphPin->LinkedTo.Contains(CallExecGraphPin));
+
+	return true;
+}
 
 bool FVergilSpawnActorExecutionTest::RunTest(const FString& Parameters)
 {
