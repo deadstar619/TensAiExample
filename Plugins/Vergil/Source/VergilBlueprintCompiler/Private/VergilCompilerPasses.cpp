@@ -2,6 +2,7 @@
 
 #include "Algo/AnyOf.h"
 #include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
@@ -19,12 +20,26 @@ namespace
 	const FName EventGraphName(TEXT("EventGraph"));
 	const FName ConstructionScriptGraphName(TEXT("UserConstructionScript"));
 	const FString StandardMacrosBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+	const FName AddComponentClassPinName(TEXT("Class"));
+	const FName AddComponentRelativeTransformPinName(TEXT("RelativeTransform"));
+	const FName AddComponentManualAttachmentPinName(TEXT("bManualAttachment"));
+	const FName ComponentLookupClassPinName(TEXT("ComponentClass"));
+	const FName ComponentLookupTagPinName(TEXT("Tag"));
+	const FName ActorGetComponentByClassFunctionName(TEXT("GetComponentByClass"));
+	const FName ActorFindComponentByTagFunctionName(TEXT("FindComponentByTag"));
 	const FName SpawnActorClassPinName(TEXT("Class"));
 	const FName SpawnActorWorldContextPinName(TEXT("WorldContextObject"));
 	const FName SpawnActorTransformPinName(TEXT("SpawnTransform"));
 	const FName SpawnActorCollisionHandlingOverridePinName(TEXT("CollisionHandlingOverride"));
 	const FName SpawnActorTransformScaleMethodPinName(TEXT("TransformScaleMethod"));
 	const FName SpawnActorOwnerPinName(TEXT("Owner"));
+
+	struct FVergilSupportedPinDescriptor
+	{
+		FName Name = NAME_None;
+		EVergilPinDirection Direction = EVergilPinDirection::Input;
+		bool bIsExec = false;
+	};
 
 	struct FVergilSpawnActorPinDescriptor
 	{
@@ -41,6 +56,14 @@ namespace
 		FName NotFoundDiagnosticCode;
 	};
 
+	struct FVergilComponentLookupDescriptor
+	{
+		FName Descriptor;
+		FName CommandName;
+		FName FunctionName;
+		bool bSupportsTag = false;
+	};
+
 	const FVergilStandardMacroDescriptor* FindStandardMacroDescriptorByDescriptor(const FName Descriptor)
 	{
 		static const FVergilStandardMacroDescriptor Descriptors[] =
@@ -54,6 +77,27 @@ namespace
 		};
 
 		for (const FVergilStandardMacroDescriptor& Candidate : Descriptors)
+		{
+			if (Candidate.Descriptor == Descriptor)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FVergilComponentLookupDescriptor* FindComponentLookupDescriptorByDescriptor(const FName Descriptor)
+	{
+		static const FVergilComponentLookupDescriptor Descriptors[] =
+		{
+			{ TEXT("K2.GetComponentByClass"), TEXT("Vergil.K2.GetComponentByClass"), ActorGetComponentByClassFunctionName, false },
+			{ TEXT("K2.GetComponentsByClass"), TEXT("Vergil.K2.GetComponentsByClass"), GET_FUNCTION_NAME_CHECKED(AActor, K2_GetComponentsByClass), false },
+			{ TEXT("K2.FindComponentByTag"), TEXT("Vergil.K2.FindComponentByTag"), ActorFindComponentByTagFunctionName, true },
+			{ TEXT("K2.GetComponentsByTag"), TEXT("Vergil.K2.GetComponentsByTag"), GET_FUNCTION_NAME_CHECKED(AActor, GetComponentsByTag), true },
+		};
+
+		for (const FVergilComponentLookupDescriptor& Candidate : Descriptors)
 		{
 			if (Candidate.Descriptor == Descriptor)
 			{
@@ -182,6 +226,28 @@ namespace
 				AddNodeDiagnostic(TEXT("MissingCustomEventName"), TEXT("Custom event nodes require a descriptor suffix naming the event."));
 			}
 
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.AddComponentByClass"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ComponentClassPath"),
+				Context,
+				TEXT("MissingAddComponentClassPath"),
+				TEXT("AddComponentByClass nodes require metadata ComponentClassPath naming the component class to create."));
+			return bIsValid;
+		}
+
+		if (const FVergilComponentLookupDescriptor* const ComponentLookupDescriptor = FindComponentLookupDescriptorByDescriptor(Node.Descriptor))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ComponentClassPath"),
+				Context,
+				TEXT("MissingComponentLookupClassPath"),
+				FString::Printf(TEXT("%s nodes require metadata ComponentClassPath naming the component class to query."), *ComponentLookupDescriptor->Descriptor.ToString()));
 			return bIsValid;
 		}
 
@@ -1053,6 +1119,198 @@ namespace
 		return true;
 	}
 
+	bool ResolveAndNormalizeActorComponentClassMetadata(
+		FVergilGraphNode& Node,
+		const FName MetadataKey,
+		const FName NotFoundDiagnosticCode,
+		const FName InvalidDiagnosticCode,
+		const TCHAR* ContextLabel,
+		FVergilCompilerContext& Context,
+		bool& bOutChanged,
+		UClass*& OutComponentClass)
+	{
+		OutComponentClass = nullptr;
+
+		const FString ComponentClassPath = Node.Metadata.FindRef(MetadataKey).TrimStartAndEnd();
+		FString NormalizedClassPath;
+		if (!ResolveNormalizedClassPath(ComponentClassPath, NormalizedClassPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				NotFoundDiagnosticCode,
+				FString::Printf(TEXT("Unable to resolve %s '%s'."), ContextLabel, *ComponentClassPath),
+				Node.Id);
+			return false;
+		}
+
+		UClass* const ComponentClass = ResolveClassReference(NormalizedClassPath);
+		if (ComponentClass == nullptr || !ComponentClass->IsChildOf(UActorComponent::StaticClass()))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				InvalidDiagnosticCode,
+				FString::Printf(TEXT("%s '%s' must resolve to a UActorComponent-derived class."), ContextLabel, *NormalizedClassPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, MetadataKey, NormalizedClassPath);
+		OutComponentClass = ComponentClass;
+		return true;
+	}
+
+	void BuildAddComponentSupportedPins(const UClass* ComponentClass, TArray<FVergilSupportedPinDescriptor>& OutPins)
+	{
+		OutPins.Reset();
+
+		OutPins.Add({ UEdGraphSchema_K2::PN_Execute, EVergilPinDirection::Input, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_ReturnValue, EVergilPinDirection::Output, false });
+		OutPins.Add({ UEdGraphSchema_K2::PN_Self, EVergilPinDirection::Input, false });
+
+		if (ComponentClass == nullptr)
+		{
+			return;
+		}
+
+		if (ComponentClass->IsChildOf(USceneComponent::StaticClass()))
+		{
+			OutPins.Add({ AddComponentManualAttachmentPinName, EVergilPinDirection::Input, false });
+			OutPins.Add({ AddComponentRelativeTransformPinName, EVergilPinDirection::Input, false });
+		}
+
+		for (TFieldIterator<FProperty> PropertyIt(ComponentClass, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+		{
+			FProperty* const Property = *PropertyIt;
+			if (Property == nullptr)
+			{
+				continue;
+			}
+
+			const bool bIsDelegate = Property->IsA(FMulticastDelegateProperty::StaticClass());
+			const bool bIsExposedToSpawn = UEdGraphSchema_K2::IsPropertyExposedOnSpawn(Property);
+			const bool bIsSettableExternally = !Property->HasAnyPropertyFlags(CPF_DisableEditOnInstance);
+
+			if (bIsExposedToSpawn
+				&& !Property->HasAnyPropertyFlags(CPF_Parm)
+				&& bIsSettableExternally
+				&& Property->HasAllPropertyFlags(CPF_BlueprintVisible)
+				&& !bIsDelegate
+				&& FBlueprintEditorUtils::PropertyStillExists(Property))
+			{
+				OutPins.Add({ Property->GetFName(), EVergilPinDirection::Input, false });
+			}
+		}
+	}
+
+	bool ValidateAddComponentPins(
+		const FVergilGraphNode& Node,
+		const UClass* ComponentClass,
+		FVergilCompilerContext& Context)
+	{
+		TArray<FVergilSupportedPinDescriptor> SupportedPins;
+		BuildAddComponentSupportedPins(ComponentClass, SupportedPins);
+
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			if (Pin.Name == AddComponentClassPinName)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("AddComponentDynamicClassPinUnsupported"),
+					TEXT("K2.AddComponentByClass currently uses ComponentClassPath metadata as its deterministic class source; authored Class-pin connections are not supported."),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			const FVergilSupportedPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&Pin](const FVergilSupportedPinDescriptor& Candidate)
+			{
+				return Candidate.Name == Pin.Name
+					&& Candidate.Direction == Pin.Direction
+					&& Candidate.bIsExec == Pin.bIsExec;
+			});
+
+			if (SupportedPin == nullptr)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("AddComponentPinUnsupported"),
+					FString::Printf(
+						TEXT("K2.AddComponentByClass pin '%s' is not part of the UE_5.7 AddComponentByClass surface for component class '%s'."),
+						*Pin.Name.ToString(),
+						ComponentClass != nullptr ? *ComponentClass->GetPathName() : TEXT("<null>")),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
+	void BuildComponentLookupSupportedPins(const bool bSupportsTag, TArray<FVergilSupportedPinDescriptor>& OutPins)
+	{
+		OutPins.Reset();
+		OutPins.Add({ UEdGraphSchema_K2::PN_Self, EVergilPinDirection::Input, false });
+		OutPins.Add({ UEdGraphSchema_K2::PN_ReturnValue, EVergilPinDirection::Output, false });
+
+		if (bSupportsTag)
+		{
+			OutPins.Add({ ComponentLookupTagPinName, EVergilPinDirection::Input, false });
+		}
+	}
+
+	bool ValidateComponentLookupPins(
+		const FVergilGraphNode& Node,
+		const FVergilComponentLookupDescriptor& Descriptor,
+		const UClass* ComponentClass,
+		FVergilCompilerContext& Context)
+	{
+		TArray<FVergilSupportedPinDescriptor> SupportedPins;
+		BuildComponentLookupSupportedPins(Descriptor.bSupportsTag, SupportedPins);
+
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			if (Pin.Name == ComponentLookupClassPinName)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ComponentLookupDynamicClassPinUnsupported"),
+					FString::Printf(
+						TEXT("%s currently uses ComponentClassPath metadata as its deterministic class source; authored ComponentClass pin connections are not supported."),
+						*Descriptor.Descriptor.ToString()),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			const FVergilSupportedPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&Pin](const FVergilSupportedPinDescriptor& Candidate)
+			{
+				return Candidate.Name == Pin.Name
+					&& Candidate.Direction == Pin.Direction
+					&& Candidate.bIsExec == Pin.bIsExec;
+			});
+
+			if (SupportedPin == nullptr)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("ComponentLookupPinUnsupported"),
+					FString::Printf(
+						TEXT("%s pin '%s' is not part of the UE_5.7 deterministic surface for component class '%s'."),
+						*Descriptor.Descriptor.ToString(),
+						*Pin.Name.ToString(),
+						ComponentClass != nullptr ? *ComponentClass->GetPathName() : TEXT("<null>")),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
 	void BuildSpawnActorSupportedPins(const UClass* ActorClass, TArray<FVergilSpawnActorPinDescriptor>& OutPins)
 	{
 		OutPins.Reset();
@@ -1178,6 +1436,50 @@ namespace
 
 		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("ActorClassPath"), NormalizedClassPath);
 		return ValidateSpawnActorPins(Node, ActorClass, Context);
+	}
+
+	bool ResolveAndNormalizeAddComponentByClassNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		UClass* ComponentClass = nullptr;
+		if (!ResolveAndNormalizeActorComponentClassMetadata(
+			Node,
+			TEXT("ComponentClassPath"),
+			TEXT("AddComponentClassNotFound"),
+			TEXT("AddComponentClassNotComponent"),
+			TEXT("add-component class"),
+			Context,
+			bOutChanged,
+			ComponentClass))
+		{
+			return false;
+		}
+
+		return ValidateAddComponentPins(Node, ComponentClass, Context);
+	}
+
+	bool ResolveAndNormalizeComponentLookupNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		const FVergilComponentLookupDescriptor* const Descriptor = FindComponentLookupDescriptorByDescriptor(Node.Descriptor);
+		if (Descriptor == nullptr)
+		{
+			return true;
+		}
+
+		UClass* ComponentClass = nullptr;
+		if (!ResolveAndNormalizeActorComponentClassMetadata(
+			Node,
+			TEXT("ComponentClassPath"),
+			TEXT("ComponentLookupClassNotFound"),
+			TEXT("ComponentLookupClassNotComponent"),
+			TEXT("component lookup class"),
+			Context,
+			bOutChanged,
+			ComponentClass))
+		{
+			return false;
+		}
+
+		return ValidateComponentLookupPins(Node, *Descriptor, ComponentClass, Context);
 	}
 
 	bool ResolveAndNormalizeSelectNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
@@ -1377,6 +1679,16 @@ namespace
 
 	bool ResolveNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
 	{
+		if (Node.Descriptor == TEXT("K2.AddComponentByClass"))
+		{
+			return ResolveAndNormalizeAddComponentByClassNodeType(Node, Context, bOutChanged);
+		}
+
+		if (FindComponentLookupDescriptorByDescriptor(Node.Descriptor) != nullptr)
+		{
+			return ResolveAndNormalizeComponentLookupNodeType(Node, Context, bOutChanged);
+		}
+
 		if (Node.Descriptor == TEXT("K2.Cast"))
 		{
 			return ResolveAndNormalizeCastNodeType(Node, Context, bOutChanged);
@@ -2752,6 +3064,86 @@ namespace
 		}
 	};
 
+	class FVergilAddComponentByClassNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.AddComponentByClass");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.AddComponentByClass");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString ComponentClassPath = Node.Metadata.FindRef(TEXT("ComponentClassPath"));
+			if (ComponentClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingAddComponentClassPath"), TEXT("AddComponentByClass nodes require metadata ComponentClassPath."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = ComponentClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
+	class FVergilComponentLookupNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		explicit FVergilComponentLookupNodeHandler(const FVergilComponentLookupDescriptor& InDescriptor)
+			: Descriptor(InDescriptor)
+		{
+		}
+
+		virtual FName GetDescriptor() const override
+		{
+			return Descriptor.CommandName;
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == Descriptor.Descriptor;
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			const FString ComponentClassPath = Node.Metadata.FindRef(TEXT("ComponentClassPath"));
+			if (ComponentClassPath.IsEmpty())
+			{
+				Context.AddDiagnostic(EVergilDiagnosticSeverity::Error, TEXT("MissingComponentLookupClassPath"), TEXT("Component lookup nodes require metadata ComponentClassPath."), Node.Id);
+				return false;
+			}
+
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = Descriptor.CommandName;
+			Command.StringValue = ComponentClassPath;
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+
+	private:
+		FVergilComponentLookupDescriptor Descriptor;
+	};
+
 	class FVergilBindDelegateNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -3527,6 +3919,23 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.WhileLoop"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilDelayNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSpawnActorNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilAddComponentByClassNodeHandler, ESPMode::ThreadSafe>());
+		if (const FVergilComponentLookupDescriptor* const GetComponentByClassDescriptor = FindComponentLookupDescriptorByDescriptor(TEXT("K2.GetComponentByClass")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilComponentLookupNodeHandler, ESPMode::ThreadSafe>(*GetComponentByClassDescriptor));
+		}
+		if (const FVergilComponentLookupDescriptor* const GetComponentsByClassDescriptor = FindComponentLookupDescriptorByDescriptor(TEXT("K2.GetComponentsByClass")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilComponentLookupNodeHandler, ESPMode::ThreadSafe>(*GetComponentsByClassDescriptor));
+		}
+		if (const FVergilComponentLookupDescriptor* const FindComponentByTagDescriptor = FindComponentLookupDescriptorByDescriptor(TEXT("K2.FindComponentByTag")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilComponentLookupNodeHandler, ESPMode::ThreadSafe>(*FindComponentByTagDescriptor));
+		}
+		if (const FVergilComponentLookupDescriptor* const GetComponentsByTagDescriptor = FindComponentLookupDescriptorByDescriptor(TEXT("K2.GetComponentsByTag")))
+		{
+			FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilComponentLookupNodeHandler, ESPMode::ThreadSafe>(*GetComponentsByTagDescriptor));
+		}
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBindDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilRemoveDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilClearDelegateNodeHandler, ESPMode::ThreadSafe>());

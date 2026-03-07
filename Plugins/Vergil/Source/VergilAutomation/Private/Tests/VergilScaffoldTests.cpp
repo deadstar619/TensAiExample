@@ -10,6 +10,7 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
 #include "EdGraphSchema_K2.h"
+#include "K2Node_AddComponentByClass.h"
 #include "K2Node_AddDelegate.h"
 #include "K2Node_CallDelegate.h"
 #include "K2Node_CallFunction.h"
@@ -2448,6 +2449,90 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		SpawnTransformPin.Direction = EVergilPinDirection::Input;
 		SpawnActorNode.Pins.Add(SpawnTransformPin);
 
+		FVergilGraphNode AddComponentNode;
+		AddComponentNode.Id = FGuid::NewGuid();
+		AddComponentNode.Kind = EVergilNodeKind::Custom;
+		AddComponentNode.Descriptor = TEXT("K2.AddComponentByClass");
+		AddComponentNode.Metadata.Add(TEXT("ComponentClassPath"), TEXT("   /Script/Engine.SceneComponent   "));
+
+		FVergilGraphPin AddComponentRelativeTransformPin;
+		AddComponentRelativeTransformPin.Id = FGuid::NewGuid();
+		AddComponentRelativeTransformPin.Name = TEXT("RelativeTransform");
+		AddComponentRelativeTransformPin.Direction = EVergilPinDirection::Input;
+		AddComponentNode.Pins.Add(AddComponentRelativeTransformPin);
+
+		FVergilGraphPin AddComponentManualAttachmentPin;
+		AddComponentManualAttachmentPin.Id = FGuid::NewGuid();
+		AddComponentManualAttachmentPin.Name = TEXT("bManualAttachment");
+		AddComponentManualAttachmentPin.Direction = EVergilPinDirection::Input;
+		AddComponentNode.Pins.Add(AddComponentManualAttachmentPin);
+
+		FVergilGraphPin AddComponentReturnPin;
+		AddComponentReturnPin.Id = FGuid::NewGuid();
+		AddComponentReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		AddComponentReturnPin.Direction = EVergilPinDirection::Output;
+		AddComponentNode.Pins.Add(AddComponentReturnPin);
+
+		FVergilGraphNode GetComponentByClassNode;
+		GetComponentByClassNode.Id = FGuid::NewGuid();
+		GetComponentByClassNode.Kind = EVergilNodeKind::Custom;
+		GetComponentByClassNode.Descriptor = TEXT("K2.GetComponentByClass");
+		GetComponentByClassNode.Metadata.Add(TEXT("ComponentClassPath"), TEXT("   /Script/Engine.SceneComponent   "));
+
+		FVergilGraphPin GetComponentByClassReturnPin;
+		GetComponentByClassReturnPin.Id = FGuid::NewGuid();
+		GetComponentByClassReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		GetComponentByClassReturnPin.Direction = EVergilPinDirection::Output;
+		GetComponentByClassNode.Pins.Add(GetComponentByClassReturnPin);
+
+		FVergilGraphNode GetComponentsByClassNode;
+		GetComponentsByClassNode.Id = FGuid::NewGuid();
+		GetComponentsByClassNode.Kind = EVergilNodeKind::Custom;
+		GetComponentsByClassNode.Descriptor = TEXT("K2.GetComponentsByClass");
+		GetComponentsByClassNode.Metadata.Add(TEXT("ComponentClassPath"), TEXT("   /Script/Engine.SceneComponent   "));
+
+		FVergilGraphPin GetComponentsByClassReturnPin;
+		GetComponentsByClassReturnPin.Id = FGuid::NewGuid();
+		GetComponentsByClassReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		GetComponentsByClassReturnPin.Direction = EVergilPinDirection::Output;
+		GetComponentsByClassNode.Pins.Add(GetComponentsByClassReturnPin);
+
+		FVergilGraphNode FindComponentByTagNode;
+		FindComponentByTagNode.Id = FGuid::NewGuid();
+		FindComponentByTagNode.Kind = EVergilNodeKind::Custom;
+		FindComponentByTagNode.Descriptor = TEXT("K2.FindComponentByTag");
+		FindComponentByTagNode.Metadata.Add(TEXT("ComponentClassPath"), TEXT("   /Script/Engine.SceneComponent   "));
+
+		FVergilGraphPin FindComponentByTagTagPin;
+		FindComponentByTagTagPin.Id = FGuid::NewGuid();
+		FindComponentByTagTagPin.Name = TEXT("Tag");
+		FindComponentByTagTagPin.Direction = EVergilPinDirection::Input;
+		FindComponentByTagNode.Pins.Add(FindComponentByTagTagPin);
+
+		FVergilGraphPin FindComponentByTagReturnPin;
+		FindComponentByTagReturnPin.Id = FGuid::NewGuid();
+		FindComponentByTagReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		FindComponentByTagReturnPin.Direction = EVergilPinDirection::Output;
+		FindComponentByTagNode.Pins.Add(FindComponentByTagReturnPin);
+
+		FVergilGraphNode GetComponentsByTagNode;
+		GetComponentsByTagNode.Id = FGuid::NewGuid();
+		GetComponentsByTagNode.Kind = EVergilNodeKind::Custom;
+		GetComponentsByTagNode.Descriptor = TEXT("K2.GetComponentsByTag");
+		GetComponentsByTagNode.Metadata.Add(TEXT("ComponentClassPath"), TEXT("   /Script/Engine.SceneComponent   "));
+
+		FVergilGraphPin GetComponentsByTagTagPin;
+		GetComponentsByTagTagPin.Id = FGuid::NewGuid();
+		GetComponentsByTagTagPin.Name = TEXT("Tag");
+		GetComponentsByTagTagPin.Direction = EVergilPinDirection::Input;
+		GetComponentsByTagNode.Pins.Add(GetComponentsByTagTagPin);
+
+		FVergilGraphPin GetComponentsByTagReturnPin;
+		GetComponentsByTagReturnPin.Id = FGuid::NewGuid();
+		GetComponentsByTagReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+		GetComponentsByTagReturnPin.Direction = EVergilPinDirection::Output;
+		GetComponentsByTagNode.Pins.Add(GetComponentsByTagReturnPin);
+
 		FVergilCompileRequest Request;
 		Request.TargetBlueprint = MakeTestBlueprint();
 		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_Normalized");
@@ -2457,7 +2542,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode };
+		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode };
 
 		FVergilGraphEdge TransformToSpawn;
 		TransformToSpawn.Id = FGuid::NewGuid();
@@ -2593,6 +2678,48 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		{
 			TestEqual(TEXT("Spawn actor class paths should normalize before planning."), PlannedSpawnActorCommand->StringValue, AActor::StaticClass()->GetPathName());
 			TestEqual(TEXT("Spawn actor metadata should retain the normalized class path."), PlannedSpawnActorCommand->Attributes.FindRef(TEXT("ActorClassPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedAddComponentCommand = FindNodeCommand(Result.Commands, AddComponentNode.Id);
+		TestNotNull(TEXT("Resolved add-component nodes should still lower into AddNode commands."), PlannedAddComponentCommand);
+		if (PlannedAddComponentCommand != nullptr)
+		{
+			TestEqual(TEXT("AddComponentByClass should lower into its dedicated command name."), PlannedAddComponentCommand->Name, FName(TEXT("Vergil.K2.AddComponentByClass")));
+			TestEqual(TEXT("AddComponentByClass should normalize ComponentClassPath into StringValue."), PlannedAddComponentCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+			TestEqual(TEXT("AddComponentByClass metadata should retain the normalized component class path."), PlannedAddComponentCommand->Attributes.FindRef(TEXT("ComponentClassPath")), USceneComponent::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedGetComponentByClassCommand = FindNodeCommand(Result.Commands, GetComponentByClassNode.Id);
+		TestNotNull(TEXT("Resolved GetComponentByClass nodes should still lower into AddNode commands."), PlannedGetComponentByClassCommand);
+		if (PlannedGetComponentByClassCommand != nullptr)
+		{
+			TestEqual(TEXT("GetComponentByClass should lower into its dedicated command name."), PlannedGetComponentByClassCommand->Name, FName(TEXT("Vergil.K2.GetComponentByClass")));
+			TestEqual(TEXT("GetComponentByClass should normalize ComponentClassPath into StringValue."), PlannedGetComponentByClassCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+			TestEqual(TEXT("GetComponentByClass metadata should retain the normalized component class path."), PlannedGetComponentByClassCommand->Attributes.FindRef(TEXT("ComponentClassPath")), USceneComponent::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedGetComponentsByClassCommand = FindNodeCommand(Result.Commands, GetComponentsByClassNode.Id);
+		TestNotNull(TEXT("Resolved GetComponentsByClass nodes should still lower into AddNode commands."), PlannedGetComponentsByClassCommand);
+		if (PlannedGetComponentsByClassCommand != nullptr)
+		{
+			TestEqual(TEXT("GetComponentsByClass should lower into its dedicated command name."), PlannedGetComponentsByClassCommand->Name, FName(TEXT("Vergil.K2.GetComponentsByClass")));
+			TestEqual(TEXT("GetComponentsByClass should normalize ComponentClassPath into StringValue."), PlannedGetComponentsByClassCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedFindComponentByTagCommand = FindNodeCommand(Result.Commands, FindComponentByTagNode.Id);
+		TestNotNull(TEXT("Resolved FindComponentByTag nodes should still lower into AddNode commands."), PlannedFindComponentByTagCommand);
+		if (PlannedFindComponentByTagCommand != nullptr)
+		{
+			TestEqual(TEXT("FindComponentByTag should lower into its dedicated command name."), PlannedFindComponentByTagCommand->Name, FName(TEXT("Vergil.K2.FindComponentByTag")));
+			TestEqual(TEXT("FindComponentByTag should normalize ComponentClassPath into StringValue."), PlannedFindComponentByTagCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedGetComponentsByTagCommand = FindNodeCommand(Result.Commands, GetComponentsByTagNode.Id);
+		TestNotNull(TEXT("Resolved GetComponentsByTag nodes should still lower into AddNode commands."), PlannedGetComponentsByTagCommand);
+		if (PlannedGetComponentsByTagCommand != nullptr)
+		{
+			TestEqual(TEXT("GetComponentsByTag should lower into its dedicated command name."), PlannedGetComponentsByTagCommand->Name, FName(TEXT("Vergil.K2.GetComponentsByTag")));
+			TestEqual(TEXT("GetComponentsByTag should normalize ComponentClassPath into StringValue."), PlannedGetComponentsByTagCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
 		}
 
 		const FVergilCompilerCommand* const PlannedMakeTransformCommand = FindNodeCommand(Result.Commands, MakeTransformNode.Id);
@@ -2746,6 +2873,42 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid wildcard node categories should fail type resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid wildcard node categories should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid wildcard node categories should report InvalidSelectValueType."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidSelectValueType")));
+	}
+
+	{
+		FVergilGraphNode InvalidAddComponentNode;
+		InvalidAddComponentNode.Id = FGuid::NewGuid();
+		InvalidAddComponentNode.Kind = EVergilNodeKind::Custom;
+		InvalidAddComponentNode.Descriptor = TEXT("K2.AddComponentByClass");
+		InvalidAddComponentNode.Metadata.Add(TEXT("ComponentClassPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidAddComponentByClass");
+		Request.Document.Nodes.Add(InvalidAddComponentNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Non-component add-component classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid add-component class types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid add-component class types should report AddComponentClassNotComponent."), ContainsDiagnostic(Result.Diagnostics, TEXT("AddComponentClassNotComponent")));
+	}
+
+	{
+		FVergilGraphNode InvalidComponentLookupNode;
+		InvalidComponentLookupNode.Id = FGuid::NewGuid();
+		InvalidComponentLookupNode.Kind = EVergilNodeKind::Custom;
+		InvalidComponentLookupNode.Descriptor = TEXT("K2.GetComponentByClass");
+		InvalidComponentLookupNode.Metadata.Add(TEXT("ComponentClassPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidGetComponentByClass");
+		Request.Document.Nodes.Add(InvalidComponentLookupNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Non-component lookup classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid component lookup class types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid component lookup class types should report ComponentLookupClassNotComponent."), ContainsDiagnostic(Result.Diagnostics, TEXT("ComponentLookupClassNotComponent")));
 	}
 
 	{
@@ -3642,6 +3805,24 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.SpawnActor should report exact-match descriptor inspection."), SpawnActorContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.SpawnActor should require ActorClassPath metadata."), ContainsNameValue(SpawnActorContract->RequiredMetadataKeys, TEXT("ActorClassPath")));
 		TestTrue(TEXT("K2.SpawnActor notes should mention expose-on-spawn pins."), SpawnActorContract->Notes.Contains(TEXT("ExposeOnSpawn")));
+	}
+
+	const FVergilSupportedDescriptorContract* const AddComponentContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.AddComponentByClass"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.AddComponentByClass."), AddComponentContract);
+	if (AddComponentContract != nullptr)
+	{
+		TestEqual(TEXT("K2.AddComponentByClass should report exact-match descriptor inspection."), AddComponentContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.AddComponentByClass should require ComponentClassPath metadata."), ContainsNameValue(AddComponentContract->RequiredMetadataKeys, TEXT("ComponentClassPath")));
+		TestTrue(TEXT("K2.AddComponentByClass notes should mention scene-component-only pins."), AddComponentContract->Notes.Contains(TEXT("scene-component-only")));
+	}
+
+	const FVergilSupportedDescriptorContract* const GetComponentByClassContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.GetComponentByClass"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.GetComponentByClass."), GetComponentByClassContract);
+	if (GetComponentByClassContract != nullptr)
+	{
+		TestEqual(TEXT("K2.GetComponentByClass should report exact-match descriptor inspection."), GetComponentByClassContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.GetComponentByClass should require ComponentClassPath metadata."), ContainsNameValue(GetComponentByClassContract->RequiredMetadataKeys, TEXT("ComponentClassPath")));
+		TestTrue(TEXT("K2.GetComponentByClass notes should mention the deterministic ComponentClass input."), GetComponentByClassContract->Notes.Contains(TEXT("ComponentClass")));
 	}
 
 	const FVergilSupportedDescriptorContract* const CallContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.Call.<FunctionName>"));
@@ -11443,6 +11624,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.SpawnActorExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilComponentNodeExecutionTest,
+	"Vergil.Scaffold.ComponentNodeExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -12226,6 +12412,623 @@ bool FVergilSpawnActorExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Spawn actor Then should drive the SpawnedActor setter."), SpawnThenGraphPin != nullptr && SpawnThenGraphPin->LinkedTo.Contains(SetExecGraphPin));
 	TestTrue(TEXT("Spawn actor ReturnValue should feed the SpawnedActor setter value."), SpawnResultGraphPin != nullptr && SpawnResultGraphPin->LinkedTo.Contains(SetValueGraphPin));
 
+	return true;
+}
+
+bool FVergilComponentNodeExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint(AActor::StaticClass());
+	TestNotNull(TEXT("Transient actor test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	UScriptStruct* const TransformStruct = TBaseStructure<FTransform>::Get();
+	TestNotNull(TEXT("FTransform base structure should be available."), TransformStruct);
+	if (TransformStruct == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType SceneComponentType;
+	SceneComponentType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	SceneComponentType.PinSubCategoryObject = USceneComponent::StaticClass();
+	TestTrue(TEXT("CreatedComponent member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("CreatedComponent"), SceneComponentType, TEXT("None")));
+	TestTrue(TEXT("FoundComponentByClass member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("FoundComponentByClass"), SceneComponentType, TEXT("None")));
+	TestTrue(TEXT("FoundComponentByTag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("FoundComponentByTag"), SceneComponentType, TEXT("None")));
+
+	FEdGraphPinType SceneComponentArrayType = SceneComponentType;
+	SceneComponentArrayType.ContainerType = EPinContainerType::Array;
+	TestTrue(TEXT("ComponentsByClass member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ComponentsByClass"), SceneComponentArrayType, FString()));
+	TestTrue(TEXT("ComponentsByTag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("ComponentsByTag"), SceneComponentArrayType, FString()));
+
+	FEdGraphPinType NameType;
+	NameType.PinCategory = UEdGraphSchema_K2::PC_Name;
+	TestTrue(TEXT("LookupTag member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LookupTag"), NameType, TEXT("VergilTag")));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode MakeTransformNode;
+	MakeTransformNode.Id = FGuid::NewGuid();
+	MakeTransformNode.Kind = EVergilNodeKind::Custom;
+	MakeTransformNode.Descriptor = TEXT("K2.MakeStruct");
+	MakeTransformNode.Position = FVector2D(220.0f, 120.0f);
+	MakeTransformNode.Metadata.Add(TEXT("StructPath"), TransformStruct->GetPathName());
+
+	FVergilGraphPin MakeTransformResultPin;
+	MakeTransformResultPin.Id = FGuid::NewGuid();
+	MakeTransformResultPin.Name = TransformStruct->GetFName();
+	MakeTransformResultPin.Direction = EVergilPinDirection::Output;
+	MakeTransformNode.Pins.Add(MakeTransformResultPin);
+
+	FVergilGraphNode LookupTagGetterNode;
+	LookupTagGetterNode.Id = FGuid::NewGuid();
+	LookupTagGetterNode.Kind = EVergilNodeKind::VariableGet;
+	LookupTagGetterNode.Descriptor = TEXT("K2.VarGet.LookupTag");
+	LookupTagGetterNode.Position = FVector2D(220.0f, 360.0f);
+
+	FVergilGraphPin LookupTagGetterValuePin;
+	LookupTagGetterValuePin.Id = FGuid::NewGuid();
+	LookupTagGetterValuePin.Name = TEXT("LookupTag");
+	LookupTagGetterValuePin.Direction = EVergilPinDirection::Output;
+	LookupTagGetterNode.Pins.Add(LookupTagGetterValuePin);
+
+	FVergilGraphNode AddComponentNode;
+	AddComponentNode.Id = FGuid::NewGuid();
+	AddComponentNode.Kind = EVergilNodeKind::Custom;
+	AddComponentNode.Descriptor = TEXT("K2.AddComponentByClass");
+	AddComponentNode.Position = FVector2D(520.0f, 40.0f);
+	AddComponentNode.Metadata.Add(TEXT("ComponentClassPath"), USceneComponent::StaticClass()->GetPathName());
+
+	FVergilGraphPin AddComponentExecPin;
+	AddComponentExecPin.Id = FGuid::NewGuid();
+	AddComponentExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	AddComponentExecPin.Direction = EVergilPinDirection::Input;
+	AddComponentExecPin.bIsExec = true;
+	AddComponentNode.Pins.Add(AddComponentExecPin);
+
+	FVergilGraphPin AddComponentRelativeTransformPin;
+	AddComponentRelativeTransformPin.Id = FGuid::NewGuid();
+	AddComponentRelativeTransformPin.Name = TEXT("RelativeTransform");
+	AddComponentRelativeTransformPin.Direction = EVergilPinDirection::Input;
+	AddComponentNode.Pins.Add(AddComponentRelativeTransformPin);
+
+	FVergilGraphPin AddComponentManualAttachmentPin;
+	AddComponentManualAttachmentPin.Id = FGuid::NewGuid();
+	AddComponentManualAttachmentPin.Name = TEXT("bManualAttachment");
+	AddComponentManualAttachmentPin.Direction = EVergilPinDirection::Input;
+	AddComponentNode.Pins.Add(AddComponentManualAttachmentPin);
+
+	FVergilGraphPin AddComponentThenPin;
+	AddComponentThenPin.Id = FGuid::NewGuid();
+	AddComponentThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	AddComponentThenPin.Direction = EVergilPinDirection::Output;
+	AddComponentThenPin.bIsExec = true;
+	AddComponentNode.Pins.Add(AddComponentThenPin);
+
+	FVergilGraphPin AddComponentReturnPin;
+	AddComponentReturnPin.Id = FGuid::NewGuid();
+	AddComponentReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	AddComponentReturnPin.Direction = EVergilPinDirection::Output;
+	AddComponentNode.Pins.Add(AddComponentReturnPin);
+
+	FVergilGraphNode GetComponentByClassNode;
+	GetComponentByClassNode.Id = FGuid::NewGuid();
+	GetComponentByClassNode.Kind = EVergilNodeKind::Custom;
+	GetComponentByClassNode.Descriptor = TEXT("K2.GetComponentByClass");
+	GetComponentByClassNode.Position = FVector2D(980.0f, -120.0f);
+	GetComponentByClassNode.Metadata.Add(TEXT("ComponentClassPath"), USceneComponent::StaticClass()->GetPathName());
+
+	FVergilGraphPin GetComponentByClassReturnPin;
+	GetComponentByClassReturnPin.Id = FGuid::NewGuid();
+	GetComponentByClassReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	GetComponentByClassReturnPin.Direction = EVergilPinDirection::Output;
+	GetComponentByClassNode.Pins.Add(GetComponentByClassReturnPin);
+
+	FVergilGraphNode FindComponentByTagNode;
+	FindComponentByTagNode.Id = FGuid::NewGuid();
+	FindComponentByTagNode.Kind = EVergilNodeKind::Custom;
+	FindComponentByTagNode.Descriptor = TEXT("K2.FindComponentByTag");
+	FindComponentByTagNode.Position = FVector2D(980.0f, 140.0f);
+	FindComponentByTagNode.Metadata.Add(TEXT("ComponentClassPath"), USceneComponent::StaticClass()->GetPathName());
+
+	FVergilGraphPin FindComponentByTagTagPin;
+	FindComponentByTagTagPin.Id = FGuid::NewGuid();
+	FindComponentByTagTagPin.Name = TEXT("Tag");
+	FindComponentByTagTagPin.Direction = EVergilPinDirection::Input;
+	FindComponentByTagNode.Pins.Add(FindComponentByTagTagPin);
+
+	FVergilGraphPin FindComponentByTagReturnPin;
+	FindComponentByTagReturnPin.Id = FGuid::NewGuid();
+	FindComponentByTagReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	FindComponentByTagReturnPin.Direction = EVergilPinDirection::Output;
+	FindComponentByTagNode.Pins.Add(FindComponentByTagReturnPin);
+
+	FVergilGraphNode GetComponentsByClassNode;
+	GetComponentsByClassNode.Id = FGuid::NewGuid();
+	GetComponentsByClassNode.Kind = EVergilNodeKind::Custom;
+	GetComponentsByClassNode.Descriptor = TEXT("K2.GetComponentsByClass");
+	GetComponentsByClassNode.Position = FVector2D(1400.0f, -120.0f);
+	GetComponentsByClassNode.Metadata.Add(TEXT("ComponentClassPath"), USceneComponent::StaticClass()->GetPathName());
+
+	FVergilGraphPin GetComponentsByClassReturnPin;
+	GetComponentsByClassReturnPin.Id = FGuid::NewGuid();
+	GetComponentsByClassReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	GetComponentsByClassReturnPin.Direction = EVergilPinDirection::Output;
+	GetComponentsByClassNode.Pins.Add(GetComponentsByClassReturnPin);
+
+	FVergilGraphNode GetComponentsByTagNode;
+	GetComponentsByTagNode.Id = FGuid::NewGuid();
+	GetComponentsByTagNode.Kind = EVergilNodeKind::Custom;
+	GetComponentsByTagNode.Descriptor = TEXT("K2.GetComponentsByTag");
+	GetComponentsByTagNode.Position = FVector2D(1400.0f, 180.0f);
+	GetComponentsByTagNode.Metadata.Add(TEXT("ComponentClassPath"), USceneComponent::StaticClass()->GetPathName());
+
+	FVergilGraphPin GetComponentsByTagTagPin;
+	GetComponentsByTagTagPin.Id = FGuid::NewGuid();
+	GetComponentsByTagTagPin.Name = TEXT("Tag");
+	GetComponentsByTagTagPin.Direction = EVergilPinDirection::Input;
+	GetComponentsByTagNode.Pins.Add(GetComponentsByTagTagPin);
+
+	FVergilGraphPin GetComponentsByTagReturnPin;
+	GetComponentsByTagReturnPin.Id = FGuid::NewGuid();
+	GetComponentsByTagReturnPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	GetComponentsByTagReturnPin.Direction = EVergilPinDirection::Output;
+	GetComponentsByTagNode.Pins.Add(GetComponentsByTagReturnPin);
+
+	FVergilGraphNode SetCreatedComponentNode;
+	SetCreatedComponentNode.Id = FGuid::NewGuid();
+	SetCreatedComponentNode.Kind = EVergilNodeKind::VariableSet;
+	SetCreatedComponentNode.Descriptor = TEXT("K2.VarSet.CreatedComponent");
+	SetCreatedComponentNode.Position = FVector2D(980.0f, 20.0f);
+
+	FVergilGraphPin SetCreatedComponentExecPin;
+	SetCreatedComponentExecPin.Id = FGuid::NewGuid();
+	SetCreatedComponentExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetCreatedComponentExecPin.Direction = EVergilPinDirection::Input;
+	SetCreatedComponentExecPin.bIsExec = true;
+	SetCreatedComponentNode.Pins.Add(SetCreatedComponentExecPin);
+
+	FVergilGraphPin SetCreatedComponentThenPin;
+	SetCreatedComponentThenPin.Id = FGuid::NewGuid();
+	SetCreatedComponentThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetCreatedComponentThenPin.Direction = EVergilPinDirection::Output;
+	SetCreatedComponentThenPin.bIsExec = true;
+	SetCreatedComponentNode.Pins.Add(SetCreatedComponentThenPin);
+
+	FVergilGraphPin SetCreatedComponentValuePin;
+	SetCreatedComponentValuePin.Id = FGuid::NewGuid();
+	SetCreatedComponentValuePin.Name = TEXT("CreatedComponent");
+	SetCreatedComponentValuePin.Direction = EVergilPinDirection::Input;
+	SetCreatedComponentNode.Pins.Add(SetCreatedComponentValuePin);
+
+	FVergilGraphNode SetFoundComponentByClassNode;
+	SetFoundComponentByClassNode.Id = FGuid::NewGuid();
+	SetFoundComponentByClassNode.Kind = EVergilNodeKind::VariableSet;
+	SetFoundComponentByClassNode.Descriptor = TEXT("K2.VarSet.FoundComponentByClass");
+	SetFoundComponentByClassNode.Position = FVector2D(1400.0f, -120.0f);
+
+	FVergilGraphPin SetFoundComponentByClassExecPin;
+	SetFoundComponentByClassExecPin.Id = FGuid::NewGuid();
+	SetFoundComponentByClassExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetFoundComponentByClassExecPin.Direction = EVergilPinDirection::Input;
+	SetFoundComponentByClassExecPin.bIsExec = true;
+	SetFoundComponentByClassNode.Pins.Add(SetFoundComponentByClassExecPin);
+
+	FVergilGraphPin SetFoundComponentByClassThenPin;
+	SetFoundComponentByClassThenPin.Id = FGuid::NewGuid();
+	SetFoundComponentByClassThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetFoundComponentByClassThenPin.Direction = EVergilPinDirection::Output;
+	SetFoundComponentByClassThenPin.bIsExec = true;
+	SetFoundComponentByClassNode.Pins.Add(SetFoundComponentByClassThenPin);
+
+	FVergilGraphPin SetFoundComponentByClassValuePin;
+	SetFoundComponentByClassValuePin.Id = FGuid::NewGuid();
+	SetFoundComponentByClassValuePin.Name = TEXT("FoundComponentByClass");
+	SetFoundComponentByClassValuePin.Direction = EVergilPinDirection::Input;
+	SetFoundComponentByClassNode.Pins.Add(SetFoundComponentByClassValuePin);
+
+	FVergilGraphNode SetFoundComponentByTagNode;
+	SetFoundComponentByTagNode.Id = FGuid::NewGuid();
+	SetFoundComponentByTagNode.Kind = EVergilNodeKind::VariableSet;
+	SetFoundComponentByTagNode.Descriptor = TEXT("K2.VarSet.FoundComponentByTag");
+	SetFoundComponentByTagNode.Position = FVector2D(1400.0f, 140.0f);
+
+	FVergilGraphPin SetFoundComponentByTagExecPin;
+	SetFoundComponentByTagExecPin.Id = FGuid::NewGuid();
+	SetFoundComponentByTagExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetFoundComponentByTagExecPin.Direction = EVergilPinDirection::Input;
+	SetFoundComponentByTagExecPin.bIsExec = true;
+	SetFoundComponentByTagNode.Pins.Add(SetFoundComponentByTagExecPin);
+
+	FVergilGraphPin SetFoundComponentByTagThenPin;
+	SetFoundComponentByTagThenPin.Id = FGuid::NewGuid();
+	SetFoundComponentByTagThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetFoundComponentByTagThenPin.Direction = EVergilPinDirection::Output;
+	SetFoundComponentByTagThenPin.bIsExec = true;
+	SetFoundComponentByTagNode.Pins.Add(SetFoundComponentByTagThenPin);
+
+	FVergilGraphPin SetFoundComponentByTagValuePin;
+	SetFoundComponentByTagValuePin.Id = FGuid::NewGuid();
+	SetFoundComponentByTagValuePin.Name = TEXT("FoundComponentByTag");
+	SetFoundComponentByTagValuePin.Direction = EVergilPinDirection::Input;
+	SetFoundComponentByTagNode.Pins.Add(SetFoundComponentByTagValuePin);
+
+	FVergilGraphNode SetComponentsByClassNode;
+	SetComponentsByClassNode.Id = FGuid::NewGuid();
+	SetComponentsByClassNode.Kind = EVergilNodeKind::VariableSet;
+	SetComponentsByClassNode.Descriptor = TEXT("K2.VarSet.ComponentsByClass");
+	SetComponentsByClassNode.Position = FVector2D(1820.0f, -120.0f);
+
+	FVergilGraphPin SetComponentsByClassExecPin;
+	SetComponentsByClassExecPin.Id = FGuid::NewGuid();
+	SetComponentsByClassExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetComponentsByClassExecPin.Direction = EVergilPinDirection::Input;
+	SetComponentsByClassExecPin.bIsExec = true;
+	SetComponentsByClassNode.Pins.Add(SetComponentsByClassExecPin);
+
+	FVergilGraphPin SetComponentsByClassThenPin;
+	SetComponentsByClassThenPin.Id = FGuid::NewGuid();
+	SetComponentsByClassThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetComponentsByClassThenPin.Direction = EVergilPinDirection::Output;
+	SetComponentsByClassThenPin.bIsExec = true;
+	SetComponentsByClassNode.Pins.Add(SetComponentsByClassThenPin);
+
+	FVergilGraphPin SetComponentsByClassValuePin;
+	SetComponentsByClassValuePin.Id = FGuid::NewGuid();
+	SetComponentsByClassValuePin.Name = TEXT("ComponentsByClass");
+	SetComponentsByClassValuePin.Direction = EVergilPinDirection::Input;
+	SetComponentsByClassNode.Pins.Add(SetComponentsByClassValuePin);
+
+	FVergilGraphNode SetComponentsByTagNode;
+	SetComponentsByTagNode.Id = FGuid::NewGuid();
+	SetComponentsByTagNode.Kind = EVergilNodeKind::VariableSet;
+	SetComponentsByTagNode.Descriptor = TEXT("K2.VarSet.ComponentsByTag");
+	SetComponentsByTagNode.Position = FVector2D(1820.0f, 180.0f);
+
+	FVergilGraphPin SetComponentsByTagExecPin;
+	SetComponentsByTagExecPin.Id = FGuid::NewGuid();
+	SetComponentsByTagExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetComponentsByTagExecPin.Direction = EVergilPinDirection::Input;
+	SetComponentsByTagExecPin.bIsExec = true;
+	SetComponentsByTagNode.Pins.Add(SetComponentsByTagExecPin);
+
+	FVergilGraphPin SetComponentsByTagValuePin;
+	SetComponentsByTagValuePin.Id = FGuid::NewGuid();
+	SetComponentsByTagValuePin.Name = TEXT("ComponentsByTag");
+	SetComponentsByTagValuePin.Direction = EVergilPinDirection::Input;
+	SetComponentsByTagNode.Pins.Add(SetComponentsByTagValuePin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilComponentNodeExecution");
+	Document.Nodes =
+	{
+		BeginPlayNode,
+		MakeTransformNode,
+		LookupTagGetterNode,
+		AddComponentNode,
+		GetComponentByClassNode,
+		FindComponentByTagNode,
+		GetComponentsByClassNode,
+		GetComponentsByTagNode,
+		SetCreatedComponentNode,
+		SetFoundComponentByClassNode,
+		SetFoundComponentByTagNode,
+		SetComponentsByClassNode,
+		SetComponentsByTagNode
+	};
+
+	FVergilGraphEdge EventToAddComponent;
+	EventToAddComponent.Id = FGuid::NewGuid();
+	EventToAddComponent.SourceNodeId = BeginPlayNode.Id;
+	EventToAddComponent.SourcePinId = BeginPlayThenPin.Id;
+	EventToAddComponent.TargetNodeId = AddComponentNode.Id;
+	EventToAddComponent.TargetPinId = AddComponentExecPin.Id;
+	Document.Edges.Add(EventToAddComponent);
+
+	FVergilGraphEdge TransformToAddComponent;
+	TransformToAddComponent.Id = FGuid::NewGuid();
+	TransformToAddComponent.SourceNodeId = MakeTransformNode.Id;
+	TransformToAddComponent.SourcePinId = MakeTransformResultPin.Id;
+	TransformToAddComponent.TargetNodeId = AddComponentNode.Id;
+	TransformToAddComponent.TargetPinId = AddComponentRelativeTransformPin.Id;
+	Document.Edges.Add(TransformToAddComponent);
+
+	FVergilGraphEdge AddComponentThenToCreatedSetter;
+	AddComponentThenToCreatedSetter.Id = FGuid::NewGuid();
+	AddComponentThenToCreatedSetter.SourceNodeId = AddComponentNode.Id;
+	AddComponentThenToCreatedSetter.SourcePinId = AddComponentThenPin.Id;
+	AddComponentThenToCreatedSetter.TargetNodeId = SetCreatedComponentNode.Id;
+	AddComponentThenToCreatedSetter.TargetPinId = SetCreatedComponentExecPin.Id;
+	Document.Edges.Add(AddComponentThenToCreatedSetter);
+
+	FVergilGraphEdge AddComponentReturnToCreatedSetter;
+	AddComponentReturnToCreatedSetter.Id = FGuid::NewGuid();
+	AddComponentReturnToCreatedSetter.SourceNodeId = AddComponentNode.Id;
+	AddComponentReturnToCreatedSetter.SourcePinId = AddComponentReturnPin.Id;
+	AddComponentReturnToCreatedSetter.TargetNodeId = SetCreatedComponentNode.Id;
+	AddComponentReturnToCreatedSetter.TargetPinId = SetCreatedComponentValuePin.Id;
+	Document.Edges.Add(AddComponentReturnToCreatedSetter);
+
+	FVergilGraphEdge CreatedSetterToFoundByClassSetter;
+	CreatedSetterToFoundByClassSetter.Id = FGuid::NewGuid();
+	CreatedSetterToFoundByClassSetter.SourceNodeId = SetCreatedComponentNode.Id;
+	CreatedSetterToFoundByClassSetter.SourcePinId = SetCreatedComponentThenPin.Id;
+	CreatedSetterToFoundByClassSetter.TargetNodeId = SetFoundComponentByClassNode.Id;
+	CreatedSetterToFoundByClassSetter.TargetPinId = SetFoundComponentByClassExecPin.Id;
+	Document.Edges.Add(CreatedSetterToFoundByClassSetter);
+
+	FVergilGraphEdge GetComponentByClassToSetter;
+	GetComponentByClassToSetter.Id = FGuid::NewGuid();
+	GetComponentByClassToSetter.SourceNodeId = GetComponentByClassNode.Id;
+	GetComponentByClassToSetter.SourcePinId = GetComponentByClassReturnPin.Id;
+	GetComponentByClassToSetter.TargetNodeId = SetFoundComponentByClassNode.Id;
+	GetComponentByClassToSetter.TargetPinId = SetFoundComponentByClassValuePin.Id;
+	Document.Edges.Add(GetComponentByClassToSetter);
+
+	FVergilGraphEdge FoundByClassSetterToFoundByTagSetter;
+	FoundByClassSetterToFoundByTagSetter.Id = FGuid::NewGuid();
+	FoundByClassSetterToFoundByTagSetter.SourceNodeId = SetFoundComponentByClassNode.Id;
+	FoundByClassSetterToFoundByTagSetter.SourcePinId = SetFoundComponentByClassThenPin.Id;
+	FoundByClassSetterToFoundByTagSetter.TargetNodeId = SetFoundComponentByTagNode.Id;
+	FoundByClassSetterToFoundByTagSetter.TargetPinId = SetFoundComponentByTagExecPin.Id;
+	Document.Edges.Add(FoundByClassSetterToFoundByTagSetter);
+
+	FVergilGraphEdge LookupTagToFindByTag;
+	LookupTagToFindByTag.Id = FGuid::NewGuid();
+	LookupTagToFindByTag.SourceNodeId = LookupTagGetterNode.Id;
+	LookupTagToFindByTag.SourcePinId = LookupTagGetterValuePin.Id;
+	LookupTagToFindByTag.TargetNodeId = FindComponentByTagNode.Id;
+	LookupTagToFindByTag.TargetPinId = FindComponentByTagTagPin.Id;
+	Document.Edges.Add(LookupTagToFindByTag);
+
+	FVergilGraphEdge FindByTagToSetter;
+	FindByTagToSetter.Id = FGuid::NewGuid();
+	FindByTagToSetter.SourceNodeId = FindComponentByTagNode.Id;
+	FindByTagToSetter.SourcePinId = FindComponentByTagReturnPin.Id;
+	FindByTagToSetter.TargetNodeId = SetFoundComponentByTagNode.Id;
+	FindByTagToSetter.TargetPinId = SetFoundComponentByTagValuePin.Id;
+	Document.Edges.Add(FindByTagToSetter);
+
+	FVergilGraphEdge FoundByTagSetterToComponentsByClassSetter;
+	FoundByTagSetterToComponentsByClassSetter.Id = FGuid::NewGuid();
+	FoundByTagSetterToComponentsByClassSetter.SourceNodeId = SetFoundComponentByTagNode.Id;
+	FoundByTagSetterToComponentsByClassSetter.SourcePinId = SetFoundComponentByTagThenPin.Id;
+	FoundByTagSetterToComponentsByClassSetter.TargetNodeId = SetComponentsByClassNode.Id;
+	FoundByTagSetterToComponentsByClassSetter.TargetPinId = SetComponentsByClassExecPin.Id;
+	Document.Edges.Add(FoundByTagSetterToComponentsByClassSetter);
+
+	FVergilGraphEdge GetComponentsByClassToSetter;
+	GetComponentsByClassToSetter.Id = FGuid::NewGuid();
+	GetComponentsByClassToSetter.SourceNodeId = GetComponentsByClassNode.Id;
+	GetComponentsByClassToSetter.SourcePinId = GetComponentsByClassReturnPin.Id;
+	GetComponentsByClassToSetter.TargetNodeId = SetComponentsByClassNode.Id;
+	GetComponentsByClassToSetter.TargetPinId = SetComponentsByClassValuePin.Id;
+	Document.Edges.Add(GetComponentsByClassToSetter);
+
+	FVergilGraphEdge ComponentsByClassSetterToComponentsByTagSetter;
+	ComponentsByClassSetterToComponentsByTagSetter.Id = FGuid::NewGuid();
+	ComponentsByClassSetterToComponentsByTagSetter.SourceNodeId = SetComponentsByClassNode.Id;
+	ComponentsByClassSetterToComponentsByTagSetter.SourcePinId = SetComponentsByClassThenPin.Id;
+	ComponentsByClassSetterToComponentsByTagSetter.TargetNodeId = SetComponentsByTagNode.Id;
+	ComponentsByClassSetterToComponentsByTagSetter.TargetPinId = SetComponentsByTagExecPin.Id;
+	Document.Edges.Add(ComponentsByClassSetterToComponentsByTagSetter);
+
+	FVergilGraphEdge LookupTagToGetComponentsByTag;
+	LookupTagToGetComponentsByTag.Id = FGuid::NewGuid();
+	LookupTagToGetComponentsByTag.SourceNodeId = LookupTagGetterNode.Id;
+	LookupTagToGetComponentsByTag.SourcePinId = LookupTagGetterValuePin.Id;
+	LookupTagToGetComponentsByTag.TargetNodeId = GetComponentsByTagNode.Id;
+	LookupTagToGetComponentsByTag.TargetPinId = GetComponentsByTagTagPin.Id;
+	Document.Edges.Add(LookupTagToGetComponentsByTag);
+
+	FVergilGraphEdge GetComponentsByTagToSetter;
+	GetComponentsByTagToSetter.Id = FGuid::NewGuid();
+	GetComponentsByTagToSetter.SourceNodeId = GetComponentsByTagNode.Id;
+	GetComponentsByTagToSetter.SourcePinId = GetComponentsByTagReturnPin.Id;
+	GetComponentsByTagToSetter.TargetNodeId = SetComponentsByTagNode.Id;
+	GetComponentsByTagToSetter.TargetPinId = SetComponentsByTagValuePin.Id;
+	Document.Edges.Add(GetComponentsByTagToSetter);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Component-node document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Component-node document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Component-node document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const AddComponentCommand = FindNodeCommand(Result.Commands, AddComponentNode.Id);
+	const FVergilCompilerCommand* const GetComponentByClassCommand = FindNodeCommand(Result.Commands, GetComponentByClassNode.Id);
+	const FVergilCompilerCommand* const FindComponentByTagCommand = FindNodeCommand(Result.Commands, FindComponentByTagNode.Id);
+	const FVergilCompilerCommand* const GetComponentsByClassCommand = FindNodeCommand(Result.Commands, GetComponentsByClassNode.Id);
+	const FVergilCompilerCommand* const GetComponentsByTagCommand = FindNodeCommand(Result.Commands, GetComponentsByTagNode.Id);
+	TestNotNull(TEXT("AddComponentByClass should lower into an AddNode command."), AddComponentCommand);
+	TestNotNull(TEXT("GetComponentByClass should lower into an AddNode command."), GetComponentByClassCommand);
+	TestNotNull(TEXT("FindComponentByTag should lower into an AddNode command."), FindComponentByTagCommand);
+	TestNotNull(TEXT("GetComponentsByClass should lower into an AddNode command."), GetComponentsByClassCommand);
+	TestNotNull(TEXT("GetComponentsByTag should lower into an AddNode command."), GetComponentsByTagCommand);
+	if (AddComponentCommand == nullptr
+		|| GetComponentByClassCommand == nullptr
+		|| FindComponentByTagCommand == nullptr
+		|| GetComponentsByClassCommand == nullptr
+		|| GetComponentsByTagCommand == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("AddComponentByClass should lower into its dedicated command name."), AddComponentCommand->Name, FName(TEXT("Vergil.K2.AddComponentByClass")));
+	TestEqual(TEXT("GetComponentByClass should lower into its dedicated command name."), GetComponentByClassCommand->Name, FName(TEXT("Vergil.K2.GetComponentByClass")));
+	TestEqual(TEXT("FindComponentByTag should lower into its dedicated command name."), FindComponentByTagCommand->Name, FName(TEXT("Vergil.K2.FindComponentByTag")));
+	TestEqual(TEXT("GetComponentsByClass should lower into its dedicated command name."), GetComponentsByClassCommand->Name, FName(TEXT("Vergil.K2.GetComponentsByClass")));
+	TestEqual(TEXT("GetComponentsByTag should lower into its dedicated command name."), GetComponentsByTagCommand->Name, FName(TEXT("Vergil.K2.GetComponentsByTag")));
+	TestEqual(TEXT("AddComponentByClass should retain the normalized component class path in StringValue."), AddComponentCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("GetComponentByClass should retain the normalized component class path in StringValue."), GetComponentByClassCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("FindComponentByTag should retain the normalized component class path in StringValue."), FindComponentByTagCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("GetComponentsByClass should retain the normalized component class path in StringValue."), GetComponentsByClassCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("GetComponentsByTag should retain the normalized component class path in StringValue."), GetComponentsByTagCommand->StringValue, USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("AddComponentByClass should retain the normalized component class path in attributes."), AddComponentCommand->Attributes.FindRef(TEXT("ComponentClassPath")), USceneComponent::StaticClass()->GetPathName());
+	TestEqual(TEXT("GetComponentByClass should retain the normalized component class path in attributes."), GetComponentByClassCommand->Attributes.FindRef(TEXT("ComponentClassPath")), USceneComponent::StaticClass()->GetPathName());
+	TestTrue(TEXT("AddComponentByClass planned pins should include RelativeTransform."), ContainsPlannedPin(*AddComponentCommand, TEXT("RelativeTransform"), true, false));
+	TestTrue(TEXT("AddComponentByClass planned pins should include bManualAttachment."), ContainsPlannedPin(*AddComponentCommand, TEXT("bManualAttachment"), true, false));
+	TestTrue(TEXT("FindComponentByTag planned pins should include Tag."), ContainsPlannedPin(*FindComponentByTagCommand, TEXT("Tag"), true, false));
+	TestTrue(TEXT("GetComponentsByTag planned pins should include Tag."), ContainsPlannedPin(*GetComponentsByTagCommand, TEXT("Tag"), true, false));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after component-node execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UEdGraphNode* const MakeTransformGraphNode = FindGraphNodeByGuid<UEdGraphNode>(EventGraph, MakeTransformNode.Id);
+	UK2Node_VariableGet* const LookupTagGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, LookupTagGetterNode.Id);
+	UK2Node_AddComponentByClass* const AddComponentGraphNode = FindGraphNodeByGuid<UK2Node_AddComponentByClass>(EventGraph, AddComponentNode.Id);
+	UK2Node_CallFunction* const GetComponentByClassGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, GetComponentByClassNode.Id);
+	UK2Node_CallFunction* const FindComponentByTagGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, FindComponentByTagNode.Id);
+	UK2Node_CallFunction* const GetComponentsByClassGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, GetComponentsByClassNode.Id);
+	UK2Node_CallFunction* const GetComponentsByTagGraphNode = FindGraphNodeByGuid<UK2Node_CallFunction>(EventGraph, GetComponentsByTagNode.Id);
+	UK2Node_VariableSet* const SetCreatedComponentGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetCreatedComponentNode.Id);
+	UK2Node_VariableSet* const SetFoundComponentByClassGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetFoundComponentByClassNode.Id);
+	UK2Node_VariableSet* const SetFoundComponentByTagGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetFoundComponentByTagNode.Id);
+	UK2Node_VariableSet* const SetComponentsByClassGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetComponentsByClassNode.Id);
+	UK2Node_VariableSet* const SetComponentsByTagGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetComponentsByTagNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventGraphNode);
+	TestNotNull(TEXT("MakeTransform node should exist."), MakeTransformGraphNode);
+	TestNotNull(TEXT("LookupTag getter node should exist."), LookupTagGetterGraphNode);
+	TestNotNull(TEXT("AddComponentByClass node should exist."), AddComponentGraphNode);
+	TestNotNull(TEXT("GetComponentByClass node should exist."), GetComponentByClassGraphNode);
+	TestNotNull(TEXT("FindComponentByTag node should exist."), FindComponentByTagGraphNode);
+	TestNotNull(TEXT("GetComponentsByClass node should exist."), GetComponentsByClassGraphNode);
+	TestNotNull(TEXT("GetComponentsByTag node should exist."), GetComponentsByTagGraphNode);
+	TestNotNull(TEXT("CreatedComponent setter node should exist."), SetCreatedComponentGraphNode);
+	TestNotNull(TEXT("FoundComponentByClass setter node should exist."), SetFoundComponentByClassGraphNode);
+	TestNotNull(TEXT("FoundComponentByTag setter node should exist."), SetFoundComponentByTagGraphNode);
+	TestNotNull(TEXT("ComponentsByClass setter node should exist."), SetComponentsByClassGraphNode);
+	TestNotNull(TEXT("ComponentsByTag setter node should exist."), SetComponentsByTagGraphNode);
+	if (EventGraphNode == nullptr
+		|| MakeTransformGraphNode == nullptr
+		|| LookupTagGetterGraphNode == nullptr
+		|| AddComponentGraphNode == nullptr
+		|| GetComponentByClassGraphNode == nullptr
+		|| FindComponentByTagGraphNode == nullptr
+		|| GetComponentsByClassGraphNode == nullptr
+		|| GetComponentsByTagGraphNode == nullptr
+		|| SetCreatedComponentGraphNode == nullptr
+		|| SetFoundComponentByClassGraphNode == nullptr
+		|| SetFoundComponentByTagGraphNode == nullptr
+		|| SetComponentsByClassGraphNode == nullptr
+		|| SetComponentsByTagGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const LookupTagGetterGraphPin = LookupTagGetterGraphNode->FindPin(TEXT("LookupTag"));
+	UEdGraphPin* const AddComponentExecGraphPin = AddComponentGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const AddComponentRelativeTransformGraphPin = AddComponentGraphNode->FindPin(TEXT("RelativeTransform"));
+	UEdGraphPin* const AddComponentManualAttachmentGraphPin = AddComponentGraphNode->FindPin(TEXT("bManualAttachment"));
+	UEdGraphPin* const AddComponentThenGraphPin = AddComponentGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const AddComponentReturnGraphPin = AddComponentGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const AddComponentClassGraphPin = AddComponentGraphNode->GetClassPin();
+	UEdGraphPin* const SetCreatedComponentExecGraphPin = SetCreatedComponentGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetCreatedComponentThenGraphPin = SetCreatedComponentGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetCreatedComponentValueGraphPin = SetCreatedComponentGraphNode->FindPin(TEXT("CreatedComponent"));
+	UEdGraphPin* const GetComponentByClassReturnGraphPin = GetComponentByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const GetComponentByClassClassGraphPin = GetComponentByClassGraphNode->FindPin(TEXT("ComponentClass"));
+	UEdGraphPin* const SetFoundComponentByClassExecGraphPin = SetFoundComponentByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetFoundComponentByClassThenGraphPin = SetFoundComponentByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetFoundComponentByClassValueGraphPin = SetFoundComponentByClassGraphNode->FindPin(TEXT("FoundComponentByClass"));
+	UEdGraphPin* const FindComponentByTagTagGraphPin = FindComponentByTagGraphNode->FindPin(TEXT("Tag"));
+	UEdGraphPin* const FindComponentByTagReturnGraphPin = FindComponentByTagGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const FindComponentByTagClassGraphPin = FindComponentByTagGraphNode->FindPin(TEXT("ComponentClass"));
+	UEdGraphPin* const SetFoundComponentByTagExecGraphPin = SetFoundComponentByTagGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetFoundComponentByTagThenGraphPin = SetFoundComponentByTagGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetFoundComponentByTagValueGraphPin = SetFoundComponentByTagGraphNode->FindPin(TEXT("FoundComponentByTag"));
+	UEdGraphPin* const GetComponentsByClassReturnGraphPin = GetComponentsByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const GetComponentsByClassClassGraphPin = GetComponentsByClassGraphNode->FindPin(TEXT("ComponentClass"));
+	UEdGraphPin* const SetComponentsByClassExecGraphPin = SetComponentsByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetComponentsByClassThenGraphPin = SetComponentsByClassGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetComponentsByClassValueGraphPin = SetComponentsByClassGraphNode->FindPin(TEXT("ComponentsByClass"));
+	UEdGraphPin* const GetComponentsByTagTagGraphPin = GetComponentsByTagGraphNode->FindPin(TEXT("Tag"));
+	UEdGraphPin* const GetComponentsByTagReturnGraphPin = GetComponentsByTagGraphNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+	UEdGraphPin* const GetComponentsByTagClassGraphPin = GetComponentsByTagGraphNode->FindPin(TEXT("ComponentClass"));
+	UEdGraphPin* const SetComponentsByTagExecGraphPin = SetComponentsByTagGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetComponentsByTagValueGraphPin = SetComponentsByTagGraphNode->FindPin(TEXT("ComponentsByTag"));
+
+	TestTrue(TEXT("LookupTag getter should remain pure."), LookupTagGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestNotNull(TEXT("AddComponentByClass should expose the scene-component RelativeTransform pin."), AddComponentRelativeTransformGraphPin);
+	TestNotNull(TEXT("AddComponentByClass should expose the scene-component bManualAttachment pin."), AddComponentManualAttachmentGraphPin);
+	TestTrue(TEXT("AddComponentByClass should resolve the class pin to USceneComponent."), AddComponentClassGraphPin != nullptr && AddComponentClassGraphPin->DefaultObject == USceneComponent::StaticClass());
+	TestTrue(TEXT("AddComponentByClass return pin should resolve to USceneComponent."), AddComponentReturnGraphPin != nullptr && AddComponentReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && AddComponentReturnGraphPin->PinType.PinSubCategoryObject.Get() == USceneComponent::StaticClass());
+	TestTrue(TEXT("GetComponentByClass should remain pure."), GetComponentByClassGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("FindComponentByTag should remain pure."), FindComponentByTagGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("GetComponentsByClass should remain pure."), GetComponentsByClassGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("GetComponentsByTag should remain pure."), GetComponentsByTagGraphNode->GetExecPin() == nullptr);
+	TestTrue(TEXT("GetComponentByClass should resolve AActor::GetComponentByClass."), GetComponentByClassGraphNode->GetTargetFunction() == AActor::StaticClass()->FindFunctionByName(TEXT("GetComponentByClass")));
+	TestTrue(TEXT("FindComponentByTag should resolve AActor::FindComponentByTag."), FindComponentByTagGraphNode->GetTargetFunction() == AActor::StaticClass()->FindFunctionByName(TEXT("FindComponentByTag")));
+	TestTrue(TEXT("GetComponentsByClass should resolve AActor::K2_GetComponentsByClass."), GetComponentsByClassGraphNode->GetTargetFunction() == AActor::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(AActor, K2_GetComponentsByClass)));
+	TestTrue(TEXT("GetComponentsByTag should resolve AActor::GetComponentsByTag."), GetComponentsByTagGraphNode->GetTargetFunction() == AActor::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(AActor, GetComponentsByTag)));
+	TestTrue(TEXT("GetComponentByClass should resolve the ComponentClass pin to USceneComponent."), GetComponentByClassClassGraphPin != nullptr && GetComponentByClassClassGraphPin->DefaultObject == USceneComponent::StaticClass());
+	TestTrue(TEXT("FindComponentByTag should resolve the ComponentClass pin to USceneComponent."), FindComponentByTagClassGraphPin != nullptr && FindComponentByTagClassGraphPin->DefaultObject == USceneComponent::StaticClass());
+	TestTrue(TEXT("GetComponentsByClass should resolve the ComponentClass pin to USceneComponent."), GetComponentsByClassClassGraphPin != nullptr && GetComponentsByClassClassGraphPin->DefaultObject == USceneComponent::StaticClass());
+	TestTrue(TEXT("GetComponentsByTag should resolve the ComponentClass pin to USceneComponent."), GetComponentsByTagClassGraphPin != nullptr && GetComponentsByTagClassGraphPin->DefaultObject == USceneComponent::StaticClass());
+	TestTrue(TEXT("GetComponentByClass return pin should resolve to USceneComponent."), GetComponentByClassReturnGraphPin != nullptr && GetComponentByClassReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && GetComponentByClassReturnGraphPin->PinType.PinSubCategoryObject.Get() == USceneComponent::StaticClass());
+	TestTrue(TEXT("FindComponentByTag return pin should resolve to USceneComponent."), FindComponentByTagReturnGraphPin != nullptr && FindComponentByTagReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && FindComponentByTagReturnGraphPin->PinType.PinSubCategoryObject.Get() == USceneComponent::StaticClass());
+	TestTrue(TEXT("GetComponentsByClass return pin should resolve to an array of USceneComponent."), GetComponentsByClassReturnGraphPin != nullptr && GetComponentsByClassReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && GetComponentsByClassReturnGraphPin->PinType.PinSubCategoryObject.Get() == USceneComponent::StaticClass() && GetComponentsByClassReturnGraphPin->PinType.ContainerType == EPinContainerType::Array);
+	TestTrue(TEXT("GetComponentsByTag return pin should resolve to an array of USceneComponent."), GetComponentsByTagReturnGraphPin != nullptr && GetComponentsByTagReturnGraphPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && GetComponentsByTagReturnGraphPin->PinType.PinSubCategoryObject.Get() == USceneComponent::StaticClass() && GetComponentsByTagReturnGraphPin->PinType.ContainerType == EPinContainerType::Array);
+	TestTrue(TEXT("BeginPlay should drive AddComponentByClass."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(AddComponentExecGraphPin));
+	TestTrue(TEXT("MakeTransform should feed AddComponentByClass RelativeTransform."), AddComponentRelativeTransformGraphPin != nullptr && AddComponentRelativeTransformGraphPin->LinkedTo.ContainsByPredicate([MakeTransformGraphNode](const UEdGraphPin* LinkedPin)
+	{
+		return LinkedPin != nullptr && LinkedPin->GetOwningNode() == MakeTransformGraphNode;
+	}));
+	TestTrue(TEXT("AddComponentByClass Then should drive the CreatedComponent setter."), AddComponentThenGraphPin != nullptr && AddComponentThenGraphPin->LinkedTo.Contains(SetCreatedComponentExecGraphPin));
+	TestTrue(TEXT("AddComponentByClass ReturnValue should feed the CreatedComponent setter value."), AddComponentReturnGraphPin != nullptr && AddComponentReturnGraphPin->LinkedTo.Contains(SetCreatedComponentValueGraphPin));
+	TestTrue(TEXT("CreatedComponent setter should chain into the FoundComponentByClass setter."), SetCreatedComponentThenGraphPin != nullptr && SetCreatedComponentThenGraphPin->LinkedTo.Contains(SetFoundComponentByClassExecGraphPin));
+	TestTrue(TEXT("GetComponentByClass ReturnValue should feed the FoundComponentByClass setter value."), GetComponentByClassReturnGraphPin != nullptr && GetComponentByClassReturnGraphPin->LinkedTo.Contains(SetFoundComponentByClassValueGraphPin));
+	TestTrue(TEXT("FoundComponentByClass setter should chain into the FoundComponentByTag setter."), SetFoundComponentByClassThenGraphPin != nullptr && SetFoundComponentByClassThenGraphPin->LinkedTo.Contains(SetFoundComponentByTagExecGraphPin));
+	TestTrue(TEXT("LookupTag getter should feed the FindComponentByTag Tag pin."), LookupTagGetterGraphPin != nullptr && LookupTagGetterGraphPin->LinkedTo.Contains(FindComponentByTagTagGraphPin));
+	TestTrue(TEXT("FindComponentByTag ReturnValue should feed the FoundComponentByTag setter value."), FindComponentByTagReturnGraphPin != nullptr && FindComponentByTagReturnGraphPin->LinkedTo.Contains(SetFoundComponentByTagValueGraphPin));
+	TestTrue(TEXT("FoundComponentByTag setter should chain into the ComponentsByClass setter."), SetFoundComponentByTagThenGraphPin != nullptr && SetFoundComponentByTagThenGraphPin->LinkedTo.Contains(SetComponentsByClassExecGraphPin));
+	TestTrue(TEXT("GetComponentsByClass ReturnValue should feed the ComponentsByClass setter value."), GetComponentsByClassReturnGraphPin != nullptr && GetComponentsByClassReturnGraphPin->LinkedTo.Contains(SetComponentsByClassValueGraphPin));
+	TestTrue(TEXT("ComponentsByClass setter should chain into the ComponentsByTag setter."), SetComponentsByClassThenGraphPin != nullptr && SetComponentsByClassThenGraphPin->LinkedTo.Contains(SetComponentsByTagExecGraphPin));
+	TestTrue(TEXT("LookupTag getter should feed the GetComponentsByTag Tag pin."), LookupTagGetterGraphPin != nullptr && LookupTagGetterGraphPin->LinkedTo.Contains(GetComponentsByTagTagGraphPin));
+	TestTrue(TEXT("GetComponentsByTag ReturnValue should feed the ComponentsByTag setter value."), GetComponentsByTagReturnGraphPin != nullptr && GetComponentsByTagReturnGraphPin->LinkedTo.Contains(SetComponentsByTagValueGraphPin));
 	return true;
 }
 

@@ -388,7 +388,7 @@ Goal:
 
 Tickets:
 
-- `VGR-6001` Add component-related nodes
+- [x] `VGR-6001` Add component-related nodes
 - `VGR-6002` Add interface call/message nodes
 - `VGR-6003` Add object/class/soft-reference families
 - `VGR-6004` Add async task node families where deterministic setup is possible
@@ -401,6 +401,12 @@ Acceptance criteria:
 
 - supported vs unsupported coverage is measurable
 - non-trivial K2 families are handled by either a generic spawner path or an explicit specialized handler
+
+Session note for `VGR-6001` (2026-03-07):
+
+- `UE_5.7` deterministic support now exists for `K2.AddComponentByClass`, `K2.GetComponentByClass`, `K2.GetComponentsByClass`, `K2.FindComponentByTag`, and `K2.GetComponentsByTag` through explicit specialized handlers instead of relying on the generic `K2.Call.*` path to infer dynamic component-class behavior.
+- Type resolution now normalizes `ComponentClassPath`, rejects non-`UActorComponent` classes, and validates the authored deterministic pin surface, while direct command-plan preflight and editor execution both instantiate the real `UK2Node_AddComponentByClass` or typed `AActor` lookup nodes and conform their return pins from the metadata-driven component class.
+- `Vergil.Scaffold.TypeResolutionPass`, `Vergil.Scaffold.SupportedContractInspection`, `Vergil.Scaffold.SupportedNodeContractDocs`, and the new `Vergil.Scaffold.ComponentNodeExecution` test now cover the compiler manifest, markdown contract table, command planning, and end-to-end editor-authoring path for this component-node family.
 
 ## Milestone 7: Editor Tooling
 Goal:
@@ -552,11 +558,11 @@ If those are weak, later coverage work will turn into one-off patches.
 ## Recommended Next Sprint
 Best next sprint from the current baseline:
 
-1. `VGR-6001`
-2. `VGR-6002`
-3. `VGR-6003`
-4. `VGR-7005`
-5. `VGR-8006`
+1. `VGR-6002`
+2. `VGR-6003`
+3. `VGR-7005`
+4. `VGR-8006`
+5. `VGR-6004`
 
 This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
