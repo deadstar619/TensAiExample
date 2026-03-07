@@ -153,6 +153,36 @@ namespace
 		FName CommandName;
 	};
 
+	enum class EVergilGenericK2NodeSpawnerKind : uint8
+	{
+		Simple,
+		Sequence,
+		AsyncAction,
+		SpecializedAsyncTask,
+		SpawnActor,
+		AddComponentByClass,
+		GetClassDefaults,
+		LoadAsset,
+		ConvertAsset,
+		ClassCast,
+		DynamicCast,
+		Select,
+		FormatText,
+		SwitchInt,
+		SwitchString,
+		SwitchEnum,
+		MakeArray,
+		MakeSet,
+		MakeMap,
+	};
+
+	struct FVergilGenericK2NodeSpawnerCommand
+	{
+		FName CommandName;
+		UClass* NodeClass = nullptr;
+		EVergilGenericK2NodeSpawnerKind Kind = EVergilGenericK2NodeSpawnerKind::Simple;
+	};
+
 	FString GetOptionalObjectPath(const UObject* Object)
 	{
 		return Object != nullptr ? Object->GetPathName() : FString();
@@ -334,6 +364,47 @@ namespace
 		};
 
 		for (const FVergilSpecializedAsyncTaskCommand& Candidate : Commands)
+		{
+			if (Candidate.CommandName == CommandName)
+			{
+				return &Candidate;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FVergilGenericK2NodeSpawnerCommand* FindGenericK2NodeSpawnerCommand(const FName CommandName)
+	{
+		static const FVergilGenericK2NodeSpawnerCommand Commands[] =
+		{
+			{ TEXT("Vergil.K2.Branch"), UK2Node_IfThenElse::StaticClass(), EVergilGenericK2NodeSpawnerKind::Simple },
+			{ TEXT("Vergil.K2.Sequence"), UK2Node_ExecutionSequence::StaticClass(), EVergilGenericK2NodeSpawnerKind::Sequence },
+			{ AsyncActionCommandName, UK2Node_AsyncAction::StaticClass(), EVergilGenericK2NodeSpawnerKind::AsyncAction },
+			{ AIMoveToCommandName, UK2Node_AIMoveTo::StaticClass(), EVergilGenericK2NodeSpawnerKind::SpecializedAsyncTask },
+			{ PlayMontageCommandName, UK2Node_PlayMontage::StaticClass(), EVergilGenericK2NodeSpawnerKind::SpecializedAsyncTask },
+			{ TEXT("Vergil.K2.SpawnActor"), UK2Node_SpawnActorFromClass::StaticClass(), EVergilGenericK2NodeSpawnerKind::SpawnActor },
+			{ TEXT("Vergil.K2.AddComponentByClass"), UK2Node_AddComponentByClass::StaticClass(), EVergilGenericK2NodeSpawnerKind::AddComponentByClass },
+			{ TEXT("Vergil.K2.GetClassDefaults"), UK2Node_GetClassDefaults::StaticClass(), EVergilGenericK2NodeSpawnerKind::GetClassDefaults },
+			{ TEXT("Vergil.K2.LoadAsset"), UK2Node_LoadAsset::StaticClass(), EVergilGenericK2NodeSpawnerKind::LoadAsset },
+			{ TEXT("Vergil.K2.LoadAssetClass"), UK2Node_LoadAssetClass::StaticClass(), EVergilGenericK2NodeSpawnerKind::LoadAsset },
+			{ TEXT("Vergil.K2.LoadAssets"), UK2Node_LoadAssets::StaticClass(), EVergilGenericK2NodeSpawnerKind::LoadAsset },
+			{ TEXT("Vergil.K2.ConvertAsset"), UK2Node_ConvertAsset::StaticClass(), EVergilGenericK2NodeSpawnerKind::ConvertAsset },
+			{ TEXT("Vergil.K2.ClassCast"), UK2Node_ClassDynamicCast::StaticClass(), EVergilGenericK2NodeSpawnerKind::ClassCast },
+			{ TEXT("Vergil.K2.Self"), UK2Node_Self::StaticClass(), EVergilGenericK2NodeSpawnerKind::Simple },
+			{ TEXT("Vergil.K2.Cast"), UK2Node_DynamicCast::StaticClass(), EVergilGenericK2NodeSpawnerKind::DynamicCast },
+			{ TEXT("Vergil.K2.Reroute"), UK2Node_Knot::StaticClass(), EVergilGenericK2NodeSpawnerKind::Simple },
+			{ TEXT("Vergil.K2.Select"), UK2Node_Select::StaticClass(), EVergilGenericK2NodeSpawnerKind::Select },
+			{ TEXT("Vergil.K2.FormatText"), UK2Node_FormatText::StaticClass(), EVergilGenericK2NodeSpawnerKind::FormatText },
+			{ TEXT("Vergil.K2.SwitchInt"), UK2Node_SwitchInteger::StaticClass(), EVergilGenericK2NodeSpawnerKind::SwitchInt },
+			{ TEXT("Vergil.K2.SwitchString"), UK2Node_SwitchString::StaticClass(), EVergilGenericK2NodeSpawnerKind::SwitchString },
+			{ TEXT("Vergil.K2.SwitchEnum"), UK2Node_SwitchEnum::StaticClass(), EVergilGenericK2NodeSpawnerKind::SwitchEnum },
+			{ TEXT("Vergil.K2.MakeArray"), UK2Node_MakeArray::StaticClass(), EVergilGenericK2NodeSpawnerKind::MakeArray },
+			{ TEXT("Vergil.K2.MakeSet"), UK2Node_MakeSet::StaticClass(), EVergilGenericK2NodeSpawnerKind::MakeSet },
+			{ TEXT("Vergil.K2.MakeMap"), UK2Node_MakeMap::StaticClass(), EVergilGenericK2NodeSpawnerKind::MakeMap },
+		};
+
+		for (const FVergilGenericK2NodeSpawnerCommand& Candidate : Commands)
 		{
 			if (Candidate.CommandName == CommandName)
 			{
@@ -4945,6 +5016,1312 @@ namespace
 		return nullptr;
 	}
 
+	bool ValidateGenericK2NodeSpawnerCommand(
+		UBlueprint* Blueprint,
+		const FName GraphName,
+		const FVergilCompilerCommand& Command,
+		const FVergilGenericK2NodeSpawnerCommand& GenericCommand,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (GenericCommand.NodeClass == nullptr
+			|| !GenericCommand.NodeClass->IsChildOf(UK2Node::StaticClass())
+			|| GenericCommand.NodeClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidGenericNodeSpawnerClass"),
+				FString::Printf(TEXT("Generic node spawner command '%s' is bound to an invalid UK2Node class."), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		bool bIsValid = true;
+		auto AddValidationError = [&](const FName Code, const FString& Message)
+		{
+			bIsValid = false;
+			Diagnostics.Add(FVergilDiagnostic::Make(EVergilDiagnosticSeverity::Error, Code, Message, Command.NodeId));
+		};
+
+		switch (GenericCommand.Kind)
+		{
+		case EVergilGenericK2NodeSpawnerKind::Simple:
+		case EVergilGenericK2NodeSpawnerKind::Sequence:
+		case EVergilGenericK2NodeSpawnerKind::ConvertAsset:
+			return true;
+
+		case EVergilGenericK2NodeSpawnerKind::AsyncAction:
+		{
+			if (GraphName == ConstructionScriptGraphName)
+			{
+				AddValidationError(
+					TEXT("ConstructionScriptAsyncActionUnsupported"),
+					TEXT("Vergil.K2.AsyncAction is not supported on the UserConstructionScript graph because generic async-action nodes are latent."));
+				return false;
+			}
+
+			UFunction* FactoryFunction = nullptr;
+			UClass* ProxyClass = nullptr;
+			if (!ResolveAsyncActionFactory(Command, FactoryFunction, ProxyClass, Diagnostics))
+			{
+				return false;
+			}
+
+			return ValidateAsyncActionPlannedPins(Command, FactoryFunction, ProxyClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SpecializedAsyncTask:
+		{
+			const FVergilSpecializedAsyncTaskCommand* const SpecializedAsyncTaskCommand = FindSpecializedAsyncTaskCommand(Command.Name);
+			if (SpecializedAsyncTaskCommand == nullptr)
+			{
+				AddValidationError(
+					TEXT("UnsupportedSpecializedAsyncTaskCommand"),
+					FString::Printf(TEXT("Generic node spawner did not recognize specialized async-task command '%s'."), *Command.Name.ToString()));
+				return false;
+			}
+
+			if (GraphName == ConstructionScriptGraphName)
+			{
+				AddValidationError(
+					TEXT("ConstructionScriptSpecializedAsyncTaskUnsupported"),
+					FString::Printf(TEXT("%s is not supported on the UserConstructionScript graph because specialized async-task nodes are latent."), *Command.Name.ToString()));
+				return false;
+			}
+
+			UFunction* FactoryFunction = nullptr;
+			UClass* ProxyClass = nullptr;
+			if (!ResolveSpecializedAsyncTaskFactory(Command, *SpecializedAsyncTaskCommand, FactoryFunction, ProxyClass, Diagnostics))
+			{
+				return false;
+			}
+
+			return ValidateSpecializedAsyncTaskPlannedPins(Command, *SpecializedAsyncTaskCommand, FactoryFunction, ProxyClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SpawnActor:
+		{
+			if (GraphName == ConstructionScriptGraphName)
+			{
+				AddValidationError(
+					TEXT("ConstructionScriptSpawnActorUnsupported"),
+					TEXT("Vergil.K2.SpawnActor is not supported on the UserConstructionScript graph."));
+				return false;
+			}
+
+			UClass* ActorClass = nullptr;
+			if (!ResolveSpawnActorClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ActorClassPath")) : Command.StringValue,
+				ActorClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			return ValidateSpawnActorPlannedPins(Command, ActorClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::AddComponentByClass:
+		{
+			UClass* ComponentClass = nullptr;
+			if (!ResolveActorComponentClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ComponentClassPath")) : Command.StringValue,
+				TEXT("AddComponentClassMissing"),
+				TEXT("AddComponentClassNotFound"),
+				TEXT("AddComponentClassNotComponent"),
+				TEXT("AddComponentByClass node execution"),
+				ComponentClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			return ValidateAddComponentPlannedPins(Command, ComponentClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::GetClassDefaults:
+		{
+			UClass* SourceClass = nullptr;
+			if (!ResolveNodeClassReference(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ClassPath")) : Command.StringValue,
+				TEXT("GetClassDefaultsClassMissing"),
+				TEXT("GetClassDefaultsClassNotFound"),
+				TEXT("GetClassDefaults node execution"),
+				SourceClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			return ValidateGetClassDefaultsPlannedPins(Command, SourceClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::LoadAsset:
+		{
+			const FVergilLoadAssetCommand* const LoadAssetCommand = FindLoadAssetCommand(Command.Name);
+			if (LoadAssetCommand == nullptr)
+			{
+				AddValidationError(
+					TEXT("UnsupportedLoadAssetCommand"),
+					FString::Printf(TEXT("Generic node spawner did not recognize load-asset command '%s'."), *Command.Name.ToString()));
+				return false;
+			}
+
+			if (GraphName == ConstructionScriptGraphName)
+			{
+				AddValidationError(
+					TEXT("ConstructionScriptLoadAssetUnsupported"),
+					FString::Printf(TEXT("%s is not supported on the UserConstructionScript graph because UE_5.7 async load nodes are latent."), *Command.Name.ToString()));
+				return false;
+			}
+
+			UClass* AssetClass = nullptr;
+			if (!ResolveLoadAssetClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("AssetClassPath")) : Command.StringValue,
+				AssetClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			return ValidateLoadAssetPlannedPins(Command, *LoadAssetCommand, AssetClass, Diagnostics);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::ClassCast:
+		{
+			UClass* TargetClass = nullptr;
+			return ResolveNodeClassReference(
+				Command.StringValue,
+				TEXT("ClassCastTargetClassMissing"),
+				TEXT("ClassCastTargetClassNotFound"),
+				TEXT("class-cast node execution"),
+				TargetClass,
+				Diagnostics,
+				Command.NodeId);
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::DynamicCast:
+			if (Command.StringValue.TrimStartAndEnd().IsEmpty())
+			{
+				AddValidationError(TEXT("CastTargetClassMissing"), TEXT("Cast node execution requires StringValue to contain the target class path."));
+			}
+			return bIsValid;
+
+		case EVergilGenericK2NodeSpawnerKind::Select:
+		{
+			const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
+			const bool bIndexTypeValid = ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("IndexPinCategory")),
+				GetCommandAttribute(Command, TEXT("IndexObjectPath")),
+				TEXT("Select node index pin"),
+				TEXT("MissingSelectIndexCategory"),
+				TEXT("InvalidSelectIndexType"),
+				TEXT("SelectIndexObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics);
+			if (!bIndexTypeValid)
+			{
+				bIsValid = false;
+			}
+			else if (!IsSupportedSelectIndexCategory(IndexCategory))
+			{
+				AddValidationError(
+					TEXT("UnsupportedSelectIndexTypeCombination"),
+					FString::Printf(
+						TEXT("Select nodes currently support IndexPinCategory values bool, int, or enum in UE 5.7; found '%s'."),
+						*IndexCategory));
+			}
+
+			if (!ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+				GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+				TEXT("Select node value pin"),
+				TEXT("MissingSelectValueCategory"),
+				TEXT("InvalidSelectValueType"),
+				TEXT("SelectValueObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics))
+			{
+				bIsValid = false;
+			}
+
+			if (IndexCategory == TEXT("bool"))
+			{
+				const FString RawOptions = GetCommandAttribute(Command, TEXT("NumOptions"));
+				if (!RawOptions.TrimStartAndEnd().IsEmpty())
+				{
+					int32 RequestedOptions = 0;
+					if (!TryParseInt(RawOptions, RequestedOptions) || RequestedOptions != 2)
+					{
+						AddValidationError(TEXT("InvalidBoolSelectOptionCount"), TEXT("Bool select nodes always require exactly 2 options."));
+					}
+				}
+			}
+			else if (IndexCategory != TEXT("enum"))
+			{
+				const FString RawOptions = GetCommandAttribute(Command, TEXT("NumOptions"));
+				int32 RequestedOptions = 0;
+				if (RawOptions.TrimStartAndEnd().IsEmpty() || !TryParseInt(RawOptions, RequestedOptions) || RequestedOptions < 2)
+				{
+					AddValidationError(TEXT("InvalidSelectOptionCount"), TEXT("Non-bool, non-enum select nodes require NumOptions >= 2."));
+				}
+			}
+
+			return bIsValid;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::FormatText:
+			if (GetCommandAttribute(Command, TEXT("FormatPattern")).IsEmpty())
+			{
+				AddValidationError(TEXT("MissingFormatPattern"), TEXT("Format text node execution requires attribute FormatPattern."));
+			}
+			return bIsValid;
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchInt:
+		{
+			const TArray<FName> CasePins = GetPlannedExecOutputPinNames(Command);
+			if (CasePins.Num() == 0)
+			{
+				AddValidationError(TEXT("MissingSwitchIntCases"), TEXT("Switch int nodes require at least one planned case exec pin."));
+				return false;
+			}
+
+			TArray<int32> CaseValues;
+			for (const FName CasePin : CasePins)
+			{
+				int32 ParsedValue = 0;
+				if (!TryParseInt(CasePin.ToString(), ParsedValue))
+				{
+					AddValidationError(TEXT("InvalidSwitchIntCaseName"), FString::Printf(TEXT("Switch int case pin '%s' is not a valid integer."), *CasePin.ToString()));
+					return false;
+				}
+
+				CaseValues.Add(ParsedValue);
+			}
+
+			CaseValues.Sort();
+			const int32 StartIndex = CaseValues[0];
+			for (int32 CaseIndex = 1; CaseIndex < CaseValues.Num(); ++CaseIndex)
+			{
+				if (CaseValues[CaseIndex] != StartIndex + CaseIndex)
+				{
+					AddValidationError(TEXT("NonContiguousSwitchIntCases"), TEXT("Switch int cases must form a contiguous ascending integer range."));
+				}
+			}
+
+			return bIsValid;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchString:
+			if (GetPlannedExecOutputPinNames(Command).Num() == 0)
+			{
+				AddValidationError(TEXT("MissingSwitchStringCases"), TEXT("Switch string nodes require at least one planned case exec pin."));
+			}
+			{
+				const FString RawValue = GetCommandAttribute(Command, TEXT("CaseSensitive"));
+				if (!RawValue.IsEmpty())
+				{
+					bool bBoolValue = false;
+					if (!TryParseBoolAttribute(Command, TEXT("CaseSensitive"), bBoolValue))
+					{
+						AddValidationError(TEXT("SwitchStringCaseSensitiveInvalid"), TEXT("Command attribute 'CaseSensitive' must be 'true', 'false', '1', or '0'."));
+					}
+				}
+			}
+			return bIsValid;
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchEnum:
+			if (GetCommandAttribute(Command, TEXT("EnumPath")).TrimStartAndEnd().IsEmpty())
+			{
+				AddValidationError(TEXT("SwitchEnumPathMissing"), TEXT("Switch enum nodes require attribute EnumPath."));
+			}
+			return bIsValid;
+
+		case EVergilGenericK2NodeSpawnerKind::MakeArray:
+		{
+			if (!ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+				GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+				TEXT("Make array node value pin"),
+				TEXT("MakeArrayValueCategoryMissing"),
+				TEXT("InvalidMakeArrayValueType"),
+				TEXT("MakeArrayValueObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics))
+			{
+				bIsValid = false;
+			}
+
+			int32 NumInputs = 0;
+			if (!TryGetCommandCountAttribute(Command, TEXT("NumInputs"), NumInputs, Diagnostics, TEXT("InvalidMakeArrayInputCount")))
+			{
+				bIsValid = false;
+			}
+			else if (NumInputs < 1)
+			{
+				AddValidationError(TEXT("InvalidMakeArrayInputCount"), TEXT("Make array nodes require NumInputs >= 1."));
+			}
+
+			return bIsValid;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::MakeSet:
+		{
+			if (!ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+				GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+				TEXT("Make set node value pin"),
+				TEXT("MakeSetValueCategoryMissing"),
+				TEXT("InvalidMakeSetValueType"),
+				TEXT("MakeSetValueObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics))
+			{
+				bIsValid = false;
+			}
+
+			int32 NumInputs = 0;
+			if (!TryGetCommandCountAttribute(Command, TEXT("NumInputs"), NumInputs, Diagnostics, TEXT("InvalidMakeSetInputCount")))
+			{
+				bIsValid = false;
+			}
+			else if (NumInputs < 1)
+			{
+				AddValidationError(TEXT("InvalidMakeSetInputCount"), TEXT("Make set nodes require NumInputs >= 1."));
+			}
+
+			return bIsValid;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::MakeMap:
+		{
+			if (!ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("KeyPinCategory")),
+				GetCommandAttribute(Command, TEXT("KeyObjectPath")),
+				TEXT("Make map node key pin"),
+				TEXT("MakeMapKeyCategoryMissing"),
+				TEXT("InvalidMakeMapKeyType"),
+				TEXT("MakeMapKeyObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics))
+			{
+				bIsValid = false;
+			}
+
+			if (!ValidateCommandTypeShape(
+				GetCommandAttribute(Command, TEXT("ValuePinCategory")),
+				GetCommandAttribute(Command, TEXT("ValueObjectPath")),
+				TEXT("Make map node value pin"),
+				TEXT("MakeMapValueCategoryMissing"),
+				TEXT("InvalidMakeMapValueType"),
+				TEXT("MakeMapValueObjectPathMissing"),
+				Command.NodeId,
+				Diagnostics))
+			{
+				bIsValid = false;
+			}
+
+			int32 NumPairs = 0;
+			if (!TryGetCommandCountAttribute(Command, TEXT("NumPairs"), NumPairs, Diagnostics, TEXT("InvalidMakeMapPairCount")))
+			{
+				bIsValid = false;
+			}
+			else if (NumPairs < 1)
+			{
+				AddValidationError(TEXT("InvalidMakeMapPairCount"), TEXT("Make map nodes require NumPairs >= 1."));
+			}
+
+			return bIsValid;
+		}
+
+		default:
+			break;
+		}
+
+		return bIsValid;
+	}
+
+	bool ExecuteGenericK2NodeSpawnerCommand(
+		UBlueprint* Blueprint,
+		UEdGraph* Graph,
+		const FVergilCompilerCommand& Command,
+		const FVergilGenericK2NodeSpawnerCommand& GenericCommand,
+		UEdGraphNode*& OutNewNode,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		if (GenericCommand.NodeClass == nullptr
+			|| !GenericCommand.NodeClass->IsChildOf(UK2Node::StaticClass())
+			|| GenericCommand.NodeClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("InvalidGenericNodeSpawnerClass"),
+				FString::Printf(TEXT("Generic node spawner command '%s' is bound to an invalid UK2Node class."), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		UK2Node* const GenericNode = NewObject<UK2Node>(Graph, GenericCommand.NodeClass);
+		if (GenericNode == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("GenericNodeSpawnerCreationFailed"),
+				FString::Printf(TEXT("Unable to allocate the UK2Node class '%s' for command '%s'."), *GenericCommand.NodeClass->GetPathName(), *Command.Name.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		switch (GenericCommand.Kind)
+		{
+		case EVergilGenericK2NodeSpawnerKind::Simple:
+			FinalizePlacedNode(Graph, GenericNode, Command.Position, Command.NodeId);
+			OutNewNode = GenericNode;
+			return true;
+
+		case EVergilGenericK2NodeSpawnerKind::Sequence:
+		{
+			UK2Node_ExecutionSequence* const SequenceNode = Cast<UK2Node_ExecutionSequence>(GenericNode);
+			if (SequenceNode == nullptr)
+			{
+				break;
+			}
+
+			FinalizePlacedNode(Graph, SequenceNode, Command.Position, Command.NodeId);
+
+			int32 NumOutputs = 2;
+			TryParseInt(Command.StringValue, NumOutputs);
+			if (NumOutputs < 2)
+			{
+				NumOutputs = 2;
+			}
+
+			for (int32 OutputIndex = 2; OutputIndex < NumOutputs; ++OutputIndex)
+			{
+				SequenceNode->AddInputPin();
+			}
+
+			OutNewNode = SequenceNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::AsyncAction:
+		{
+			UK2Node_AsyncAction* const AsyncActionNode = Cast<UK2Node_AsyncAction>(GenericNode);
+			if (AsyncActionNode == nullptr)
+			{
+				break;
+			}
+
+			UFunction* FactoryFunction = nullptr;
+			UClass* ProxyClass = nullptr;
+			if (!ResolveAsyncActionFactory(Command, FactoryFunction, ProxyClass, Diagnostics))
+			{
+				return false;
+			}
+
+			AsyncActionNode->InitializeProxyFromFunction(FactoryFunction);
+			FinalizePlacedNode(Graph, AsyncActionNode, Command.Position, Command.NodeId);
+			OutNewNode = AsyncActionNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SpecializedAsyncTask:
+			FinalizePlacedNode(Graph, GenericNode, Command.Position, Command.NodeId);
+			OutNewNode = GenericNode;
+			return true;
+
+		case EVergilGenericK2NodeSpawnerKind::SpawnActor:
+		{
+			UK2Node_SpawnActorFromClass* const SpawnActorNode = Cast<UK2Node_SpawnActorFromClass>(GenericNode);
+			if (SpawnActorNode == nullptr)
+			{
+				break;
+			}
+
+			UClass* ActorClass = nullptr;
+			if (!ResolveSpawnActorClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ActorClassPath")) : Command.StringValue,
+				ActorClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, SpawnActorNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const ClassPin = SpawnActorNode->GetClassPin();
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			if (ClassPin == nullptr || K2Schema == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("SpawnActorClassPinMissing"),
+					TEXT("Spawn actor node execution could not access the Class pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			K2Schema->TrySetDefaultObject(*ClassPin, ActorClass, false);
+
+			if (UEdGraphPin* const SpawnTransformPin = SpawnActorNode->FindPin(SpawnActorTransformPinName))
+			{
+				K2Schema->SetPinAutogeneratedDefaultValueBasedOnType(SpawnTransformPin);
+			}
+
+			OutNewNode = SpawnActorNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::AddComponentByClass:
+		{
+			UK2Node_AddComponentByClass* const AddComponentNode = Cast<UK2Node_AddComponentByClass>(GenericNode);
+			if (AddComponentNode == nullptr)
+			{
+				break;
+			}
+
+			UClass* ComponentClass = nullptr;
+			if (!ResolveActorComponentClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ComponentClassPath")) : Command.StringValue,
+				TEXT("AddComponentClassMissing"),
+				TEXT("AddComponentClassNotFound"),
+				TEXT("AddComponentClassNotComponent"),
+				TEXT("AddComponentByClass node execution"),
+				ComponentClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, AddComponentNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const ClassPin = AddComponentNode->GetClassPin();
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			if (ClassPin == nullptr || K2Schema == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("AddComponentClassPinMissing"),
+					TEXT("Add component by class execution could not access the Class pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			K2Schema->TrySetDefaultObject(*ClassPin, ComponentClass, false);
+			AddComponentNode->PinDefaultValueChanged(ClassPin);
+			OutNewNode = AddComponentNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::GetClassDefaults:
+		{
+			UK2Node_GetClassDefaults* const GetClassDefaultsNode = Cast<UK2Node_GetClassDefaults>(GenericNode);
+			if (GetClassDefaultsNode == nullptr)
+			{
+				break;
+			}
+
+			UClass* SourceClass = nullptr;
+			if (!ResolveNodeClassReference(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("ClassPath")) : Command.StringValue,
+				TEXT("GetClassDefaultsClassMissing"),
+				TEXT("GetClassDefaultsClassNotFound"),
+				TEXT("GetClassDefaults node execution"),
+				SourceClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, GetClassDefaultsNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const ClassPin = GetClassDefaultsNode->FindClassPin();
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			if (ClassPin == nullptr || K2Schema == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("GetClassDefaultsClassPinMissing"),
+					TEXT("GetClassDefaults node execution could not access the Class pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			K2Schema->TrySetDefaultObject(*ClassPin, SourceClass, false);
+			GetClassDefaultsNode->PinDefaultValueChanged(ClassPin);
+			OutNewNode = GetClassDefaultsNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::LoadAsset:
+		{
+			const FVergilLoadAssetCommand* const LoadAssetCommand = FindLoadAssetCommand(Command.Name);
+			if (LoadAssetCommand == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("UnsupportedLoadAssetCommand"),
+					FString::Printf(TEXT("Generic node spawner did not recognize load-asset command '%s'."), *Command.Name.ToString()),
+					Command.NodeId));
+				return false;
+			}
+
+			UClass* AssetClass = nullptr;
+			if (!ResolveLoadAssetClass(
+				Command.StringValue.IsEmpty() ? GetCommandAttribute(Command, TEXT("AssetClassPath")) : Command.StringValue,
+				AssetClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, GenericNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const InputPin = GenericNode->FindPin(LoadAssetCommand->InputPinName);
+			UEdGraphPin* const OutputPin = GenericNode->FindPin(LoadAssetCommand->OutputPinName);
+			if (InputPin == nullptr || OutputPin == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("LoadAssetPinMissing"),
+					FString::Printf(TEXT("%s node execution could not access the typed input/output pins."), *Command.Name.ToString()),
+					Command.NodeId));
+				return false;
+			}
+
+			InputPin->PinType.PinSubCategoryObject = AssetClass;
+			if (LoadAssetCommand->bIsClassAsset)
+			{
+				OutputPin->PinType.PinSubCategoryObject = AssetClass;
+			}
+
+			OutNewNode = GenericNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::ConvertAsset:
+			FinalizePlacedNode(Graph, GenericNode, Command.Position, Command.NodeId);
+			OutNewNode = GenericNode;
+			return true;
+
+		case EVergilGenericK2NodeSpawnerKind::ClassCast:
+		{
+			UK2Node_ClassDynamicCast* const CastNode = Cast<UK2Node_ClassDynamicCast>(GenericNode);
+			if (CastNode == nullptr)
+			{
+				break;
+			}
+
+			UClass* TargetClass = nullptr;
+			if (!ResolveNodeClassReference(
+				Command.StringValue,
+				TEXT("ClassCastTargetClassMissing"),
+				TEXT("ClassCastTargetClassNotFound"),
+				TEXT("class-cast target class"),
+				TargetClass,
+				Diagnostics,
+				Command.NodeId))
+			{
+				return false;
+			}
+
+			CastNode->TargetType = TargetClass;
+			FinalizePlacedNode(Graph, CastNode, Command.Position, Command.NodeId);
+
+			if (!HasPlannedExecPins(Command))
+			{
+				CastNode->SetPurity(true);
+			}
+
+			OutNewNode = CastNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::DynamicCast:
+		{
+			UK2Node_DynamicCast* const CastNode = Cast<UK2Node_DynamicCast>(GenericNode);
+			if (CastNode == nullptr)
+			{
+				break;
+			}
+
+			UClass* TargetClass = ResolveClassReference(Command.StringValue);
+			if (TargetClass == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("CastTargetClassNotFound"),
+					FString::Printf(TEXT("Unable to resolve cast target class '%s'."), *Command.StringValue),
+					Command.NodeId));
+				return false;
+			}
+
+			CastNode->TargetType = TargetClass;
+			FinalizePlacedNode(Graph, CastNode, Command.Position, Command.NodeId);
+
+			if (!HasPlannedExecPins(Command))
+			{
+				CastNode->SetPurity(true);
+			}
+
+			OutNewNode = CastNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::Select:
+		{
+			UK2Node_Select* const SelectNode = Cast<UK2Node_Select>(GenericNode);
+			if (SelectNode == nullptr)
+			{
+				break;
+			}
+
+			const FString IndexCategory = GetCommandAttribute(Command, TEXT("IndexPinCategory")).TrimStartAndEnd().ToLower();
+			if (IndexCategory.IsEmpty())
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingSelectIndexCategory"),
+					TEXT("Select node execution requires attribute IndexPinCategory."),
+					Command.NodeId));
+				return false;
+			}
+
+			if (!IsSupportedSelectIndexCategory(IndexCategory))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("UnsupportedSelectIndexTypeCombination"),
+					FString::Printf(
+						TEXT("Select nodes currently support IndexPinCategory values bool, int, or enum in UE 5.7; found '%s'."),
+						*IndexCategory),
+					Command.NodeId));
+				return false;
+			}
+
+			if (IndexCategory == TEXT("enum"))
+			{
+				const FString EnumPath = GetCommandAttribute(Command, TEXT("IndexObjectPath"));
+				UEnum* const Enum = Cast<UEnum>(ResolveObjectReference(EnumPath));
+				if (Enum == nullptr)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("SelectEnumNotFound"),
+						FString::Printf(TEXT("Unable to resolve select enum '%s'."), *EnumPath),
+						Command.NodeId));
+					return false;
+				}
+
+				SelectNode->SetEnum(Enum, true);
+			}
+
+			FinalizePlacedNode(Graph, SelectNode, Command.Position, Command.NodeId);
+
+			if (IndexCategory != TEXT("enum"))
+			{
+				FEdGraphPinType IndexPinType;
+				FString IndexTypeError;
+				if (!BuildPinTypeFromAttributes(Command, TEXT("IndexPinCategory"), TEXT("IndexObjectPath"), IndexPinType, IndexTypeError))
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("InvalidSelectIndexType"),
+						IndexTypeError,
+						Command.NodeId));
+					return false;
+				}
+
+				UEdGraphPin* const IndexPin = SelectNode->GetIndexPin();
+				if (IndexPin == nullptr)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("MissingSelectIndexPin"),
+						TEXT("Select node did not expose an index pin."),
+						Command.NodeId));
+					return false;
+				}
+
+				IndexPin->PinType = IndexPinType;
+				SelectNode->ChangePinType(IndexPin);
+			}
+
+			if (IndexCategory == TEXT("bool"))
+			{
+				int32 RequestedOptions = 2;
+				if (TryParseInt(GetCommandAttribute(Command, TEXT("NumOptions")), RequestedOptions) && RequestedOptions != 2)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("InvalidBoolSelectOptionCount"),
+						TEXT("Bool select nodes always require exactly 2 options."),
+						Command.NodeId));
+					return false;
+				}
+			}
+			else if (IndexCategory != TEXT("enum"))
+			{
+				int32 RequestedOptions = 0;
+				if (!TryParseInt(GetCommandAttribute(Command, TEXT("NumOptions")), RequestedOptions) || RequestedOptions < 2)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("InvalidSelectOptionCount"),
+						TEXT("Non-bool, non-enum select nodes require NumOptions >= 2."),
+						Command.NodeId));
+					return false;
+				}
+
+				TArray<UEdGraphPin*> ExistingOptionPins;
+				SelectNode->GetOptionPins(ExistingOptionPins);
+				for (int32 OptionIndex = ExistingOptionPins.Num(); OptionIndex < RequestedOptions; ++OptionIndex)
+				{
+					SelectNode->AddInputPin();
+				}
+			}
+
+			FEdGraphPinType ValuePinType;
+			FString ValueTypeError;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), ValuePinType, ValueTypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidSelectValueType"),
+					ValueTypeError,
+					Command.NodeId));
+				return false;
+			}
+
+			TArray<UEdGraphPin*> OptionPins;
+			SelectNode->GetOptionPins(OptionPins);
+			if (OptionPins.Num() == 0 || OptionPins[0] == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingSelectOptionPins"),
+					TEXT("Select node did not expose option pins after configuration."),
+					Command.NodeId));
+				return false;
+			}
+
+			OptionPins[0]->PinType = ValuePinType;
+			SelectNode->ChangePinType(OptionPins[0]);
+			OutNewNode = SelectNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::FormatText:
+		{
+			UK2Node_FormatText* const FormatTextNode = Cast<UK2Node_FormatText>(GenericNode);
+			if (FormatTextNode == nullptr)
+			{
+				break;
+			}
+
+			const FString FormatPattern = GetCommandAttribute(Command, TEXT("FormatPattern"));
+			if (FormatPattern.IsEmpty())
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingFormatPattern"),
+					TEXT("Format text node execution requires attribute FormatPattern."),
+					Command.NodeId));
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, FormatTextNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const FormatPin = FormatTextNode->GetFormatPin();
+			if (FormatPin == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingFormatTextPin"),
+					TEXT("Format text node did not expose a Format pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			K2Schema->TrySetDefaultText(*FormatPin, FText::FromString(FormatPattern), true);
+			FormatTextNode->PinDefaultValueChanged(FormatPin);
+			OutNewNode = FormatTextNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchInt:
+		{
+			UK2Node_SwitchInteger* const SwitchNode = Cast<UK2Node_SwitchInteger>(GenericNode);
+			if (SwitchNode == nullptr)
+			{
+				break;
+			}
+
+			const TArray<FName> CasePins = GetPlannedExecOutputPinNames(Command);
+			if (CasePins.Num() == 0)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingSwitchIntCases"),
+					TEXT("Switch int nodes require at least one planned case exec pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			TArray<int32> CaseValues;
+			for (const FName CasePin : CasePins)
+			{
+				int32 ParsedValue = 0;
+				if (!TryParseInt(CasePin.ToString(), ParsedValue))
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("InvalidSwitchIntCaseName"),
+						FString::Printf(TEXT("Switch int case pin '%s' is not a valid integer."), *CasePin.ToString()),
+						Command.NodeId));
+					return false;
+				}
+
+				CaseValues.Add(ParsedValue);
+			}
+
+			CaseValues.Sort();
+			const int32 StartIndex = CaseValues[0];
+			for (int32 CaseIndex = 1; CaseIndex < CaseValues.Num(); ++CaseIndex)
+			{
+				if (CaseValues[CaseIndex] != StartIndex + CaseIndex)
+				{
+					Diagnostics.Add(FVergilDiagnostic::Make(
+						EVergilDiagnosticSeverity::Error,
+						TEXT("NonContiguousSwitchIntCases"),
+						TEXT("Switch int cases must form a contiguous ascending integer range."),
+						Command.NodeId));
+					return false;
+				}
+			}
+
+			SwitchNode->StartIndex = StartIndex;
+			FinalizePlacedNode(Graph, SwitchNode, Command.Position, Command.NodeId);
+			for (int32 CaseIndex = 0; CaseIndex < CasePins.Num(); ++CaseIndex)
+			{
+				SwitchNode->AddPinToSwitchNode();
+			}
+
+			OutNewNode = SwitchNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchString:
+		{
+			UK2Node_SwitchString* const SwitchNode = Cast<UK2Node_SwitchString>(GenericNode);
+			if (SwitchNode == nullptr)
+			{
+				break;
+			}
+
+			const TArray<FName> CasePins = GetPlannedExecOutputPinNames(Command);
+			if (CasePins.Num() == 0)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingSwitchStringCases"),
+					TEXT("Switch string nodes require at least one planned case exec pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			SwitchNode->PinNames = CasePins;
+
+			bool bCaseSensitive = false;
+			if (TryParseBoolAttribute(Command, TEXT("CaseSensitive"), bCaseSensitive))
+			{
+				SwitchNode->bIsCaseSensitive = bCaseSensitive;
+			}
+
+			FinalizePlacedNode(Graph, SwitchNode, Command.Position, Command.NodeId);
+			OutNewNode = SwitchNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::SwitchEnum:
+		{
+			UK2Node_SwitchEnum* const SwitchNode = Cast<UK2Node_SwitchEnum>(GenericNode);
+			if (SwitchNode == nullptr)
+			{
+				break;
+			}
+
+			const FString EnumPath = GetCommandAttribute(Command, TEXT("EnumPath"));
+			UEnum* const Enum = Cast<UEnum>(ResolveObjectReference(EnumPath));
+			if (Enum == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("SwitchEnumNotFound"),
+					FString::Printf(TEXT("Unable to resolve switch enum '%s'."), *EnumPath),
+					Command.NodeId));
+				return false;
+			}
+
+			SwitchNode->SetEnum(Enum);
+			FinalizePlacedNode(Graph, SwitchNode, Command.Position, Command.NodeId);
+			OutNewNode = SwitchNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::MakeArray:
+		{
+			UK2Node_MakeArray* const MakeArrayNode = Cast<UK2Node_MakeArray>(GenericNode);
+			if (MakeArrayNode == nullptr)
+			{
+				break;
+			}
+
+			FEdGraphPinType ElementPinType;
+			FString ElementTypeError;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), ElementPinType, ElementTypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeArrayValueType"),
+					ElementTypeError,
+					Command.NodeId));
+				return false;
+			}
+
+			int32 NumInputs = 1;
+			TryParseInt(GetCommandAttribute(Command, TEXT("NumInputs")), NumInputs);
+			if (NumInputs < 1)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeArrayInputCount"),
+					TEXT("Make array nodes require NumInputs >= 1."),
+					Command.NodeId));
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, MakeArrayNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const OutputPin = MakeArrayNode->GetOutputPin();
+			if (OutputPin == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingMakeArrayOutputPin"),
+					TEXT("Make array node did not expose an output pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			OutputPin->PinType = ElementPinType;
+			OutputPin->PinType.ContainerType = EPinContainerType::Array;
+
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			for (UEdGraphPin* Pin : MakeArrayNode->Pins)
+			{
+				if (Pin == nullptr || Pin == OutputPin || Pin->Direction != EGPD_Input || Pin->ParentPin != nullptr)
+				{
+					continue;
+				}
+
+				Pin->PinType = ElementPinType;
+				K2Schema->SetPinAutogeneratedDefaultValueBasedOnType(Pin);
+			}
+
+			for (int32 InputIndex = 1; InputIndex < NumInputs; ++InputIndex)
+			{
+				MakeArrayNode->AddInputPin();
+			}
+
+			OutNewNode = MakeArrayNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::MakeSet:
+		{
+			UK2Node_MakeSet* const MakeSetNode = Cast<UK2Node_MakeSet>(GenericNode);
+			if (MakeSetNode == nullptr)
+			{
+				break;
+			}
+
+			FEdGraphPinType ElementPinType;
+			FString ElementTypeError;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), ElementPinType, ElementTypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeSetValueType"),
+					ElementTypeError,
+					Command.NodeId));
+				return false;
+			}
+
+			int32 NumInputs = 1;
+			TryParseInt(GetCommandAttribute(Command, TEXT("NumInputs")), NumInputs);
+			if (NumInputs < 1)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeSetInputCount"),
+					TEXT("Make set nodes require NumInputs >= 1."),
+					Command.NodeId));
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, MakeSetNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const OutputPin = MakeSetNode->GetOutputPin();
+			if (OutputPin == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingMakeSetOutputPin"),
+					TEXT("Make set node did not expose an output pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			OutputPin->PinType = ElementPinType;
+			OutputPin->PinType.ContainerType = EPinContainerType::Set;
+
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			for (UEdGraphPin* Pin : MakeSetNode->Pins)
+			{
+				if (Pin == nullptr || Pin == OutputPin || Pin->Direction != EGPD_Input || Pin->ParentPin != nullptr)
+				{
+					continue;
+				}
+
+				Pin->PinType = ElementPinType;
+				K2Schema->SetPinAutogeneratedDefaultValueBasedOnType(Pin);
+			}
+
+			for (int32 InputIndex = 1; InputIndex < NumInputs; ++InputIndex)
+			{
+				MakeSetNode->AddInputPin();
+			}
+
+			OutNewNode = MakeSetNode;
+			return true;
+		}
+
+		case EVergilGenericK2NodeSpawnerKind::MakeMap:
+		{
+			UK2Node_MakeMap* const MakeMapNode = Cast<UK2Node_MakeMap>(GenericNode);
+			if (MakeMapNode == nullptr)
+			{
+				break;
+			}
+
+			FEdGraphPinType KeyPinType;
+			FString KeyTypeError;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("KeyPinCategory"), TEXT("KeyObjectPath"), KeyPinType, KeyTypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeMapKeyType"),
+					KeyTypeError,
+					Command.NodeId));
+				return false;
+			}
+
+			FEdGraphPinType ValuePinType;
+			FString ValueTypeError;
+			if (!BuildPinTypeFromAttributes(Command, TEXT("ValuePinCategory"), TEXT("ValueObjectPath"), ValuePinType, ValueTypeError))
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeMapValueType"),
+					ValueTypeError,
+					Command.NodeId));
+				return false;
+			}
+
+			int32 NumPairs = 1;
+			TryParseInt(GetCommandAttribute(Command, TEXT("NumPairs")), NumPairs);
+			if (NumPairs < 1)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("InvalidMakeMapPairCount"),
+					TEXT("Make map nodes require NumPairs >= 1."),
+					Command.NodeId));
+				return false;
+			}
+
+			FinalizePlacedNode(Graph, MakeMapNode, Command.Position, Command.NodeId);
+
+			UEdGraphPin* const OutputPin = MakeMapNode->GetOutputPin();
+			if (OutputPin == nullptr)
+			{
+				Diagnostics.Add(FVergilDiagnostic::Make(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("MissingMakeMapOutputPin"),
+					TEXT("Make map node did not expose an output pin."),
+					Command.NodeId));
+				return false;
+			}
+
+			OutputPin->PinType = KeyPinType;
+			OutputPin->PinType.ContainerType = EPinContainerType::Map;
+			OutputPin->PinType.PinValueType = FEdGraphTerminalType::FromPinType(ValuePinType);
+
+			TArray<UEdGraphPin*> KeyPins;
+			TArray<UEdGraphPin*> ValuePins;
+			MakeMapNode->GetKeyAndValuePins(KeyPins, ValuePins);
+
+			const UEdGraphSchema_K2* const K2Schema = GetDefault<UEdGraphSchema_K2>();
+			for (UEdGraphPin* Pin : KeyPins)
+			{
+				if (Pin == nullptr)
+				{
+					continue;
+				}
+
+				Pin->PinType = KeyPinType;
+				K2Schema->SetPinAutogeneratedDefaultValueBasedOnType(Pin);
+			}
+
+			for (UEdGraphPin* Pin : ValuePins)
+			{
+				if (Pin == nullptr)
+				{
+					continue;
+				}
+
+				Pin->PinType = ValuePinType;
+				K2Schema->SetPinAutogeneratedDefaultValueBasedOnType(Pin);
+			}
+
+			for (int32 PairIndex = 1; PairIndex < NumPairs; ++PairIndex)
+			{
+				MakeMapNode->AddInputPin();
+			}
+
+			OutNewNode = MakeMapNode;
+			return true;
+		}
+		}
+
+		Diagnostics.Add(FVergilDiagnostic::Make(
+			EVergilDiagnosticSeverity::Error,
+			TEXT("GenericNodeSpawnerTypeMismatch"),
+			FString::Printf(TEXT("Command '%s' could not cast generic node spawner instance '%s' to its expected node type."), *Command.Name.ToString(), *GenericCommand.NodeClass->GetPathName()),
+			Command.NodeId));
+		return false;
+	}
+
 	bool ExecuteAddNode(
 		UBlueprint* Blueprint,
 		const FVergilCompilerCommand& Command,
@@ -5059,30 +6436,12 @@ namespace
 
 			NewNode = EventNode;
 		}
-		else if (Command.Name == TEXT("Vergil.K2.Branch"))
+		else if (const FVergilGenericK2NodeSpawnerCommand* const GenericNodeCommand = FindGenericK2NodeSpawnerCommand(Command.Name))
 		{
-			UK2Node_IfThenElse* BranchNode = NewObject<UK2Node_IfThenElse>(Graph);
-			FinalizePlacedNode(Graph, BranchNode, Command.Position, Command.NodeId);
-			NewNode = BranchNode;
-		}
-		else if (Command.Name == TEXT("Vergil.K2.Sequence"))
-		{
-			UK2Node_ExecutionSequence* SequenceNode = NewObject<UK2Node_ExecutionSequence>(Graph);
-			FinalizePlacedNode(Graph, SequenceNode, Command.Position, Command.NodeId);
-
-			int32 NumOutputs = 2;
-			TryParseInt(Command.StringValue, NumOutputs);
-			if (NumOutputs < 2)
+			if (!ExecuteGenericK2NodeSpawnerCommand(Blueprint, Graph, Command, *GenericNodeCommand, NewNode, Diagnostics))
 			{
-				NumOutputs = 2;
+				return false;
 			}
-
-			for (int32 OutputIndex = 2; OutputIndex < NumOutputs; ++OutputIndex)
-			{
-				SequenceNode->AddInputPin();
-			}
-
-			NewNode = SequenceNode;
 		}
 		else if (const FVergilStandardMacroCommand* const MacroCommand = FindStandardMacroCommand(Command.Name))
 		{
@@ -6801,17 +8160,13 @@ namespace
 				}
 
 				if (Command.Name == TEXT("Vergil.Comment")
-					|| Command.Name == TEXT("Vergil.K2.Branch")
-					|| Command.Name == TEXT("Vergil.K2.Sequence")
 					|| Command.Name == TEXT("Vergil.K2.ForLoop")
 					|| Command.Name == TEXT("Vergil.K2.ForLoopWithBreak")
 					|| Command.Name == TEXT("Vergil.K2.DoOnce")
 					|| Command.Name == TEXT("Vergil.K2.FlipFlop")
 					|| Command.Name == TEXT("Vergil.K2.Gate")
 					|| Command.Name == TEXT("Vergil.K2.WhileLoop")
-					|| Command.Name == TEXT("Vergil.K2.Delay")
-					|| Command.Name == TEXT("Vergil.K2.Self")
-					|| Command.Name == TEXT("Vergil.K2.Reroute"))
+					|| Command.Name == TEXT("Vergil.K2.Delay"))
 				{
 					break;
 				}
@@ -6874,6 +8229,15 @@ namespace
 					if (Command.SecondaryName.IsNone())
 					{
 						AddValidationError(TEXT("InvalidCreateDelegateCommand"), TEXT("CreateDelegate node execution requires SecondaryName to contain the function name."), Command.NodeId);
+					}
+					break;
+				}
+
+				if (const FVergilGenericK2NodeSpawnerCommand* const GenericNodeCommand = FindGenericK2NodeSpawnerCommand(Command.Name))
+				{
+					if (!ValidateGenericK2NodeSpawnerCommand(Blueprint, GraphName, Command, *GenericNodeCommand, Diagnostics))
+					{
+						bIsValid = false;
 					}
 					break;
 				}

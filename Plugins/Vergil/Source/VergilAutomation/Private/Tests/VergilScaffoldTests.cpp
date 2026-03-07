@@ -4861,6 +4861,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.Select should report exact-match descriptor inspection."), SelectContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.Select should require IndexPinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("IndexPinCategory")));
 		TestTrue(TEXT("K2.Select should require ValuePinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("ValuePinCategory")));
+		TestTrue(TEXT("K2.Select notes should mention the generic node-spawner path."), SelectContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const SpawnActorContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.SpawnActor"));
@@ -4870,6 +4871,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.SpawnActor should report exact-match descriptor inspection."), SpawnActorContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.SpawnActor should require ActorClassPath metadata."), ContainsNameValue(SpawnActorContract->RequiredMetadataKeys, TEXT("ActorClassPath")));
 		TestTrue(TEXT("K2.SpawnActor notes should mention expose-on-spawn pins."), SpawnActorContract->Notes.Contains(TEXT("ExposeOnSpawn")));
+		TestTrue(TEXT("K2.SpawnActor notes should mention the generic node-spawner path."), SpawnActorContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const AddComponentContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.AddComponentByClass"));
@@ -4879,6 +4881,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.AddComponentByClass should report exact-match descriptor inspection."), AddComponentContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.AddComponentByClass should require ComponentClassPath metadata."), ContainsNameValue(AddComponentContract->RequiredMetadataKeys, TEXT("ComponentClassPath")));
 		TestTrue(TEXT("K2.AddComponentByClass notes should mention scene-component-only pins."), AddComponentContract->Notes.Contains(TEXT("scene-component-only")));
+		TestTrue(TEXT("K2.AddComponentByClass notes should mention the generic node-spawner path."), AddComponentContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const GetComponentByClassContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.GetComponentByClass"));
@@ -4926,6 +4929,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.ClassCast should report exact-match descriptor inspection."), ClassCastContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.ClassCast should require TargetClassPath metadata."), ContainsNameValue(ClassCastContract->RequiredMetadataKeys, TEXT("TargetClassPath")));
 		TestTrue(TEXT("K2.ClassCast notes should mention UK2Node_ClassDynamicCast."), ClassCastContract->Notes.Contains(TEXT("UK2Node_ClassDynamicCast")));
+		TestTrue(TEXT("K2.ClassCast notes should mention the generic node-spawner path."), ClassCastContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const GetClassDefaultsContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.GetClassDefaults"));
@@ -4935,6 +4939,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.GetClassDefaults should report exact-match descriptor inspection."), GetClassDefaultsContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.GetClassDefaults should require ClassPath metadata."), ContainsNameValue(GetClassDefaultsContract->RequiredMetadataKeys, TEXT("ClassPath")));
 		TestTrue(TEXT("K2.GetClassDefaults notes should mention UK2Node_GetClassDefaults."), GetClassDefaultsContract->Notes.Contains(TEXT("UK2Node_GetClassDefaults")));
+		TestTrue(TEXT("K2.GetClassDefaults notes should mention the generic node-spawner path."), GetClassDefaultsContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const LoadAssetContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.LoadAsset"));
@@ -4944,6 +4949,7 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.LoadAsset should report exact-match descriptor inspection."), LoadAssetContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.LoadAsset should require AssetClassPath metadata."), ContainsNameValue(LoadAssetContract->RequiredMetadataKeys, TEXT("AssetClassPath")));
 		TestFalse(TEXT("K2.LoadAsset should not report UserConstructionScript as a supported graph."), ContainsNameValue(LoadAssetContract->SupportedTargetGraphs, TEXT("UserConstructionScript")));
+		TestTrue(TEXT("K2.LoadAsset notes should mention the generic node-spawner path."), LoadAssetContract->Notes.Contains(TEXT("generic node-spawner path")));
 	}
 
 	const FVergilSupportedDescriptorContract* const LoadAssetClassContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.LoadAssetClass"));
