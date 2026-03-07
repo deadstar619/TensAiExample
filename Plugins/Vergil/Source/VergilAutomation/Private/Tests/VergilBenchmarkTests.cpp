@@ -53,7 +53,7 @@ namespace
 		FVergilLargeGraphBenchmarkPhaseResult Apply;
 	};
 
-	FVergilLargeGraphBenchmarkScenario MakeScenario(
+	FVergilLargeGraphBenchmarkScenario MakeBenchmarkScenario(
 		const TCHAR* Name,
 		const int32 SegmentCount,
 		const int32 CommentStride,
@@ -69,7 +69,7 @@ namespace
 		return Scenario;
 	}
 
-	TStrongObjectPtr<UBlueprint> MakeTransientBlueprint(UClass* ParentClass = nullptr)
+	TStrongObjectPtr<UBlueprint> MakeBenchmarkTransientBlueprint(UClass* ParentClass = nullptr)
 	{
 		if (ParentClass == nullptr)
 		{
@@ -90,7 +90,7 @@ namespace
 			TEXT("VergilAutomation")));
 	}
 
-	FVergilVariableDefinition MakeBoolVariable(const FName Name, const FString& DefaultValue)
+	FVergilVariableDefinition MakeBenchmarkBoolVariable(const FName Name, const FString& DefaultValue)
 	{
 		FVergilVariableDefinition Variable;
 		Variable.Name = Name;
@@ -99,7 +99,7 @@ namespace
 		return Variable;
 	}
 
-	FVergilGraphNode MakeNode(const EVergilNodeKind Kind, const FName Descriptor, const FVector2D Position)
+	FVergilGraphNode MakeBenchmarkNode(const EVergilNodeKind Kind, const FName Descriptor, const FVector2D Position)
 	{
 		FVergilGraphNode Node;
 		Node.Id = FGuid::NewGuid();
@@ -109,7 +109,7 @@ namespace
 		return Node;
 	}
 
-	FVergilGraphPin MakePin(
+	FVergilGraphPin MakeBenchmarkPin(
 		const FName Name,
 		const EVergilPinDirection Direction,
 		const bool bIsExec = false,
@@ -124,7 +124,7 @@ namespace
 		return Pin;
 	}
 
-	FVergilGraphEdge MakeEdge(
+	FVergilGraphEdge MakeBenchmarkEdge(
 		const FVergilGraphNode& SourceNode,
 		const FVergilGraphPin& SourcePin,
 		const FVergilGraphNode& TargetNode,
@@ -144,23 +144,23 @@ namespace
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Vergil"), TEXT("Benchmarks"), TEXT("LargeGraphBenchmarkSummary.json"));
 	}
 
-	int32 CountEventGraphNodes(UBlueprint* const Blueprint)
+	int32 CountBenchmarkEventGraphNodes(UBlueprint* const Blueprint)
 	{
 		UEdGraph* const EventGraph = Blueprint != nullptr ? FBlueprintEditorUtils::FindEventGraph(Blueprint) : nullptr;
 		return EventGraph != nullptr ? EventGraph->Nodes.Num() : 0;
 	}
 
-	FVergilGraphDocument BuildLargeGraphDocument(const FVergilLargeGraphBenchmarkScenario& Scenario, int32& OutCommentCount)
+	FVergilGraphDocument BuildBenchmarkLargeGraphDocument(const FVergilLargeGraphBenchmarkScenario& Scenario, int32& OutCommentCount)
 	{
 		OutCommentCount = 0;
 
 		FVergilGraphDocument Document;
 		Document.SchemaVersion = Vergil::SchemaVersion;
 		Document.BlueprintPath = FString::Printf(TEXT("/Temp/BP_VergilLargeGraphBenchmark_%s"), *Scenario.Name);
-		Document.Variables = { MakeBoolVariable(TEXT("BenchmarkFlag"), TEXT("false")) };
+		Document.Variables = { MakeBenchmarkBoolVariable(TEXT("BenchmarkFlag"), TEXT("false")) };
 
-		FVergilGraphNode BeginPlayNode = MakeNode(EVergilNodeKind::Event, TEXT("K2.Event.ReceiveBeginPlay"), FVector2D::ZeroVector);
-		const FVergilGraphPin BeginPlayThenPin = MakePin(UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true);
+		FVergilGraphNode BeginPlayNode = MakeBenchmarkNode(EVergilNodeKind::Event, TEXT("K2.Event.ReceiveBeginPlay"), FVector2D::ZeroVector);
+		const FVergilGraphPin BeginPlayThenPin = MakeBenchmarkPin(UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true);
 		BeginPlayNode.Pins.Add(BeginPlayThenPin);
 		Document.Nodes.Add(BeginPlayNode);
 
@@ -174,45 +174,45 @@ namespace
 			const float BaseX = static_cast<float>(ColumnIndex) * 900.0f;
 			const float BaseY = static_cast<float>(RowIndex) * 280.0f;
 
-			FVergilGraphNode GetterNode = MakeNode(
+			FVergilGraphNode GetterNode = MakeBenchmarkNode(
 				EVergilNodeKind::VariableGet,
 				TEXT("K2.VarGet.BenchmarkFlag"),
 				FVector2D(BaseX, BaseY + 120.0f));
-			const FVergilGraphPin GetterValuePin = MakePin(TEXT("BenchmarkFlag"), EVergilPinDirection::Output);
+			const FVergilGraphPin GetterValuePin = MakeBenchmarkPin(TEXT("BenchmarkFlag"), EVergilPinDirection::Output);
 			GetterNode.Pins.Add(GetterValuePin);
 
-			FVergilGraphNode NotNode = MakeNode(
+			FVergilGraphNode NotNode = MakeBenchmarkNode(
 				EVergilNodeKind::Call,
 				TEXT("K2.Call.Not_PreBool"),
 				FVector2D(BaseX + 280.0f, BaseY + 120.0f));
 			NotNode.Metadata.Add(TEXT("OwnerClassPath"), UKismetMathLibrary::StaticClass()->GetClassPathName().ToString());
-			const FVergilGraphPin NotInputPin = MakePin(TEXT("A"), EVergilPinDirection::Input);
-			const FVergilGraphPin NotReturnPin = MakePin(UEdGraphSchema_K2::PN_ReturnValue, EVergilPinDirection::Output);
+			const FVergilGraphPin NotInputPin = MakeBenchmarkPin(TEXT("A"), EVergilPinDirection::Input);
+			const FVergilGraphPin NotReturnPin = MakeBenchmarkPin(UEdGraphSchema_K2::PN_ReturnValue, EVergilPinDirection::Output);
 			NotNode.Pins = { NotInputPin, NotReturnPin };
 
-			FVergilGraphNode SetterNode = MakeNode(
+			FVergilGraphNode SetterNode = MakeBenchmarkNode(
 				EVergilNodeKind::VariableSet,
 				TEXT("K2.VarSet.BenchmarkFlag"),
 				FVector2D(BaseX + 560.0f, BaseY + 80.0f));
-			const FVergilGraphPin SetterExecPin = MakePin(UEdGraphSchema_K2::PN_Execute, EVergilPinDirection::Input, true);
-			const FVergilGraphPin SetterThenPin = MakePin(UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true);
-			const FVergilGraphPin SetterValuePin = MakePin(TEXT("BenchmarkFlag"), EVergilPinDirection::Input);
+			const FVergilGraphPin SetterExecPin = MakeBenchmarkPin(UEdGraphSchema_K2::PN_Execute, EVergilPinDirection::Input, true);
+			const FVergilGraphPin SetterThenPin = MakeBenchmarkPin(UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true);
+			const FVergilGraphPin SetterValuePin = MakeBenchmarkPin(TEXT("BenchmarkFlag"), EVergilPinDirection::Input);
 			SetterNode.Pins = { SetterExecPin, SetterThenPin, SetterValuePin };
 
 			Document.Nodes.Add(GetterNode);
 			Document.Nodes.Add(NotNode);
 			Document.Nodes.Add(SetterNode);
 
-			Document.Edges.Add(MakeEdge(PreviousExecNode, PreviousExecPin, SetterNode, SetterExecPin));
-			Document.Edges.Add(MakeEdge(GetterNode, GetterValuePin, NotNode, NotInputPin));
-			Document.Edges.Add(MakeEdge(NotNode, NotReturnPin, SetterNode, SetterValuePin));
+			Document.Edges.Add(MakeBenchmarkEdge(PreviousExecNode, PreviousExecPin, SetterNode, SetterExecPin));
+			Document.Edges.Add(MakeBenchmarkEdge(GetterNode, GetterValuePin, NotNode, NotInputPin));
+			Document.Edges.Add(MakeBenchmarkEdge(NotNode, NotReturnPin, SetterNode, SetterValuePin));
 
 			PreviousExecNode = SetterNode;
 			PreviousExecPin = SetterThenPin;
 
 			if (Scenario.CommentStride > 0 && SegmentIndex % Scenario.CommentStride == 0)
 			{
-				FVergilGraphNode CommentNode = MakeNode(
+				FVergilGraphNode CommentNode = MakeBenchmarkNode(
 					EVergilNodeKind::Comment,
 					TEXT("UI.Comment"),
 					FVector2D(BaseX - 120.0f, BaseY - 60.0f));
@@ -327,8 +327,8 @@ bool FVergilLargeGraphBenchmarkTest::RunTest(const FString& Parameters)
 
 	const TArray<FVergilLargeGraphBenchmarkScenario> Scenarios =
 	{
-		MakeScenario(TEXT("LinearBoolToggleChain_192"), 192, 24, 15.0, 25.0),
-		MakeScenario(TEXT("LinearBoolToggleChain_384"), 384, 24, 25.0, 40.0)
+		MakeBenchmarkScenario(TEXT("LinearBoolToggleChain_192"), 192, 24, 15.0, 25.0),
+		MakeBenchmarkScenario(TEXT("LinearBoolToggleChain_384"), 384, 24, 25.0, 40.0)
 	};
 
 	TArray<FVergilLargeGraphBenchmarkResult> Results;
@@ -339,7 +339,7 @@ bool FVergilLargeGraphBenchmarkTest::RunTest(const FString& Parameters)
 	for (const FVergilLargeGraphBenchmarkScenario& Scenario : Scenarios)
 	{
 		int32 CommentCount = 0;
-		const FVergilGraphDocument Document = BuildLargeGraphDocument(Scenario, CommentCount);
+		const FVergilGraphDocument Document = BuildBenchmarkLargeGraphDocument(Scenario, CommentCount);
 
 		FVergilLargeGraphBenchmarkResult& BenchmarkResult = Results.AddDefaulted_GetRef();
 		BenchmarkResult.Name = Scenario.Name;
@@ -350,7 +350,7 @@ bool FVergilLargeGraphBenchmarkTest::RunTest(const FString& Parameters)
 		BenchmarkResult.MaxPlanSeconds = Scenario.MaxPlanSeconds;
 		BenchmarkResult.MaxApplySeconds = Scenario.MaxApplySeconds;
 
-		TStrongObjectPtr<UBlueprint> PlanningBlueprint = MakeTransientBlueprint();
+		TStrongObjectPtr<UBlueprint> PlanningBlueprint = MakeBenchmarkTransientBlueprint();
 		TestNotNull(*FString::Printf(TEXT("%s should create a transient planning Blueprint."), *Scenario.Name), PlanningBlueprint.Get());
 		if (!PlanningBlueprint.IsValid())
 		{
@@ -381,7 +381,7 @@ bool FVergilLargeGraphBenchmarkTest::RunTest(const FString& Parameters)
 			continue;
 		}
 
-		TStrongObjectPtr<UBlueprint> ApplyBlueprint = MakeTransientBlueprint();
+		TStrongObjectPtr<UBlueprint> ApplyBlueprint = MakeBenchmarkTransientBlueprint();
 		TestNotNull(*FString::Printf(TEXT("%s should create a transient apply Blueprint."), *Scenario.Name), ApplyBlueprint.Get());
 		if (!ApplyBlueprint.IsValid())
 		{
@@ -390,7 +390,7 @@ bool FVergilLargeGraphBenchmarkTest::RunTest(const FString& Parameters)
 		}
 
 		BenchmarkResult.Apply = RunApplyPhase(EditorSubsystem, ApplyBlueprint.Get(), PlanResult.Commands);
-		BenchmarkResult.AppliedGraphNodeCount = CountEventGraphNodes(ApplyBlueprint.Get());
+		BenchmarkResult.AppliedGraphNodeCount = CountBenchmarkEventGraphNodes(ApplyBlueprint.Get());
 
 		const FString ApplyLabel = FString::Printf(TEXT("%s apply benchmark"), *Scenario.Name);
 		TestTrue(*FString::Printf(TEXT("%s should succeed."), *ApplyLabel), BenchmarkResult.Apply.bSucceeded);
