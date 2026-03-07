@@ -18,6 +18,7 @@ public class VergilAutomation : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"Json",
 				"UnrealEd",
 				"VergilCore",
 				"VergilBlueprintModel",

@@ -590,7 +590,7 @@ Tickets:
 
 - [x] `VGR-9001` Add golden asset tests
 - [x] `VGR-9002` Add PIE runtime validation suites
-- `VGR-9003` Add large-graph performance benchmarks
+- [x] `VGR-9003` Add large-graph performance benchmarks
 - [x] `VGR-9004` Add schema migration tests
 - [x] `VGR-9005` Add source-control diff tests
 - [x] `VGR-9006` Add crash/recovery tests around compile/apply
@@ -618,6 +618,12 @@ Session note for `VGR-9002` (2026-03-07):
 - The event-flow suite compiles a transient Blueprint entirely through Vergil's document model, then proves `K2.Delay`, `K2.Call.K2_SetTimer`, `K2.CustomEvent.*`, `K2.BindDelegate.*`, and `K2.CallDelegate.*` produce real runtime side effects inside PIE by waiting on authored Blueprint state.
 - The world-mutation suite compiles a second transient Blueprint and proves `K2.AddComponentByClass` plus `K2.SpawnActor` create real runtime objects in the PIE world, with the authored Blueprint instance retaining the created component and spawned actor references for inspection.
 - `Build.bat` `Development` succeeded, targeted `Vergil.Scaffold.PIERuntime` passed `2/2`, and the full headless `Vergil.Scaffold.*` suite re-verified cleanly at `99/99` with zero Vergil, Blueprint, or automation warnings in this workspace.
+
+Session note for `VGR-9003` (2026-03-07):
+
+- `Vergil.Scaffold.LargeGraphBenchmark` now generates large synthetic event-graph documents with repeated variable-get, math-call, variable-set, and authored comment nodes, then measures both dry-run planning and direct command-plan apply on fresh transient Blueprints.
+- The benchmark writes a structured JSON summary to `Saved/Vergil/Benchmarks/LargeGraphBenchmarkSummary.json`, and the new `Plugins/Vergil/Tools/Invoke-VergilLargeGraphBenchmarks.ps1` entrypoint copies that summary into the dedicated CI artifact directory under `Saved/Logs/VergilCI/Benchmarks/`.
+- `Invoke-VergilCILane.ps1`, `.github/workflows/vergil-ci.yml`, and `README.md` now expose a first-class `Benchmarks` lane instead of the temporary `PerfSmoke` guard, while keeping `PerfSmoke` as a deprecated local alias that forwards to the real benchmark lane.
 
 Session note for `VGR-9005` (2026-03-07):
 
@@ -674,11 +680,7 @@ The main dependency chain is:
 If those are weak, later coverage work will turn into one-off patches.
 
 ## Recommended Next Sprint
-Best next sprint from the current baseline:
-
-1. `VGR-9003`
-
-This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring now has persisted save/reload/native-compile roundtrip coverage plus restart-boundary failed-apply recovery coverage and checked-in golden snapshot and reviewed source-control diff fixtures on the supported milestone-4 surface.
+The current roadmap ticket list is complete. Add a new ticket only when a new requirement or missing prerequisite shows up.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

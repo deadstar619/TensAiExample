@@ -1,12 +1,10 @@
 param(
-	[ValidateSet('All', 'Build', 'HeadlessAutomation', 'GoldenTests', 'PIRuntime', 'PerfSmoke')]
+	[ValidateSet('All', 'Build', 'HeadlessAutomation', 'GoldenTests', 'PIRuntime', 'Benchmarks', 'PerfSmoke')]
 	[string]$Lane = 'All',
 	[string]$EngineRoot = '',
 	[string]$UnrealBuildToolPath = '',
 	[string]$EditorCmdPath = '',
-	[string]$ProjectPath = '',
-	[int]$PerfSmokeMaxTotalSeconds = 900,
-	[int]$PerfSmokeMaxPerScenarioSeconds = 360
+	[string]$ProjectPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -20,7 +18,7 @@ $resolvedEditorCmdPath = Resolve-VergilEditorCmdPath -EditorCmdPath $EditorCmdPa
 $resolvedUnrealBuildToolPath = Resolve-VergilUnrealBuildToolPath -UnrealBuildToolPath $UnrealBuildToolPath -EngineRoot $EngineRoot
 $automationScriptPath = Join-Path $PSScriptRoot 'Invoke-VergilScaffoldAutomation.ps1'
 $buildScriptPath = Join-Path $PSScriptRoot 'Invoke-VergilProjectBuild.ps1'
-$perfSmokeScriptPath = Join-Path $PSScriptRoot 'Invoke-VergilPerfSmoke.ps1'
+$benchmarkScriptPath = Join-Path $PSScriptRoot 'Invoke-VergilLargeGraphBenchmarks.ps1'
 
 function Invoke-VergilAutomationLane {
 	param(
@@ -76,13 +74,11 @@ switch ($Lane) {
 
 		Invoke-VergilAutomationLane -LaneName 'PIRuntime' -TestFilter 'Vergil.Scaffold.PIERuntime' -LogFileName 'PIERuntime.log'
 		Invoke-VergilPowerShellFile `
-			-ScriptPath $perfSmokeScriptPath `
+			-ScriptPath $benchmarkScriptPath `
 			-WorkingDirectory $projectRoot `
 			-Arguments @(
 				'-EditorCmdPath', $resolvedEditorCmdPath,
-				'-ProjectPath', $resolvedProjectPath,
-				'-MaxTotalSeconds', $PerfSmokeMaxTotalSeconds,
-				'-MaxPerScenarioSeconds', $PerfSmokeMaxPerScenarioSeconds
+				'-ProjectPath', $resolvedProjectPath
 			)
 	}
 	'Build' {
@@ -127,15 +123,23 @@ switch ($Lane) {
 	'PIRuntime' {
 		Invoke-VergilAutomationLane -LaneName 'PIRuntime' -TestFilter 'Vergil.Scaffold.PIERuntime' -LogFileName 'PIERuntime.log'
 	}
-	'PerfSmoke' {
+	'Benchmarks' {
 		Invoke-VergilPowerShellFile `
-			-ScriptPath $perfSmokeScriptPath `
+			-ScriptPath $benchmarkScriptPath `
 			-WorkingDirectory $projectRoot `
 			-Arguments @(
 				'-EditorCmdPath', $resolvedEditorCmdPath,
-				'-ProjectPath', $resolvedProjectPath,
-				'-MaxTotalSeconds', $PerfSmokeMaxTotalSeconds,
-				'-MaxPerScenarioSeconds', $PerfSmokeMaxPerScenarioSeconds
+				'-ProjectPath', $resolvedProjectPath
+			)
+	}
+	'PerfSmoke' {
+		Write-Warning 'PerfSmoke is deprecated and now forwards to the dedicated large-graph Benchmarks lane.'
+		Invoke-VergilPowerShellFile `
+			-ScriptPath $benchmarkScriptPath `
+			-WorkingDirectory $projectRoot `
+			-Arguments @(
+				'-EditorCmdPath', $resolvedEditorCmdPath,
+				'-ProjectPath', $resolvedProjectPath
 			)
 	}
 }

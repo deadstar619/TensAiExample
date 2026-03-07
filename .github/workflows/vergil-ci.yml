@@ -30,7 +30,7 @@ on:
           - HeadlessAutomation
           - GoldenTests
           - PIRuntime
-          - PerfSmoke
+          - Benchmarks
 
 concurrency:
   group: vergil-ci-${{ github.ref }}
