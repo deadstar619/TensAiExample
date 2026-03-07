@@ -526,7 +526,7 @@ Tickets:
 - [x] `VGR-8005` Add inspection tools for supported descriptors/contracts
 - [x] `VGR-8006` Add partial-apply recovery flows
 - [x] `VGR-8007` Add provenance/session correlation IDs
-- `VGR-8008` Keep agent orchestration separate from deterministic compile/execute logic
+- [x] `VGR-8008` Keep agent orchestration separate from deterministic compile/execute logic
 
 Acceptance criteria:
 
@@ -574,6 +574,12 @@ Session note for `VGR-8007` (2026-03-07):
 - `FVergilAgentRequestContext` and `FVergilAgentResponse` now carry explicit `SessionId` and `ParentRequestId` fields alongside the per-request `RequestId`, so plan/apply orchestration can correlate one interaction end-to-end while still preserving request lineage for audited replay.
 - The versioned inspection payloads advanced to `Vergil.AgentRequest` `v3` plus `Vergil.AgentResponse` and `Vergil.AgentAuditEntry` `v2`, with deterministic JSON and human-readable descriptions now surfacing the new provenance ids through both the namespace helpers and `UVergilAgentSubsystem`.
 - `UVergilAgentSubsystem::ExecuteRequest(...)` now synthesizes missing session ids from the normalized request id, `MakeApplyRequestFromPlan(...)` inherits the plan session id and stamps the plan request id as the default apply parent id, and audit recording normalizes missing response correlation ids before persistence. `Vergil.Scaffold.AgentRequestResponseContracts`, `Vergil.Scaffold.AgentAuditPersistence`, and `Vergil.Scaffold.AgentPlanApplySeparation` now cover the full lineage behavior.
+
+Session note for `VGR-8008` (2026-03-07):
+
+- Shared deterministic execution helpers now live in the editor module through `VergilEditorExecutionUtils`, covering Blueprint-reference normalization, Blueprint resolution from package or object paths, and command-plan preparation/fingerprinting before direct execution.
+- `UVergilEditorSubsystem::ExecuteCommandPlan(...)` now routes through that shared command-plan preparation path, so direct editor execution and agent-driven apply replay use the same normalization and target-graph inference boundary instead of each copy reshaping command plans independently.
+- `UVergilAgentSubsystem` now limits itself to request orchestration, permission checks, provenance/audit handling, and phase-specific error reporting while delegating Blueprint-path normalization and command-plan preparation back to the shared editor-layer utility surface. `Vergil.Scaffold.AgentPlanApplySeparation` now also covers object-path normalization plus reordered-plan normalization through `MakeApplyRequestFromPlan(...)`.
 
 ## Milestone 9: Studio-Grade Release Hardening
 Goal:
@@ -632,12 +638,12 @@ If those are weak, later coverage work will turn into one-off patches.
 Best next sprint from the current baseline:
 
 1. `VGR-9001`
-2. `VGR-8008`
-3. `VGR-9002`
-4. `VGR-9005`
-5. `VGR-9006`
+2. `VGR-9002`
+3. `VGR-9005`
+4. `VGR-9006`
+5. `VGR-9003`
 
-This keeps pressure on the next highest-value K2 breadth items, the remaining agent/workflow gaps, and release hardening now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
+This keeps pressure on the next highest-value release-hardening work now that the agent layer can separate read-only planning from explicit replayed apply, inspection tooling is in place, the code-backed support manifest is exposed, version/migration policy is explicit, and whole-asset authoring also has persisted save/reload/native-compile roundtrip coverage on the supported milestone-4 surface.
 
 ## Definition Of Complete
 Vergil should only be considered complete when:

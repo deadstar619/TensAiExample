@@ -1,5 +1,6 @@
 #include "Misc/AutomationTest.h"
 
+#include "Algo/Reverse.h"
 #include "Animation/AnimMontage.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "Editor.h"
@@ -5827,7 +5828,7 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 
 	FVergilGraphDocument Document;
 	Document.SchemaVersion = Vergil::SchemaVersion;
-	Document.BlueprintPath = PersistentBlueprint.PackagePath;
+	Document.BlueprintPath = PersistentBlueprint.ObjectPath;
 	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Agent plan/apply separation"));
 
 	FVergilAgentRequest PlanRequest;
@@ -5874,12 +5875,19 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 	RejectedApplyContext.InputText = TEXT("Do not replay a plan whose fingerprint changed.");
 	RejectedApplyContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Rejected") };
 
-	FVergilAgentRequest RejectedApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(RejectedApplyContext, PlanRequest, PlanResponse.Result);
+	FVergilCompileResult ReorderedPlanResult = PlanResponse.Result;
+	Algo::Reverse(ReorderedPlanResult.Commands);
+
+	FVergilAgentRequest RejectedApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(RejectedApplyContext, PlanRequest, ReorderedPlanResult);
 	TestEqual(TEXT("The helper should always produce an apply request operation."), RejectedApplyRequest.Operation, EVergilAgentOperation::ApplyCommandPlan);
 	TestEqual(TEXT("The helper should inherit the plan session id when the apply context omits it."), RejectedApplyRequest.Context.SessionId, PlanRequest.Context.SessionId);
 	TestEqual(TEXT("The helper should stamp the plan request id as the apply parent request id."), RejectedApplyRequest.Context.ParentRequestId, PlanRequest.Context.RequestId);
 	TestEqual(TEXT("The helper should carry the reviewed Blueprint path into the apply request."), RejectedApplyRequest.Apply.TargetBlueprintPath, PersistentBlueprint.PackagePath);
 	TestEqual(TEXT("The helper should carry the reviewed command count into the apply request."), RejectedApplyRequest.Apply.Commands.Num(), PlanResponse.Result.Commands.Num());
+	TestEqual(
+		TEXT("The helper should normalize reviewed commands through the shared editor execution path."),
+		Vergil::SerializeCommandPlan(RejectedApplyRequest.Apply.Commands, false),
+		Vergil::SerializeCommandPlan(PlanResponse.Result.Commands, false));
 	TestEqual(TEXT("The helper should carry the reviewed fingerprint into the apply request."), RejectedApplyRequest.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
 
 	RejectedApplyRequest.Apply.ExpectedCommandPlanFingerprint = TEXT("deadbeef");

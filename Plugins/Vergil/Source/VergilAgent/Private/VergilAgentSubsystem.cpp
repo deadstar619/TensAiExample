@@ -10,6 +10,7 @@
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "VergilDeveloperSettings.h"
+#include "VergilEditorExecutionUtils.h"
 #include "VergilEditorSubsystem.h"
 #include "VergilLog.h"
 
@@ -18,78 +19,6 @@ namespace
 	inline constexpr TCHAR PersistedAuditTrailFormatName[] = TEXT("Vergil.AgentAuditLog");
 	inline constexpr int32 PersistedAuditTrailFormatVersion = 1;
 	inline constexpr TCHAR PersistedAuditTrailRelativePath[] = TEXT("Vergil/AgentAuditTrail.json");
-	inline const FName DefaultTargetGraphName(TEXT("EventGraph"));
-
-	FName ResolveDefaultTargetGraphName()
-	{
-		const UVergilDeveloperSettings* const Settings = GetDefault<UVergilDeveloperSettings>();
-		if (Settings != nullptr && !Settings->DefaultTargetGraphName.IsNone())
-		{
-			return Settings->DefaultTargetGraphName;
-		}
-
-		return DefaultTargetGraphName;
-	}
-
-	FString TrimOptionalPath(const FString& Path)
-	{
-		return Path.TrimStartAndEnd();
-	}
-
-	FString NormalizeBlueprintReference(const FString& BlueprintPath)
-	{
-		const FString TrimmedPath = TrimOptionalPath(BlueprintPath);
-		if (TrimmedPath.IsEmpty())
-		{
-			return FString();
-		}
-
-		if (TrimmedPath.Contains(TEXT(".")))
-		{
-			const FString PackagePath = FPackageName::ObjectPathToPackageName(TrimmedPath);
-			return PackagePath.IsEmpty() ? TrimmedPath : PackagePath;
-		}
-
-		return TrimmedPath;
-	}
-
-	FString BuildBlueprintObjectPath(const FString& BlueprintPath)
-	{
-		const FString PackagePath = NormalizeBlueprintReference(BlueprintPath);
-		if (PackagePath.IsEmpty())
-		{
-			return FString();
-		}
-
-		if (PackagePath.Contains(TEXT(".")))
-		{
-			return PackagePath;
-		}
-
-		const FString AssetName = FPackageName::GetLongPackageAssetName(PackagePath);
-		if (AssetName.IsEmpty())
-		{
-			return FString();
-		}
-
-		return FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
-	}
-
-	UBlueprint* ResolveBlueprintFromReference(const FString& BlueprintPath)
-	{
-		const FString ObjectPath = BuildBlueprintObjectPath(BlueprintPath);
-		if (ObjectPath.IsEmpty())
-		{
-			return nullptr;
-		}
-
-		if (UBlueprint* const ExistingBlueprint = FindObject<UBlueprint>(nullptr, *ObjectPath))
-		{
-			return ExistingBlueprint;
-		}
-
-		return LoadObject<UBlueprint>(nullptr, *ObjectPath);
-	}
 
 	void NormalizeRequestContext(FVergilAgentRequestContext& Context)
 	{
@@ -449,23 +378,21 @@ FVergilAgentRequest UVergilAgentSubsystem::MakeApplyRequestFromPlan(
 		ApplyRequest.Context.ParentRequestId = PlannedRequest.Context.RequestId;
 	}
 
+	const FVergilCompileResult PreparedPlan = VergilEditor::PrepareCommandPlanForExecution(PlannedResult.Commands);
+
 	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
-	ApplyRequest.Apply.TargetBlueprintPath = NormalizeBlueprintReference(
+	ApplyRequest.Apply.TargetBlueprintPath = VergilEditor::NormalizeBlueprintReference(
 		!PlannedRequest.Plan.TargetBlueprintPath.IsEmpty()
 			? PlannedRequest.Plan.TargetBlueprintPath
 			: PlannedRequest.Plan.Document.BlueprintPath);
-	ApplyRequest.Apply.Commands = PlannedResult.Commands;
-	Vergil::NormalizeCommandPlan(ApplyRequest.Apply.Commands);
-
-	FVergilCompileStatistics PlannedStatistics = PlannedResult.Statistics;
-	PlannedStatistics.RebuildCommandStatistics(ApplyRequest.Apply.Commands);
-	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = PlannedStatistics.CommandPlanFingerprint;
+	ApplyRequest.Apply.Commands = PreparedPlan.Commands;
+	ApplyRequest.Apply.ExpectedCommandPlanFingerprint = PreparedPlan.Statistics.CommandPlanFingerprint;
 	return ApplyRequest;
 }
 
 FVergilAgentResponse UVergilAgentSubsystem::ExecuteRequest(const FVergilAgentRequest& Request)
 {
-	const FVergilAgentRequest NormalizedRequest = NormalizeRequest(Request);
+	FVergilAgentRequest NormalizedRequest = NormalizeRequest(Request);
 
 	FVergilAgentResponse Response;
 	switch (NormalizedRequest.Operation)
@@ -664,48 +591,30 @@ FVergilAgentRequest UVergilAgentSubsystem::NormalizeRequest(const FVergilAgentRe
 	FVergilAgentRequest NormalizedRequest = Request;
 	NormalizeRequestContext(NormalizedRequest.Context);
 
-	switch (NormalizedRequest.Operation)
+	if (NormalizedRequest.Operation == EVergilAgentOperation::ApplyCommandPlan)
 	{
-	case EVergilAgentOperation::PlanDocument:
-	{
-		const FString NormalizedTargetPath = NormalizeBlueprintReference(
-			!NormalizedRequest.Plan.TargetBlueprintPath.IsEmpty()
-				? NormalizedRequest.Plan.TargetBlueprintPath
-				: NormalizedRequest.Plan.Document.BlueprintPath);
-		NormalizedRequest.Plan.TargetBlueprintPath = NormalizedTargetPath;
-
-		if (NormalizedRequest.Plan.Document.BlueprintPath.IsEmpty())
-		{
-			NormalizedRequest.Plan.Document.BlueprintPath = NormalizedTargetPath;
-		}
-		else
-		{
-			NormalizedRequest.Plan.Document.BlueprintPath = NormalizeBlueprintReference(NormalizedRequest.Plan.Document.BlueprintPath);
-		}
-
-		if (NormalizedRequest.Plan.TargetGraphName.IsNone())
-		{
-			NormalizedRequest.Plan.TargetGraphName = ResolveDefaultTargetGraphName();
-		}
-		break;
-	}
-
-	case EVergilAgentOperation::ApplyCommandPlan:
-		NormalizedRequest.Apply.TargetBlueprintPath = NormalizeBlueprintReference(NormalizedRequest.Apply.TargetBlueprintPath);
 		NormalizedRequest.Apply.ExpectedCommandPlanFingerprint = NormalizedRequest.Apply.ExpectedCommandPlanFingerprint.TrimStartAndEnd();
-		Vergil::NormalizeCommandPlan(NormalizedRequest.Apply.Commands);
-		break;
-
-	default:
-		break;
 	}
 
 	return NormalizedRequest;
 }
 
-FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(const FVergilAgentRequest& Request) const
+FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(FVergilAgentRequest& Request) const
 {
 	FVergilAgentResponse Response = MakeBaseResponse(Request);
+
+	Request.Plan.TargetBlueprintPath = VergilEditor::NormalizeBlueprintReference(
+		!Request.Plan.TargetBlueprintPath.IsEmpty()
+			? Request.Plan.TargetBlueprintPath
+			: Request.Plan.Document.BlueprintPath);
+	if (Request.Plan.Document.BlueprintPath.IsEmpty())
+	{
+		Request.Plan.Document.BlueprintPath = Request.Plan.TargetBlueprintPath;
+	}
+	else
+	{
+		Request.Plan.Document.BlueprintPath = VergilEditor::NormalizeBlueprintReference(Request.Plan.Document.BlueprintPath);
+	}
 
 	if (GEditor == nullptr)
 	{
@@ -744,7 +653,7 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(const FVergilAgen
 		return Response;
 	}
 
-	UBlueprint* const Blueprint = ResolveBlueprintFromReference(Request.Plan.TargetBlueprintPath);
+	UBlueprint* const Blueprint = VergilEditor::ResolveBlueprintFromReference(Request.Plan.TargetBlueprintPath);
 	if (Blueprint == nullptr)
 	{
 		Response.State = EVergilAgentExecutionState::Failed;
@@ -776,6 +685,7 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(const FVergilAgen
 		Request.Plan.TargetGraphName,
 		Request.Plan.bAutoLayout,
 		Request.Plan.bGenerateComments);
+	Request.Plan.TargetGraphName = CompileRequest.TargetGraphName;
 	Response.Result = EditorSubsystem->CompileRequest(CompileRequest, false);
 	Response.State = Response.Result.bSucceeded ? EVergilAgentExecutionState::Completed : EVergilAgentExecutionState::Failed;
 	Response.Message = Response.Result.bSucceeded
@@ -826,13 +736,12 @@ bool UVergilAgentSubsystem::IsWriteRequestAuthorized(
 	}
 }
 
-FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAgentRequest& Request) const
+FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(FVergilAgentRequest& Request) const
 {
 	FVergilAgentResponse Response = MakeBaseResponse(Request);
-	Response.Result.Commands = Request.Apply.Commands;
-	Response.Result.Statistics.bApplyRequested = true;
-	Response.Result.Statistics.bCommandPlanNormalized = true;
-	Response.Result.Statistics.RebuildCommandStatistics(Response.Result.Commands);
+	Request.Apply.TargetBlueprintPath = VergilEditor::NormalizeBlueprintReference(Request.Apply.TargetBlueprintPath);
+	Response.Result = VergilEditor::PrepareCommandPlanForExecution(Request.Apply.Commands);
+	Request.Apply.Commands = Response.Result.Commands;
 
 	if (Request.Apply.TargetBlueprintPath.IsEmpty())
 	{
@@ -899,7 +808,7 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAge
 		return Response;
 	}
 
-	UBlueprint* const Blueprint = ResolveBlueprintFromReference(Request.Apply.TargetBlueprintPath);
+	UBlueprint* const Blueprint = VergilEditor::ResolveBlueprintFromReference(Request.Apply.TargetBlueprintPath);
 	if (Blueprint == nullptr)
 	{
 		Response.State = EVergilAgentExecutionState::Failed;

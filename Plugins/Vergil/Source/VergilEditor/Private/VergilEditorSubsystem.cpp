@@ -3,6 +3,7 @@
 #include "VergilBlueprintCompilerService.h"
 #include "VergilCommandExecutor.h"
 #include "VergilDeveloperSettings.h"
+#include "VergilEditorExecutionUtils.h"
 #include "VergilLog.h"
 
 namespace
@@ -70,32 +71,7 @@ namespace
 		return Result;
 	}
 
-	FName InferCommandPlanTargetGraphName(const TArray<FVergilCompilerCommand>& Commands)
-	{
-		FName InferredGraphName = NAME_None;
-		for (const FVergilCompilerCommand& Command : Commands)
-		{
-			if (Command.GraphName.IsNone())
-			{
-				continue;
-			}
-
-			if (InferredGraphName.IsNone())
-			{
-				InferredGraphName = Command.GraphName;
-				continue;
-			}
-
-			if (InferredGraphName != Command.GraphName)
-			{
-				return NAME_None;
-			}
-		}
-
-		return InferredGraphName;
-	}
-
-	void RefreshCompileResultState(FVergilCompileResult& Result, const bool bInferTargetGraphName = false)
+	void RefreshCompileResultState(FVergilCompileResult& Result)
 	{
 		Result.bSucceeded = true;
 		for (const FVergilDiagnostic& Diagnostic : Result.Diagnostics)
@@ -105,11 +81,6 @@ namespace
 				Result.bSucceeded = false;
 				break;
 			}
-		}
-
-		if (bInferTargetGraphName && Result.Statistics.TargetGraphName.IsNone())
-		{
-			Result.Statistics.TargetGraphName = InferCommandPlanTargetGraphName(Result.Commands);
 		}
 
 		Result.Statistics.RebuildCommandStatistics(Result.Commands);
@@ -149,7 +120,6 @@ namespace
 	void ApplyCommandPlanResult(
 		UBlueprint* Blueprint,
 		FVergilCompileResult& Result,
-		const bool bInferTargetGraphName,
 		const TCHAR* MetadataLabel)
 	{
 		const FVergilCommandExecutor Executor;
@@ -162,7 +132,7 @@ namespace
 			Result.Diagnostics,
 			&Result.ExecutedCommandCount,
 			&Result.Statistics.TransactionAudit);
-		RefreshCompileResultState(Result, bInferTargetGraphName);
+		RefreshCompileResultState(Result);
 		UE_LOG(LogVergil, Log, TEXT("%s"), *Vergil::SummarizeApplyResult(Result).ToDisplayString());
 		LogCompileResultMetadata(MetadataLabel, Result);
 	}
@@ -209,7 +179,7 @@ FVergilCompileResult UVergilEditorSubsystem::CompileRequest(const FVergilCompile
 
 	if (bApplyCommands && Result.bSucceeded)
 	{
-		ApplyCommandPlanResult(Request.TargetBlueprint, Result, false, TEXT("Vergil apply result"));
+		ApplyCommandPlanResult(Request.TargetBlueprint, Result, TEXT("Vergil apply result"));
 	}
 
 	return Result;
@@ -244,15 +214,10 @@ FVergilCompileResult UVergilEditorSubsystem::CompileDocumentToGraph(
 
 FVergilCompileResult UVergilEditorSubsystem::ExecuteCommandPlan(UBlueprint* Blueprint, const TArray<FVergilCompilerCommand>& Commands) const
 {
-	FVergilCompileResult Result;
-	Result.Commands = Commands;
-	Result.Statistics.bApplyRequested = true;
-	Vergil::NormalizeCommandPlan(Result.Commands);
-	Result.Statistics.bCommandPlanNormalized = true;
-	RefreshCompileResultState(Result, true);
+	FVergilCompileResult Result = VergilEditor::PrepareCommandPlanForExecution(Commands);
 	LogCommandPlanIfPresent(TEXT("Vergil direct command plan"), Result.Commands);
 
-	ApplyCommandPlanResult(Blueprint, Result, true, TEXT("Vergil direct apply result"));
+	ApplyCommandPlanResult(Blueprint, Result, TEXT("Vergil direct apply result"));
 	return Result;
 }
 
