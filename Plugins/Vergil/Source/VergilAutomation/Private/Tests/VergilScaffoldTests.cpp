@@ -6,12 +6,15 @@
 #include "Components/StaticMeshComponent.h"
 #include "EdGraphNode_Comment.h"
 #include "Engine/Blueprint.h"
+#include "GameFramework/AsyncActionHandleSaveGame.h"
+#include "GameFramework/SaveGame.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddComponentByClass.h"
 #include "K2Node_AddDelegate.h"
+#include "K2Node_AsyncAction.h"
 #include "K2Node_CallDelegate.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ClassDynamicCast.h"
@@ -2919,6 +2922,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Interface.InterfaceClassPath = TEXT("   /Script/CoreUObject.Interface   ");
 
 		const FString AutomationInterfacePath = UVergilAutomationTestInterface::StaticClass()->GetPathName();
+		const FString AsyncActionHandleSaveGamePath = UAsyncActionHandleSaveGame::StaticClass()->GetPathName();
 
 		FVergilGraphNode CastNode;
 		CastNode.Id = FGuid::NewGuid();
@@ -2963,6 +2967,57 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		GetClassDefaultsLifeSpanPin.Name = TEXT("InitialLifeSpan");
 		GetClassDefaultsLifeSpanPin.Direction = EVergilPinDirection::Output;
 		GetClassDefaultsNode.Pins.Add(GetClassDefaultsLifeSpanPin);
+
+		FVergilGraphNode AsyncActionNode;
+		AsyncActionNode.Id = FGuid::NewGuid();
+		AsyncActionNode.Kind = EVergilNodeKind::Custom;
+		AsyncActionNode.Descriptor = TEXT("K2.AsyncAction.AsyncLoadGameFromSlot");
+		AsyncActionNode.Metadata.Add(TEXT("FactoryClassPath"), FString::Printf(TEXT("   %s   "), *AsyncActionHandleSaveGamePath));
+
+		FVergilGraphPin AsyncActionExecutePin;
+		AsyncActionExecutePin.Id = FGuid::NewGuid();
+		AsyncActionExecutePin.Name = UEdGraphSchema_K2::PN_Execute;
+		AsyncActionExecutePin.Direction = EVergilPinDirection::Input;
+		AsyncActionExecutePin.bIsExec = true;
+		AsyncActionNode.Pins.Add(AsyncActionExecutePin);
+
+		FVergilGraphPin AsyncActionThenPin;
+		AsyncActionThenPin.Id = FGuid::NewGuid();
+		AsyncActionThenPin.Name = UEdGraphSchema_K2::PN_Then;
+		AsyncActionThenPin.Direction = EVergilPinDirection::Output;
+		AsyncActionThenPin.bIsExec = true;
+		AsyncActionNode.Pins.Add(AsyncActionThenPin);
+
+		FVergilGraphPin AsyncActionCompletedPin;
+		AsyncActionCompletedPin.Id = FGuid::NewGuid();
+		AsyncActionCompletedPin.Name = TEXT("Completed");
+		AsyncActionCompletedPin.Direction = EVergilPinDirection::Output;
+		AsyncActionCompletedPin.bIsExec = true;
+		AsyncActionNode.Pins.Add(AsyncActionCompletedPin);
+
+		FVergilGraphPin AsyncActionSlotNamePin;
+		AsyncActionSlotNamePin.Id = FGuid::NewGuid();
+		AsyncActionSlotNamePin.Name = TEXT("SlotName");
+		AsyncActionSlotNamePin.Direction = EVergilPinDirection::Input;
+		AsyncActionNode.Pins.Add(AsyncActionSlotNamePin);
+
+		FVergilGraphPin AsyncActionUserIndexPin;
+		AsyncActionUserIndexPin.Id = FGuid::NewGuid();
+		AsyncActionUserIndexPin.Name = TEXT("UserIndex");
+		AsyncActionUserIndexPin.Direction = EVergilPinDirection::Input;
+		AsyncActionNode.Pins.Add(AsyncActionUserIndexPin);
+
+		FVergilGraphPin AsyncActionSaveGamePin;
+		AsyncActionSaveGamePin.Id = FGuid::NewGuid();
+		AsyncActionSaveGamePin.Name = TEXT("SaveGame");
+		AsyncActionSaveGamePin.Direction = EVergilPinDirection::Output;
+		AsyncActionNode.Pins.Add(AsyncActionSaveGamePin);
+
+		FVergilGraphPin AsyncActionSuccessPin;
+		AsyncActionSuccessPin.Id = FGuid::NewGuid();
+		AsyncActionSuccessPin.Name = TEXT("bSuccess");
+		AsyncActionSuccessPin.Direction = EVergilPinDirection::Output;
+		AsyncActionNode.Pins.Add(AsyncActionSuccessPin);
 
 		FVergilGraphNode LoadAssetNode;
 		LoadAssetNode.Id = FGuid::NewGuid();
@@ -3256,7 +3311,7 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, ClassCastNode, GetClassDefaultsNode, LoadAssetNode, LoadAssetClassNode, LoadAssetsNode, ConvertAssetNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
+		Request.Document.Nodes = { CastNode, ClassCastNode, GetClassDefaultsNode, AsyncActionNode, LoadAssetNode, LoadAssetClassNode, LoadAssetsNode, ConvertAssetNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode, AddComponentNode, GetComponentByClassNode, GetComponentsByClassNode, FindComponentByTagNode, GetComponentsByTagNode, InterfaceCallNode, InterfaceMessageNode };
 
 		FVergilGraphEdge TransformToSpawn;
 		TransformToSpawn.Id = FGuid::NewGuid();
@@ -3343,6 +3398,16 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		{
 			TestEqual(TEXT("GetClassDefaults should lower into its dedicated command name."), PlannedGetClassDefaultsCommand->Name, FName(TEXT("Vergil.K2.GetClassDefaults")));
 			TestEqual(TEXT("GetClassDefaults should normalize ClassPath into StringValue."), PlannedGetClassDefaultsCommand->StringValue, AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedAsyncActionCommand = FindNodeCommand(Result.Commands, AsyncActionNode.Id);
+		TestNotNull(TEXT("Resolved async-action nodes should still lower into AddNode commands."), PlannedAsyncActionCommand);
+		if (PlannedAsyncActionCommand != nullptr)
+		{
+			TestEqual(TEXT("AsyncAction should lower into its dedicated command name."), PlannedAsyncActionCommand->Name, FName(TEXT("Vergil.K2.AsyncAction")));
+			TestEqual(TEXT("AsyncAction should normalize FactoryClassPath into StringValue."), PlannedAsyncActionCommand->StringValue, AsyncActionHandleSaveGamePath);
+			TestEqual(TEXT("AsyncAction should carry the factory function name in SecondaryName."), PlannedAsyncActionCommand->SecondaryName, FName(TEXT("AsyncLoadGameFromSlot")));
+			TestEqual(TEXT("AsyncAction metadata should retain the normalized factory class path."), PlannedAsyncActionCommand->Attributes.FindRef(TEXT("FactoryClassPath")), AsyncActionHandleSaveGamePath);
 		}
 
 		const FVergilCompilerCommand* const PlannedLoadAssetCommand = FindNodeCommand(Result.Commands, LoadAssetNode.Id);
@@ -12804,6 +12869,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.InterfaceInvocationExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAsyncActionExecutionTest,
+	"Vergil.Scaffold.AsyncActionExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilFlowControlMacroExecutionTest::RunTest(const FString& Parameters)
 {
 	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
@@ -14903,6 +14973,324 @@ bool FVergilDelayExecutionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Event should feed delay exec."), EventThenPin != nullptr && EventThenPin->LinkedTo.Contains(DelayExecGraphPin));
 	TestTrue(TEXT("Getter should feed delay duration."), GetterGraphValuePin != nullptr && GetterGraphValuePin->LinkedTo.Contains(DelayDurationGraphPin));
 	TestTrue(TEXT("Delay then should feed destroy exec."), DelayThenGraphPin != nullptr && DelayThenGraphPin->LinkedTo.Contains(CallExecGraphPin));
+
+	return true;
+}
+
+bool FVergilAsyncActionExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint();
+	TestNotNull(TEXT("Transient test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType StringType;
+	StringType.PinCategory = UEdGraphSchema_K2::PC_String;
+	TestTrue(TEXT("RequestedSlotName member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("RequestedSlotName"), StringType, TEXT("Autosave")));
+
+	FEdGraphPinType IntType;
+	IntType.PinCategory = UEdGraphSchema_K2::PC_Int;
+	TestTrue(TEXT("RequestedUserIndex member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("RequestedUserIndex"), IntType, TEXT("7")));
+
+	FEdGraphPinType BoolType;
+	BoolType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	TestTrue(TEXT("IssuedLoadRequest member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("IssuedLoadRequest"), BoolType, TEXT("false")));
+	TestTrue(TEXT("LastLoadSucceeded member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LastLoadSucceeded"), BoolType, TEXT("false")));
+
+	FEdGraphPinType SaveGameType;
+	SaveGameType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	SaveGameType.PinSubCategoryObject = USaveGame::StaticClass();
+	TestTrue(TEXT("LoadedSaveGame member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("LoadedSaveGame"), SaveGameType, TEXT("None")));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = TEXT("Then");
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode SlotNameGetterNode;
+	SlotNameGetterNode.Id = FGuid::NewGuid();
+	SlotNameGetterNode.Kind = EVergilNodeKind::VariableGet;
+	SlotNameGetterNode.Descriptor = TEXT("K2.VarGet.RequestedSlotName");
+	SlotNameGetterNode.Position = FVector2D(240.0f, -180.0f);
+
+	FVergilGraphPin SlotNameGetterValuePin;
+	SlotNameGetterValuePin.Id = FGuid::NewGuid();
+	SlotNameGetterValuePin.Name = TEXT("RequestedSlotName");
+	SlotNameGetterValuePin.Direction = EVergilPinDirection::Output;
+	SlotNameGetterNode.Pins.Add(SlotNameGetterValuePin);
+
+	FVergilGraphNode UserIndexGetterNode;
+	UserIndexGetterNode.Id = FGuid::NewGuid();
+	UserIndexGetterNode.Kind = EVergilNodeKind::VariableGet;
+	UserIndexGetterNode.Descriptor = TEXT("K2.VarGet.RequestedUserIndex");
+	UserIndexGetterNode.Position = FVector2D(240.0f, 60.0f);
+
+	FVergilGraphPin UserIndexGetterValuePin;
+	UserIndexGetterValuePin.Id = FGuid::NewGuid();
+	UserIndexGetterValuePin.Name = TEXT("RequestedUserIndex");
+	UserIndexGetterValuePin.Direction = EVergilPinDirection::Output;
+	UserIndexGetterNode.Pins.Add(UserIndexGetterValuePin);
+
+	FVergilGraphNode AsyncActionNode;
+	AsyncActionNode.Id = FGuid::NewGuid();
+	AsyncActionNode.Kind = EVergilNodeKind::Custom;
+	AsyncActionNode.Descriptor = TEXT("K2.AsyncAction.AsyncLoadGameFromSlot");
+	AsyncActionNode.Position = FVector2D(560.0f, -20.0f);
+	AsyncActionNode.Metadata.Add(TEXT("FactoryClassPath"), UAsyncActionHandleSaveGame::StaticClass()->GetPathName());
+
+	FVergilGraphPin AsyncActionExecutePin;
+	AsyncActionExecutePin.Id = FGuid::NewGuid();
+	AsyncActionExecutePin.Name = UEdGraphSchema_K2::PN_Execute;
+	AsyncActionExecutePin.Direction = EVergilPinDirection::Input;
+	AsyncActionExecutePin.bIsExec = true;
+	AsyncActionNode.Pins.Add(AsyncActionExecutePin);
+
+	FVergilGraphPin AsyncActionThenPin;
+	AsyncActionThenPin.Id = FGuid::NewGuid();
+	AsyncActionThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	AsyncActionThenPin.Direction = EVergilPinDirection::Output;
+	AsyncActionThenPin.bIsExec = true;
+	AsyncActionNode.Pins.Add(AsyncActionThenPin);
+
+	FVergilGraphPin AsyncActionCompletedPin;
+	AsyncActionCompletedPin.Id = FGuid::NewGuid();
+	AsyncActionCompletedPin.Name = TEXT("Completed");
+	AsyncActionCompletedPin.Direction = EVergilPinDirection::Output;
+	AsyncActionCompletedPin.bIsExec = true;
+	AsyncActionNode.Pins.Add(AsyncActionCompletedPin);
+
+	FVergilGraphPin AsyncActionSlotNamePin;
+	AsyncActionSlotNamePin.Id = FGuid::NewGuid();
+	AsyncActionSlotNamePin.Name = TEXT("SlotName");
+	AsyncActionSlotNamePin.Direction = EVergilPinDirection::Input;
+	AsyncActionNode.Pins.Add(AsyncActionSlotNamePin);
+
+	FVergilGraphPin AsyncActionUserIndexPin;
+	AsyncActionUserIndexPin.Id = FGuid::NewGuid();
+	AsyncActionUserIndexPin.Name = TEXT("UserIndex");
+	AsyncActionUserIndexPin.Direction = EVergilPinDirection::Input;
+	AsyncActionNode.Pins.Add(AsyncActionUserIndexPin);
+
+	FVergilGraphPin AsyncActionSaveGamePin;
+	AsyncActionSaveGamePin.Id = FGuid::NewGuid();
+	AsyncActionSaveGamePin.Name = TEXT("SaveGame");
+	AsyncActionSaveGamePin.Direction = EVergilPinDirection::Output;
+	AsyncActionNode.Pins.Add(AsyncActionSaveGamePin);
+
+	FVergilGraphPin AsyncActionSuccessPin;
+	AsyncActionSuccessPin.Id = FGuid::NewGuid();
+	AsyncActionSuccessPin.Name = TEXT("bSuccess");
+	AsyncActionSuccessPin.Direction = EVergilPinDirection::Output;
+	AsyncActionNode.Pins.Add(AsyncActionSuccessPin);
+
+	FVergilGraphNode SetIssuedLoadRequestNode;
+	SetIssuedLoadRequestNode.Id = FGuid::NewGuid();
+	SetIssuedLoadRequestNode.Kind = EVergilNodeKind::VariableSet;
+	SetIssuedLoadRequestNode.Descriptor = TEXT("K2.VarSet.IssuedLoadRequest");
+	SetIssuedLoadRequestNode.Position = FVector2D(920.0f, -180.0f);
+
+	FVergilGraphPin SetIssuedExecPin;
+	SetIssuedExecPin.Id = FGuid::NewGuid();
+	SetIssuedExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetIssuedExecPin.Direction = EVergilPinDirection::Input;
+	SetIssuedExecPin.bIsExec = true;
+	SetIssuedLoadRequestNode.Pins.Add(SetIssuedExecPin);
+
+	FVergilGraphPin SetIssuedThenPin;
+	SetIssuedThenPin.Id = FGuid::NewGuid();
+	SetIssuedThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetIssuedThenPin.Direction = EVergilPinDirection::Output;
+	SetIssuedThenPin.bIsExec = true;
+	SetIssuedLoadRequestNode.Pins.Add(SetIssuedThenPin);
+
+	FVergilGraphPin SetIssuedValuePin;
+	SetIssuedValuePin.Id = FGuid::NewGuid();
+	SetIssuedValuePin.Name = TEXT("IssuedLoadRequest");
+	SetIssuedValuePin.Direction = EVergilPinDirection::Input;
+	SetIssuedLoadRequestNode.Pins.Add(SetIssuedValuePin);
+
+	FVergilGraphNode SetLastLoadSucceededNode;
+	SetLastLoadSucceededNode.Id = FGuid::NewGuid();
+	SetLastLoadSucceededNode.Kind = EVergilNodeKind::VariableSet;
+	SetLastLoadSucceededNode.Descriptor = TEXT("K2.VarSet.LastLoadSucceeded");
+	SetLastLoadSucceededNode.Position = FVector2D(920.0f, 20.0f);
+
+	FVergilGraphPin SetLastLoadSucceededExecPin;
+	SetLastLoadSucceededExecPin.Id = FGuid::NewGuid();
+	SetLastLoadSucceededExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetLastLoadSucceededExecPin.Direction = EVergilPinDirection::Input;
+	SetLastLoadSucceededExecPin.bIsExec = true;
+	SetLastLoadSucceededNode.Pins.Add(SetLastLoadSucceededExecPin);
+
+	FVergilGraphPin SetLastLoadSucceededThenPin;
+	SetLastLoadSucceededThenPin.Id = FGuid::NewGuid();
+	SetLastLoadSucceededThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SetLastLoadSucceededThenPin.Direction = EVergilPinDirection::Output;
+	SetLastLoadSucceededThenPin.bIsExec = true;
+	SetLastLoadSucceededNode.Pins.Add(SetLastLoadSucceededThenPin);
+
+	FVergilGraphPin SetLastLoadSucceededValuePin;
+	SetLastLoadSucceededValuePin.Id = FGuid::NewGuid();
+	SetLastLoadSucceededValuePin.Name = TEXT("LastLoadSucceeded");
+	SetLastLoadSucceededValuePin.Direction = EVergilPinDirection::Input;
+	SetLastLoadSucceededNode.Pins.Add(SetLastLoadSucceededValuePin);
+
+	FVergilGraphNode SetLoadedSaveGameNode;
+	SetLoadedSaveGameNode.Id = FGuid::NewGuid();
+	SetLoadedSaveGameNode.Kind = EVergilNodeKind::VariableSet;
+	SetLoadedSaveGameNode.Descriptor = TEXT("K2.VarSet.LoadedSaveGame");
+	SetLoadedSaveGameNode.Position = FVector2D(1260.0f, 20.0f);
+
+	FVergilGraphPin SetLoadedSaveGameExecPin;
+	SetLoadedSaveGameExecPin.Id = FGuid::NewGuid();
+	SetLoadedSaveGameExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetLoadedSaveGameExecPin.Direction = EVergilPinDirection::Input;
+	SetLoadedSaveGameExecPin.bIsExec = true;
+	SetLoadedSaveGameNode.Pins.Add(SetLoadedSaveGameExecPin);
+
+	FVergilGraphPin SetLoadedSaveGameValuePin;
+	SetLoadedSaveGameValuePin.Id = FGuid::NewGuid();
+	SetLoadedSaveGameValuePin.Name = TEXT("LoadedSaveGame");
+	SetLoadedSaveGameValuePin.Direction = EVergilPinDirection::Input;
+	SetLoadedSaveGameNode.Pins.Add(SetLoadedSaveGameValuePin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilAsyncActionExecution");
+	Document.Nodes = { BeginPlayNode, SlotNameGetterNode, UserIndexGetterNode, AsyncActionNode, SetIssuedLoadRequestNode, SetLastLoadSucceededNode, SetLoadedSaveGameNode };
+
+	auto AddEdge = [&Document](const FGuid SourceNodeId, const FGuid SourcePinId, const FGuid TargetNodeId, const FGuid TargetPinId)
+	{
+		FVergilGraphEdge Edge;
+		Edge.Id = FGuid::NewGuid();
+		Edge.SourceNodeId = SourceNodeId;
+		Edge.SourcePinId = SourcePinId;
+		Edge.TargetNodeId = TargetNodeId;
+		Edge.TargetPinId = TargetPinId;
+		Document.Edges.Add(Edge);
+	};
+
+	AddEdge(BeginPlayNode.Id, BeginPlayThenPin.Id, AsyncActionNode.Id, AsyncActionExecutePin.Id);
+	AddEdge(SlotNameGetterNode.Id, SlotNameGetterValuePin.Id, AsyncActionNode.Id, AsyncActionSlotNamePin.Id);
+	AddEdge(UserIndexGetterNode.Id, UserIndexGetterValuePin.Id, AsyncActionNode.Id, AsyncActionUserIndexPin.Id);
+	AddEdge(AsyncActionNode.Id, AsyncActionThenPin.Id, SetIssuedLoadRequestNode.Id, SetIssuedExecPin.Id);
+	AddEdge(AsyncActionNode.Id, AsyncActionCompletedPin.Id, SetLastLoadSucceededNode.Id, SetLastLoadSucceededExecPin.Id);
+	AddEdge(AsyncActionNode.Id, AsyncActionSuccessPin.Id, SetLastLoadSucceededNode.Id, SetLastLoadSucceededValuePin.Id);
+	AddEdge(SetLastLoadSucceededNode.Id, SetLastLoadSucceededThenPin.Id, SetLoadedSaveGameNode.Id, SetLoadedSaveGameExecPin.Id);
+	AddEdge(AsyncActionNode.Id, AsyncActionSaveGamePin.Id, SetLoadedSaveGameNode.Id, SetLoadedSaveGameValuePin.Id);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Async-action document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Async-action document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Async-action document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const AsyncActionCommand = FindNodeCommand(Result.Commands, AsyncActionNode.Id);
+	TestNotNull(TEXT("Async action should lower into an AddNode command."), AsyncActionCommand);
+	if (AsyncActionCommand != nullptr)
+	{
+		TestEqual(TEXT("Async action should lower into its dedicated command name."), AsyncActionCommand->Name, FName(TEXT("Vergil.K2.AsyncAction")));
+		TestEqual(TEXT("Async action should capture the factory class path in StringValue."), AsyncActionCommand->StringValue, UAsyncActionHandleSaveGame::StaticClass()->GetPathName());
+		TestEqual(TEXT("Async action should capture the factory function in SecondaryName."), AsyncActionCommand->SecondaryName, FName(TEXT("AsyncLoadGameFromSlot")));
+		TestTrue(TEXT("Async action planned pins should include the Completed exec pin."), ContainsPlannedPin(*AsyncActionCommand, TEXT("Completed"), false, true));
+		TestTrue(TEXT("Async action planned pins should include the SlotName input pin."), ContainsPlannedPin(*AsyncActionCommand, TEXT("SlotName"), true, false));
+	}
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after async-action execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_VariableGet* const SlotNameGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, SlotNameGetterNode.Id);
+	UK2Node_VariableGet* const UserIndexGetterGraphNode = FindGraphNodeByGuid<UK2Node_VariableGet>(EventGraph, UserIndexGetterNode.Id);
+	UK2Node_AsyncAction* const AsyncActionGraphNode = FindGraphNodeByGuid<UK2Node_AsyncAction>(EventGraph, AsyncActionNode.Id);
+	UK2Node_VariableSet* const SetIssuedLoadRequestGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetIssuedLoadRequestNode.Id);
+	UK2Node_VariableSet* const SetLastLoadSucceededGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetLastLoadSucceededNode.Id);
+	UK2Node_VariableSet* const SetLoadedSaveGameGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetLoadedSaveGameNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventNode);
+	TestNotNull(TEXT("SlotName getter node should exist."), SlotNameGetterGraphNode);
+	TestNotNull(TEXT("UserIndex getter node should exist."), UserIndexGetterGraphNode);
+	TestNotNull(TEXT("Async action node should exist."), AsyncActionGraphNode);
+	TestNotNull(TEXT("IssuedLoadRequest setter node should exist."), SetIssuedLoadRequestGraphNode);
+	TestNotNull(TEXT("LastLoadSucceeded setter node should exist."), SetLastLoadSucceededGraphNode);
+	TestNotNull(TEXT("LoadedSaveGame setter node should exist."), SetLoadedSaveGameGraphNode);
+	if (EventNode == nullptr
+		|| SlotNameGetterGraphNode == nullptr
+		|| UserIndexGetterGraphNode == nullptr
+		|| AsyncActionGraphNode == nullptr
+		|| SetIssuedLoadRequestGraphNode == nullptr
+		|| SetLastLoadSucceededGraphNode == nullptr
+		|| SetLoadedSaveGameGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SlotNameGetterGraphValuePin = SlotNameGetterGraphNode->FindPin(TEXT("RequestedSlotName"));
+	UEdGraphPin* const UserIndexGetterGraphValuePin = UserIndexGetterGraphNode->FindPin(TEXT("RequestedUserIndex"));
+	UEdGraphPin* const AsyncActionExecGraphPin = AsyncActionGraphNode->GetExecPin();
+	UEdGraphPin* const AsyncActionThenGraphPin = AsyncActionGraphNode->GetThenPin();
+	UEdGraphPin* const AsyncActionCompletedGraphPin = AsyncActionGraphNode->FindPin(TEXT("Completed"));
+	UEdGraphPin* const AsyncActionSlotNameGraphPin = AsyncActionGraphNode->FindPin(TEXT("SlotName"));
+	UEdGraphPin* const AsyncActionUserIndexGraphPin = AsyncActionGraphNode->FindPin(TEXT("UserIndex"));
+	UEdGraphPin* const AsyncActionSaveGameGraphPin = AsyncActionGraphNode->FindPin(TEXT("SaveGame"));
+	UEdGraphPin* const AsyncActionSuccessGraphPin = AsyncActionGraphNode->FindPin(TEXT("bSuccess"));
+	UEdGraphPin* const AsyncActionWorldContextGraphPin = AsyncActionGraphNode->FindPin(TEXT("WorldContextObject"));
+	UEdGraphPin* const SetIssuedLoadRequestExecGraphPin = SetIssuedLoadRequestGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetLastLoadSucceededExecGraphPin = SetLastLoadSucceededGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetLastLoadSucceededThenGraphPin = SetLastLoadSucceededGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SetLastLoadSucceededValueGraphPin = SetLastLoadSucceededGraphNode->FindPin(TEXT("LastLoadSucceeded"));
+	UEdGraphPin* const SetLoadedSaveGameExecGraphPin = SetLoadedSaveGameGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetLoadedSaveGameValueGraphPin = SetLoadedSaveGameGraphNode->FindPin(TEXT("LoadedSaveGame"));
+
+	TestTrue(TEXT("SlotName getter should remain pure."), SlotNameGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("UserIndex getter should remain pure."), UserIndexGetterGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute) == nullptr);
+	TestTrue(TEXT("Async action node should resolve UAsyncActionHandleSaveGame::AsyncLoadGameFromSlot."), AsyncActionGraphNode->GetFactoryFunction() == UAsyncActionHandleSaveGame::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UAsyncActionHandleSaveGame, AsyncLoadGameFromSlot)));
+	TestTrue(TEXT("Async action should still create a hidden WorldContextObject pin."), AsyncActionWorldContextGraphPin != nullptr && AsyncActionWorldContextGraphPin->bHidden);
+	TestTrue(TEXT("Event should feed async-action exec."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(AsyncActionExecGraphPin));
+	TestTrue(TEXT("SlotName getter should feed the async-action SlotName pin."), SlotNameGetterGraphValuePin != nullptr && SlotNameGetterGraphValuePin->LinkedTo.Contains(AsyncActionSlotNameGraphPin));
+	TestTrue(TEXT("UserIndex getter should feed the async-action UserIndex pin."), UserIndexGetterGraphValuePin != nullptr && UserIndexGetterGraphValuePin->LinkedTo.Contains(AsyncActionUserIndexGraphPin));
+	TestTrue(TEXT("Async-action Then should feed the request-issued setter exec."), AsyncActionThenGraphPin != nullptr && AsyncActionThenGraphPin->LinkedTo.Contains(SetIssuedLoadRequestExecGraphPin));
+	TestTrue(TEXT("Async-action Completed should feed the success setter exec."), AsyncActionCompletedGraphPin != nullptr && AsyncActionCompletedGraphPin->LinkedTo.Contains(SetLastLoadSucceededExecGraphPin));
+	TestTrue(TEXT("Async-action bSuccess should feed the success setter value."), AsyncActionSuccessGraphPin != nullptr && AsyncActionSuccessGraphPin->LinkedTo.Contains(SetLastLoadSucceededValueGraphPin));
+	TestTrue(TEXT("Success setter Then should feed the save-game setter exec."), SetLastLoadSucceededThenGraphPin != nullptr && SetLastLoadSucceededThenGraphPin->LinkedTo.Contains(SetLoadedSaveGameExecGraphPin));
+	TestTrue(TEXT("Async-action SaveGame should feed the save-game setter value."), AsyncActionSaveGameGraphPin != nullptr && AsyncActionSaveGameGraphPin->LinkedTo.Contains(SetLoadedSaveGameValueGraphPin));
 
 	return true;
 }

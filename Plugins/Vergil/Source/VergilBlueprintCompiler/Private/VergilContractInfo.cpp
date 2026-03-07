@@ -203,6 +203,13 @@ namespace
 				{ TEXT("ClassPath") },
 				TEXT("ClassPath must resolve to a class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_GetClassDefaults with property-output pins sourced deterministically from the metadata-selected class; the dynamic Class pin is intentionally not part of the authored contract.")),
 			MakeDescriptorContract(
+				TEXT("K2.AsyncAction.<FactoryFunctionName>"),
+				EVergilDescriptorMatchKind::Prefix,
+				TEXT("any"),
+				EventGraphOnly,
+				{ TEXT("FactoryClassPath") },
+				TEXT("FactoryClassPath must resolve to the owner class of a static BlueprintInternalUseOnly factory function, and the descriptor suffix names that function. Under UE_5.7 this lowers to UK2Node_AsyncAction for generic UBlueprintAsyncActionBase factories that do not advertise HasDedicatedAsyncNode. The authored deterministic surface includes the visible factory input pins, Then/delegate exec outputs, and delegate payload outputs; hidden pins such as WorldContextObject remain engine-driven and are not part of the authored contract.")),
+			MakeDescriptorContract(
 				TEXT("K2.LoadAsset"),
 				EVergilDescriptorMatchKind::Exact,
 				TEXT("any"),

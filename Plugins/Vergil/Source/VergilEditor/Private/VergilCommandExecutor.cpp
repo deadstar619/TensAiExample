@@ -12,6 +12,7 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node_AddComponentByClass.h"
 #include "K2Node_AddDelegate.h"
+#include "K2Node_AsyncAction.h"
 #include "K2Node_CallDelegate.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ClassDynamicCast.h"
@@ -49,6 +50,7 @@
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "GameFramework/Actor.h"
+#include "Kismet/BlueprintAsyncActionBase.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -77,6 +79,9 @@ namespace
 	const FName GetClassDefaultsClassPinName(TEXT("Class"));
 	const FName ConvertAssetInputPinName(TEXT("Input"));
 	const FName ConvertAssetOutputPinName(TEXT("Output"));
+	const FName AsyncActionCommandName(TEXT("Vergil.K2.AsyncAction"));
+	const FName AsyncActionFactoryClassMetadataName(TEXT("FactoryClassPath"));
+	const FName AsyncActionProxyPinName(TEXT("AsyncTaskProxy"));
 	const TCHAR* VergilTransactionContext = TEXT("Vergil");
 
 	struct FVergilExecutionState
@@ -306,6 +311,245 @@ namespace
 		}
 
 		return nullptr;
+	}
+
+	UClass* ResolveClassReference(const FString& Reference);
+
+	void AddUniqueSupportedPin(
+		TArray<FVergilSupportedPinDescriptor>& OutPins,
+		const FName Name,
+		const bool bIsInput,
+		const bool bIsExec)
+	{
+		if (Name.IsNone())
+		{
+			return;
+		}
+
+		if (!OutPins.ContainsByPredicate([Name, bIsInput, bIsExec](const FVergilSupportedPinDescriptor& Candidate)
+		{
+			return Candidate.Name == Name && Candidate.bIsInput == bIsInput && Candidate.bIsExec == bIsExec;
+		}))
+		{
+			OutPins.Add({ Name, bIsInput, bIsExec });
+		}
+	}
+
+	void ParseMetadataPinNames(const FString& MetadataValue, TSet<FName>& OutPinNames)
+	{
+		TArray<FString> PinNames;
+		MetadataValue.ParseIntoArray(PinNames, TEXT(","));
+		for (FString& PinName : PinNames)
+		{
+			PinName.TrimStartAndEndInline();
+			if (!PinName.IsEmpty())
+			{
+				OutPinNames.Add(*PinName);
+			}
+		}
+	}
+
+	void GatherHiddenAsyncActionPins(const UFunction* FactoryFunction, TSet<FName>& OutHiddenPins)
+	{
+		if (FactoryFunction == nullptr)
+		{
+			return;
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("LatentInfo")))
+		{
+			const FString LatentInfoPin = FactoryFunction->GetMetaData(TEXT("LatentInfo")).TrimStartAndEnd();
+			if (!LatentInfoPin.IsEmpty())
+			{
+				OutHiddenPins.Add(*LatentInfoPin);
+			}
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("HidePin")))
+		{
+			ParseMetadataPinNames(FactoryFunction->GetMetaData(TEXT("HidePin")), OutHiddenPins);
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("InternalUseParam")))
+		{
+			ParseMetadataPinNames(FactoryFunction->GetMetaData(TEXT("InternalUseParam")), OutHiddenPins);
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("WorldContext")))
+		{
+			const FString WorldContextPin = FactoryFunction->GetMetaData(TEXT("WorldContext")).TrimStartAndEnd();
+			if (!WorldContextPin.IsEmpty())
+			{
+				OutHiddenPins.Add(*WorldContextPin);
+			}
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("ExpandEnumAsExecs")))
+		{
+			ParseMetadataPinNames(FactoryFunction->GetMetaData(TEXT("ExpandEnumAsExecs")), OutHiddenPins);
+		}
+
+		if (FactoryFunction->HasMetaData(TEXT("ExpandBoolAsExecs")))
+		{
+			ParseMetadataPinNames(FactoryFunction->GetMetaData(TEXT("ExpandBoolAsExecs")), OutHiddenPins);
+		}
+	}
+
+	bool DoesAsyncActionHideThen(const UClass* ProxyClass)
+	{
+		for (const UStruct* TestStruct = ProxyClass; TestStruct != nullptr; TestStruct = TestStruct->GetSuperStruct())
+		{
+			if (TestStruct->HasMetaData(TEXT("HideThen")))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool DoesAsyncActionExposeProxy(const UClass* ProxyClass)
+	{
+		for (const UStruct* TestStruct = ProxyClass; TestStruct != nullptr; TestStruct = TestStruct->GetSuperStruct())
+		{
+			if (TestStruct->HasMetaData(TEXT("ExposedAsyncProxy")))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool ResolveAsyncActionFactory(
+		const FVergilCompilerCommand& Command,
+		UFunction*& OutFactoryFunction,
+		UClass*& OutProxyClass,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		OutFactoryFunction = nullptr;
+		OutProxyClass = nullptr;
+
+		if (Command.SecondaryName.IsNone())
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("MissingAsyncActionFactoryFunction"),
+				TEXT("Async action execution requires SecondaryName to contain the factory function name."),
+				Command.NodeId));
+			return false;
+		}
+
+		const FString FactoryClassPath = Command.StringValue.IsEmpty()
+			? Command.Attributes.FindRef(AsyncActionFactoryClassMetadataName)
+			: Command.StringValue;
+		UClass* const FactoryClass = ResolveClassReference(FactoryClassPath);
+		if (FactoryClass == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryClassNotFound"),
+				FString::Printf(TEXT("Unable to resolve async-action factory class '%s'."), *FactoryClassPath),
+				Command.NodeId));
+			return false;
+		}
+
+		if (FactoryClass->HasMetaData(TEXT("HasDedicatedAsyncNode")))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("DedicatedAsyncNodeUnsupported"),
+				FString::Printf(
+					TEXT("Async-action factory class '%s' advertises HasDedicatedAsyncNode and requires a dedicated handler instead of Vergil.K2.AsyncAction."),
+					*FactoryClass->GetPathName()),
+				Command.NodeId));
+			return false;
+		}
+
+		UFunction* const FactoryFunction = FactoryClass->FindFunctionByName(Command.SecondaryName);
+		if (FactoryFunction == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryFunctionNotFound"),
+				FString::Printf(
+					TEXT("Unable to resolve async-action factory function '%s::%s'."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasAllFunctionFlags(FUNC_Static))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryFunctionNotStatic"),
+				FString::Printf(
+					TEXT("Async-action factory function '%s::%s' must be static."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasAllFunctionFlags(FUNC_BlueprintCallable))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryFunctionNotCallable"),
+				FString::Printf(
+					TEXT("Async-action factory function '%s::%s' must be BlueprintCallable."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!FactoryFunction->HasMetaData(TEXT("BlueprintInternalUseOnly")))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryFunctionNotBlueprintInternal"),
+				FString::Printf(
+					TEXT("Async-action factory function '%s::%s' must be marked BlueprintInternalUseOnly."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		const FObjectProperty* const ReturnProperty = CastField<FObjectProperty>(FactoryFunction->GetReturnProperty());
+		if (ReturnProperty == nullptr || ReturnProperty->PropertyClass == nullptr)
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionFactoryReturnInvalid"),
+				FString::Printf(
+					TEXT("Async-action factory function '%s::%s' must return an object derived from UBlueprintAsyncActionBase."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString()),
+				Command.NodeId));
+			return false;
+		}
+
+		if (!ReturnProperty->PropertyClass->IsChildOf(UBlueprintAsyncActionBase::StaticClass()))
+		{
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				TEXT("AsyncActionProxyClassInvalid"),
+				FString::Printf(
+					TEXT("Async-action factory function '%s::%s' returns '%s', which does not derive from UBlueprintAsyncActionBase."),
+					*FactoryClass->GetPathName(),
+					*Command.SecondaryName.ToString(),
+					*ReturnProperty->PropertyClass->GetPathName()),
+				Command.NodeId));
+			return false;
+		}
+
+		OutFactoryFunction = FactoryFunction;
+		OutProxyClass = ReturnProperty->PropertyClass;
+		return true;
 	}
 
 	bool ExecuteStandardMacroNode(
@@ -1298,6 +1542,144 @@ namespace
 					Command.NodeId));
 				bIsValid = false;
 			}
+		}
+
+		return bIsValid;
+	}
+
+	void BuildAsyncActionSupportedPins(
+		const UFunction* FactoryFunction,
+		const UClass* ProxyClass,
+		TArray<FVergilSupportedPinDescriptor>& OutPins)
+	{
+		OutPins.Reset();
+		AddUniqueSupportedPin(OutPins, UEdGraphSchema_K2::PN_Execute, true, true);
+
+		const bool bHideThen = DoesAsyncActionHideThen(ProxyClass);
+		if (!bHideThen)
+		{
+			AddUniqueSupportedPin(OutPins, UEdGraphSchema_K2::PN_Then, false, true);
+		}
+
+		if (DoesAsyncActionExposeProxy(ProxyClass))
+		{
+			AddUniqueSupportedPin(OutPins, AsyncActionProxyPinName, false, false);
+		}
+
+		if (!bHideThen && FactoryFunction != nullptr)
+		{
+			for (TFieldIterator<FProperty> PropertyIt(FactoryFunction); PropertyIt && (PropertyIt->PropertyFlags & CPF_Parm); ++PropertyIt)
+			{
+				FProperty* const Parameter = *PropertyIt;
+				if (Parameter == nullptr)
+				{
+					continue;
+				}
+
+				const bool bIsFunctionOutput = Parameter->HasAnyPropertyFlags(CPF_OutParm)
+					&& !Parameter->HasAnyPropertyFlags(CPF_ReferenceParm)
+					&& !Parameter->HasAnyPropertyFlags(CPF_ReturnParm);
+				if (bIsFunctionOutput)
+				{
+					AddUniqueSupportedPin(OutPins, Parameter->GetFName(), false, false);
+				}
+			}
+		}
+
+		UFunction* DelegateSignatureFunction = nullptr;
+		for (TFieldIterator<FProperty> PropertyIt(ProxyClass); PropertyIt; ++PropertyIt)
+		{
+			if (const FMulticastDelegateProperty* const DelegateProperty = CastField<FMulticastDelegateProperty>(*PropertyIt))
+			{
+				AddUniqueSupportedPin(OutPins, DelegateProperty->GetFName(), false, true);
+				if (DelegateSignatureFunction == nullptr)
+				{
+					DelegateSignatureFunction = DelegateProperty->SignatureFunction;
+				}
+			}
+		}
+
+		if (DelegateSignatureFunction != nullptr)
+		{
+			for (TFieldIterator<FProperty> PropertyIt(DelegateSignatureFunction); PropertyIt && (PropertyIt->PropertyFlags & CPF_Parm); ++PropertyIt)
+			{
+				FProperty* const Parameter = *PropertyIt;
+				if (Parameter == nullptr)
+				{
+					continue;
+				}
+
+				const bool bIsDelegateInput = !Parameter->HasAnyPropertyFlags(CPF_OutParm) || Parameter->HasAnyPropertyFlags(CPF_ReferenceParm);
+				if (bIsDelegateInput)
+				{
+					AddUniqueSupportedPin(OutPins, Parameter->GetFName(), false, false);
+				}
+			}
+		}
+
+		if (FactoryFunction != nullptr)
+		{
+			TSet<FName> HiddenPins;
+			GatherHiddenAsyncActionPins(FactoryFunction, HiddenPins);
+			for (TFieldIterator<FProperty> PropertyIt(FactoryFunction); PropertyIt && (PropertyIt->PropertyFlags & CPF_Parm); ++PropertyIt)
+			{
+				FProperty* const Parameter = *PropertyIt;
+				if (Parameter == nullptr)
+				{
+					continue;
+				}
+
+				const bool bIsFunctionInput = !Parameter->HasAnyPropertyFlags(CPF_OutParm) || Parameter->HasAnyPropertyFlags(CPF_ReferenceParm);
+				if (bIsFunctionInput && !HiddenPins.Contains(Parameter->GetFName()))
+				{
+					AddUniqueSupportedPin(OutPins, Parameter->GetFName(), true, false);
+				}
+			}
+		}
+	}
+
+	bool ValidateAsyncActionPlannedPins(
+		const FVergilCompilerCommand& Command,
+		const UFunction* FactoryFunction,
+		const UClass* ProxyClass,
+		TArray<FVergilDiagnostic>& Diagnostics)
+	{
+		TArray<FVergilSupportedPinDescriptor> SupportedPins;
+		BuildAsyncActionSupportedPins(FactoryFunction, ProxyClass, SupportedPins);
+
+		TSet<FName> HiddenPins;
+		GatherHiddenAsyncActionPins(FactoryFunction, HiddenPins);
+
+		bool bIsValid = true;
+		for (const FVergilPlannedPin& PlannedPin : Command.PlannedPins)
+		{
+			const FVergilSupportedPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&PlannedPin](const FVergilSupportedPinDescriptor& Candidate)
+			{
+				return Candidate.Name == PlannedPin.Name
+					&& Candidate.bIsInput == PlannedPin.bIsInput
+					&& Candidate.bIsExec == PlannedPin.bIsExec;
+			});
+
+			if (SupportedPin != nullptr)
+			{
+				continue;
+			}
+
+			const bool bTargetsHiddenPin = HiddenPins.Contains(PlannedPin.Name);
+			Diagnostics.Add(FVergilDiagnostic::Make(
+				EVergilDiagnosticSeverity::Error,
+				bTargetsHiddenPin ? TEXT("AsyncActionHiddenPinUnsupported") : TEXT("AsyncActionPinUnsupported"),
+				bTargetsHiddenPin
+					? FString::Printf(
+						TEXT("Async action planned pin '%s' targets a hidden factory pin and is not part of the deterministic supported surface."),
+						*PlannedPin.Name.ToString())
+					: FString::Printf(
+						TEXT("Async action planned pin '%s' is not part of the deterministic UE_5.7 surface for factory '%s::%s'."),
+						*PlannedPin.Name.ToString(),
+						FactoryFunction != nullptr && FactoryFunction->GetOwnerClass() != nullptr ? *FactoryFunction->GetOwnerClass()->GetPathName() : TEXT("<unknown>"),
+						FactoryFunction != nullptr ? *FactoryFunction->GetFName().ToString() : TEXT("<unknown>")),
+				Command.NodeId));
+			bIsValid = false;
 		}
 
 		return bIsValid;
@@ -4517,6 +4899,20 @@ namespace
 			FinalizePlacedNode(Graph, DelayNode, Command.Position, Command.NodeId);
 			NewNode = DelayNode;
 		}
+		else if (Command.Name == AsyncActionCommandName)
+		{
+			UFunction* FactoryFunction = nullptr;
+			UClass* ProxyClass = nullptr;
+			if (!ResolveAsyncActionFactory(Command, FactoryFunction, ProxyClass, Diagnostics))
+			{
+				return false;
+			}
+
+			UK2Node_AsyncAction* AsyncActionNode = NewObject<UK2Node_AsyncAction>(Graph);
+			AsyncActionNode->InitializeProxyFromFunction(FactoryFunction);
+			FinalizePlacedNode(Graph, AsyncActionNode, Command.Position, Command.NodeId);
+			NewNode = AsyncActionNode;
+		}
 		else if (Command.Name == TEXT("Vergil.K2.SpawnActor"))
 		{
 			UClass* ActorClass = nullptr;
@@ -6303,6 +6699,32 @@ namespace
 					}
 
 					if (!ValidateGetClassDefaultsPlannedPins(Command, SourceClass, Diagnostics))
+					{
+						bIsValid = false;
+					}
+					break;
+				}
+
+				if (Command.Name == AsyncActionCommandName)
+				{
+					if (GraphName == ConstructionScriptGraphName)
+					{
+						AddValidationError(
+							TEXT("ConstructionScriptAsyncActionUnsupported"),
+							TEXT("Vergil.K2.AsyncAction is not supported on the UserConstructionScript graph because generic async-action nodes are latent."),
+							Command.NodeId);
+						break;
+					}
+
+					UFunction* FactoryFunction = nullptr;
+					UClass* ProxyClass = nullptr;
+					if (!ResolveAsyncActionFactory(Command, FactoryFunction, ProxyClass, Diagnostics))
+					{
+						bIsValid = false;
+						break;
+					}
+
+					if (!ValidateAsyncActionPlannedPins(Command, FactoryFunction, ProxyClass, Diagnostics))
 					{
 						bIsValid = false;
 					}
