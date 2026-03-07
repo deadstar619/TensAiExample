@@ -11,6 +11,24 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 	$RepoRoot = (Resolve-Path (Join-Path (Split-Path -Parent $PSCommandPath) "..")).Path
 }
 
+function Get-OptionalPropertyValue {
+	param(
+		[object]$InputObject,
+		[string]$PropertyName
+	)
+
+	if ($null -eq $InputObject) {
+		return $null
+	}
+
+	$Property = $InputObject.PSObject.Properties[$PropertyName]
+	if ($null -eq $Property) {
+		return $null
+	}
+
+	return $Property.Value
+}
+
 $ResolvedRepoRoot = (Resolve-Path $RepoRoot).Path
 $LoopRoot = Join-Path $ResolvedRepoRoot "Saved/CodexAutomation/RoadmapLoop"
 
@@ -38,7 +56,7 @@ if ($null -ne $ActiveRun.stateFilePath -and (Test-Path ([string]$ActiveRun.state
 }
 
 [pscustomobject]@{
-	state = if ($null -ne $State) { [string]$State.state } else { "starting" }
+	state = if ($null -ne $State) { [string](Get-OptionalPropertyValue -InputObject $State -PropertyName "state") } else { "starting" }
 	pid = [int]$ActiveRun.pid
 	processRunning = $null -ne (Get-Process -Id ([int]$ActiveRun.pid) -ErrorAction SilentlyContinue)
 	repoRoot = [string]$ActiveRun.repoRoot
@@ -46,8 +64,8 @@ if ($null -ne $ActiveRun.stateFilePath -and (Test-Path ([string]$ActiveRun.state
 	stateFilePath = [string]$ActiveRun.stateFilePath
 	launcherStdoutPath = [string]$ActiveRun.launcherStdoutPath
 	launcherStderrPath = [string]$ActiveRun.launcherStderrPath
-	updatedAtUtc = if ($null -ne $State -and $null -ne $State.updatedAtUtc) { [string]$State.updatedAtUtc } else { $null }
-	iteration = if ($null -ne $State -and $null -ne $State.iteration) { [int]$State.iteration } else { $null }
-	maxTickets = if ($null -ne $State -and $null -ne $State.maxTickets) { [int]$State.maxTickets } else { $null }
-	lastMessage = if ($null -ne $State -and $null -ne $State.lastMessage) { [string]$State.lastMessage } else { $null }
+	updatedAtUtc = [string](Get-OptionalPropertyValue -InputObject $State -PropertyName "updatedAtUtc")
+	iteration = Get-OptionalPropertyValue -InputObject $State -PropertyName "iteration"
+	maxTickets = Get-OptionalPropertyValue -InputObject $State -PropertyName "maxTickets"
+	lastMessage = [string](Get-OptionalPropertyValue -InputObject $State -PropertyName "lastMessage")
 }

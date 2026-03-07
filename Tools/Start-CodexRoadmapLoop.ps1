@@ -16,6 +16,22 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 	$RepoRoot = (Resolve-Path (Join-Path (Split-Path -Parent $PSCommandPath) "..")).Path
 }
 
+function Format-ProcessArgument {
+	param(
+		[string]$Value
+	)
+
+	if ($null -eq $Value) {
+		return '""'
+	}
+
+	if ($Value -notmatch '[\s"]') {
+		return $Value
+	}
+
+	return '"' + ($Value -replace '"', '\"') + '"'
+}
+
 $ResolvedRepoRoot = (Resolve-Path $RepoRoot).Path
 $LoopRoot = Join-Path $ResolvedRepoRoot "Saved/CodexAutomation/RoadmapLoop"
 New-Item -ItemType Directory -Path $LoopRoot -Force | Out-Null
@@ -67,14 +83,17 @@ if ($DryRun) {
 		stateFilePath = $StateFilePath
 		activeRunFilePath = $ActiveRunFilePath
 		argumentList = $ArgumentList
+		argumentLine = ($ArgumentList | ForEach-Object { Format-ProcessArgument $_ }) -join " "
 	}
 	$Preview | ConvertTo-Json -Depth 6
 	return
 }
 
+$ArgumentLine = ($ArgumentList | ForEach-Object { Format-ProcessArgument $_ }) -join " "
+
 $Process = Start-Process `
 	-FilePath $HostProcessPath `
-	-ArgumentList $ArgumentList `
+	-ArgumentList $ArgumentLine `
 	-WorkingDirectory $ResolvedRepoRoot `
 	-RedirectStandardOutput $LauncherStdoutPath `
 	-RedirectStandardError $LauncherStderrPath `
