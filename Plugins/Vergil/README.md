@@ -30,6 +30,7 @@ Useful variants:
 
 - Run one test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.TimerDelegateExecution'`
 - Run the persisted golden-asset regression test: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.GoldenAssetSnapshot'`
+- Run the PIE runtime validation suites: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Invoke-VergilScaffoldAutomation.ps1 -TestFilter 'Vergil.Scaffold.PIERuntime'`
 - Summarize an existing log without re-running: `powershell -ExecutionPolicy Bypass -File .\Plugins\Vergil\Tools\Get-VergilDiagnosticsSummary.ps1 -LogPath .\Saved\Logs\VergilAutomation_All.log`
 
 The runner writes a headless automation log and prints a compile/apply/test summary from that log.
@@ -77,7 +78,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 ## Current baseline
 
 - Milestone 0 is complete.
-- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-5008`, `VGR-6001`, `VGR-6002`, `VGR-6003`, `VGR-6004`, `VGR-6005`, `VGR-6006`, `VGR-6007`, `VGR-6008`, `VGR-7001`, `VGR-7002`, `VGR-7003`, `VGR-7004`, `VGR-7005`, `VGR-7006`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8004`, `VGR-8005`, `VGR-8006`, `VGR-8007`, `VGR-8008`, `VGR-9004`, `VGR-9007`, and `VGR-9010` are complete.
+- `VGR-1001`, `VGR-1002`, `VGR-1003`, `VGR-1004`, `VGR-1005`, `VGR-1006`, `VGR-1007`, `VGR-1008`, `VGR-1009`, `VGR-1010`, `VGR-2001`, `VGR-2002`, `VGR-2003`, `VGR-2004`, `VGR-3001`, `VGR-3002`, `VGR-3003`, `VGR-3004`, `VGR-3005`, `VGR-3006`, `VGR-3007`, `VGR-3008`, `VGR-4001`, `VGR-4002`, `VGR-4003`, `VGR-4004`, `VGR-4005`, `VGR-4006`, `VGR-4007`, `VGR-4008`, `VGR-4009`, `VGR-5001`, `VGR-5002`, `VGR-5003`, `VGR-5004`, `VGR-5005`, `VGR-5006`, `VGR-5007`, `VGR-5008`, `VGR-6001`, `VGR-6002`, `VGR-6003`, `VGR-6004`, `VGR-6005`, `VGR-6006`, `VGR-6007`, `VGR-6008`, `VGR-7001`, `VGR-7002`, `VGR-7003`, `VGR-7004`, `VGR-7005`, `VGR-7006`, `VGR-7007`, `VGR-8001`, `VGR-8002`, `VGR-8003`, `VGR-8004`, `VGR-8005`, `VGR-8006`, `VGR-8007`, `VGR-8008`, `VGR-9002`, `VGR-9004`, `VGR-9007`, and `VGR-9010` are complete.
 - Document-authored Blueprint metadata now has structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored member variables now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored function and macro definitions now have structural validation plus deterministic command planning and editor execution for graph/signature creation and updates.
@@ -97,6 +98,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Document-authored class defaults now have structural validation, deterministic command planning, editor execution, and headless automation coverage.
 - Document-authored construction script definitions now have structural validation, deterministic command planning, editor execution, and headless automation coverage when targeting `UserConstructionScript`.
 - Whole-Blueprint authoring now also has persisted save/reload/native-compile roundtrip coverage plus checked-in golden snapshot coverage across the supported milestone-4 surfaces, including metadata, variables, function and macro signatures, components, interfaces, class defaults, the primary event graph, and the construction script.
+- The scaffold now also has dedicated PIE runtime validation suites for real play-world behavior, covering latent event flow (`Delay`, function-name timers, and dispatcher signaling) plus runtime world mutation (`AddComponentByClass` and `SpawnActor`) under the same headless `Vergil.Scaffold` runner.
 - Vergil now has an explicit semantic-versioning and migration policy document, and the supported-contract manifest now reports the plugin semantic version, plugin descriptor version, and supported schema migration paths directly from code-backed helpers.
 - Schema migration helpers now exist for older documents, and the compiler now runs schema migration as its first pass so supported legacy documents upgrade automatically before validation and planning.
 - Every supported legacy schema starting version now also has headless end-to-end execution coverage, proving representative legacy documents survive migration, compile, and apply through the current `UE_5.7` pipeline.
@@ -126,7 +128,7 @@ The runner writes a headless automation log and prints a compile/apply/test summ
 - Agent apply now also consults `UVergilDeveloperSettings::AgentWritePermissionPolicy`, requires explicit `WriteAuthorization` approval metadata when the policy demands it, and rejects denied writes before any editor execution while still auditing the rejected request.
 - Agent apply now also auto-recovers failed partial mutations when the recorded Vergil transaction can be safely undone, records that recovery outcome in the compile-result transaction audit, and reports rollback status through the audited agent response instead of silently leaving half-applied Blueprint state behind.
 - The agent subsystem now also exposes read-only inspection helpers for the code-backed supported-contract manifest, descriptor table, JSON manifest export, and a human-readable summary of the current contract surface.
-- `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings.
+- `Vergil.Scaffold.*` currently passes headlessly with zero Vergil, Blueprint, or automation warnings, including the dedicated `Vergil.Scaffold.PIERuntime.*` suites.
 
 ## Planning
 

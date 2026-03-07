@@ -14,6 +14,7 @@ public class VergilAutomation : ModuleRules
 				"AnimGraph",
 				"AnimGraphRuntime",
 				"BlueprintGraph",
+				"CQTest",
 				"Core",
 				"CoreUObject",
 				"Engine",
