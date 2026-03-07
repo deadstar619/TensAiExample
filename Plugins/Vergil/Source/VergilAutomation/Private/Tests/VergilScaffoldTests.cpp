@@ -34,6 +34,7 @@
 #include "K2Node_Self.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_RemoveDelegate.h"
+#include "K2Node_SpawnActorFromClass.h"
 #include "K2Node_SwitchEnum.h"
 #include "K2Node_SwitchInteger.h"
 #include "K2Node_VariableGet.h"
@@ -47,6 +48,7 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "PackageTools.h"
+#include "GameFramework/Pawn.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
 #include "VergilAgentSubsystem.h"
@@ -124,20 +126,30 @@ namespace
 		}
 	};
 
-	UBlueprint* MakeTestBlueprint()
+	UBlueprint* MakeTestBlueprint(UClass* ParentClass)
 	{
+		if (ParentClass == nullptr)
+		{
+			ParentClass = AActor::StaticClass();
+		}
+
 		const FName BlueprintName = MakeUniqueObjectName(GetTransientPackage(), UBlueprint::StaticClass(), TEXT("BP_VergilTransient"));
 		UPackage* const Package = CreatePackage(*FString::Printf(TEXT("/Temp/%s"), *BlueprintName.ToString()));
 		Package->SetFlags(RF_Transient);
 
 		return FKismetEditorUtilities::CreateBlueprint(
-			AActor::StaticClass(),
+			ParentClass,
 			Package,
 			BlueprintName,
 			BPTYPE_Normal,
 			UBlueprint::StaticClass(),
 			UBlueprintGeneratedClass::StaticClass(),
 			TEXT("VergilAutomation"));
+	}
+
+	UBlueprint* MakeTestBlueprint()
+	{
+		return MakeTestBlueprint(AActor::StaticClass());
 	}
 
 	bool ContainsNameValue(const TArray<FName>& Values, const FName ExpectedValue)
@@ -1737,6 +1749,23 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilGraphNode SpawnActorNode;
+		SpawnActorNode.Id = FGuid::NewGuid();
+		SpawnActorNode.Kind = EVergilNodeKind::Custom;
+		SpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_SpawnActorMetadata");
+		Request.Document.Nodes.Add(SpawnActorNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Spawn actor nodes without ActorClassPath should fail semantic validation."), Result.bSucceeded);
+		TestEqual(TEXT("Missing spawn actor metadata should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing spawn actor metadata should report MissingSpawnActorClassPath."), ContainsDiagnostic(Result.Diagnostics, TEXT("MissingSpawnActorClassPath")));
+	}
+
+	{
 		FVergilGraphNode UnsupportedSelectNode;
 		UnsupportedSelectNode.Id = FGuid::NewGuid();
 		UnsupportedSelectNode.Kind = EVergilNodeKind::Custom;
@@ -1773,6 +1802,25 @@ bool FVergilSemanticValidationPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Construction-script graphs should reject non-construction event descriptors."), Result.bSucceeded);
 		TestEqual(TEXT("Construction-script semantic failures should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Construction-script semantic failures should report an explicit event diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptEventInvalid")));
+	}
+
+	{
+		FVergilGraphNode SpawnActorNode;
+		SpawnActorNode.Id = FGuid::NewGuid();
+		SpawnActorNode.Kind = EVergilNodeKind::Custom;
+		SpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+		SpawnActorNode.Metadata.Add(TEXT("ActorClassPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.TargetGraphName = TEXT("UserConstructionScript");
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_SemanticValidation_ConstructionSpawnActor");
+		Request.Document.ConstructionScriptNodes.Add(SpawnActorNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Construction-script graphs should reject spawn actor nodes."), Result.bSucceeded);
+		TestEqual(TEXT("Construction-script spawn actor failures should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Construction-script spawn actor failures should report the explicit diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("ConstructionScriptSpawnActorUnsupported")));
 	}
 
 	return true;
@@ -2148,7 +2196,9 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 
 	UScriptStruct* const VectorStruct = TBaseStructure<FVector>::Get();
 	TestNotNull(TEXT("Type resolution coverage requires FVector."), VectorStruct);
-	if (VectorStruct == nullptr)
+	UScriptStruct* const TransformStruct = TBaseStructure<FTransform>::Get();
+	TestNotNull(TEXT("Type resolution coverage requires FTransform."), TransformStruct);
+	if (VectorStruct == nullptr || TransformStruct == nullptr)
 	{
 		return false;
 	}
@@ -2254,6 +2304,30 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		MakeMapNode.Metadata.Add(TEXT("ValuePinCategory"), TEXT(" STRUCT "));
 		MakeMapNode.Metadata.Add(TEXT("ValueObjectPath"), TEXT("   /Script/CoreUObject.Vector   "));
 
+		FVergilGraphNode MakeTransformNode;
+		MakeTransformNode.Id = FGuid::NewGuid();
+		MakeTransformNode.Kind = EVergilNodeKind::Custom;
+		MakeTransformNode.Descriptor = TEXT("K2.MakeStruct");
+		MakeTransformNode.Metadata.Add(TEXT("StructPath"), TEXT("   /Script/CoreUObject.Transform   "));
+
+		FVergilGraphPin MakeTransformResultPin;
+		MakeTransformResultPin.Id = FGuid::NewGuid();
+		MakeTransformResultPin.Name = TransformStruct->GetFName();
+		MakeTransformResultPin.Direction = EVergilPinDirection::Output;
+		MakeTransformNode.Pins.Add(MakeTransformResultPin);
+
+		FVergilGraphNode SpawnActorNode;
+		SpawnActorNode.Id = FGuid::NewGuid();
+		SpawnActorNode.Kind = EVergilNodeKind::Custom;
+		SpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+		SpawnActorNode.Metadata.Add(TEXT("ActorClassPath"), TEXT("   /Script/Engine.Actor   "));
+
+		FVergilGraphPin SpawnTransformPin;
+		SpawnTransformPin.Id = FGuid::NewGuid();
+		SpawnTransformPin.Name = TEXT("SpawnTransform");
+		SpawnTransformPin.Direction = EVergilPinDirection::Input;
+		SpawnActorNode.Pins.Add(SpawnTransformPin);
+
 		FVergilCompileRequest Request;
 		Request.TargetBlueprint = MakeTestBlueprint();
 		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_Normalized");
@@ -2263,7 +2337,15 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		Request.Document.Macros.Add(Macro);
 		Request.Document.Components.Add(Component);
 		Request.Document.Interfaces.Add(Interface);
-		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode };
+		Request.Document.Nodes = { CastNode, SelectNode, SwitchNode, MakeStructNode, BreakStructNode, MakeArrayNode, MakeSetNode, MakeMapNode, MakeTransformNode, SpawnActorNode };
+
+		FVergilGraphEdge TransformToSpawn;
+		TransformToSpawn.Id = FGuid::NewGuid();
+		TransformToSpawn.SourceNodeId = MakeTransformNode.Id;
+		TransformToSpawn.SourcePinId = MakeTransformResultPin.Id;
+		TransformToSpawn.TargetNodeId = SpawnActorNode.Id;
+		TransformToSpawn.TargetPinId = SpawnTransformPin.Id;
+		Request.Document.Edges.Add(TransformToSpawn);
 
 		const FVergilCompileResult Result = CompilerService.Compile(Request);
 		TestTrue(TEXT("Supported typed definitions and wildcard node metadata should resolve during compilation."), Result.bSucceeded);
@@ -2383,6 +2465,21 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Make map key object paths should normalize to the resolved class path."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("KeyObjectPath")), AActor::StaticClass()->GetPathName());
 			TestEqual(TEXT("Make map value categories should normalize to lowercase."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("ValuePinCategory")), FString(TEXT("struct")));
 			TestEqual(TEXT("Make map value object paths should normalize to the resolved struct path."), PlannedMakeMapCommand->Attributes.FindRef(TEXT("ValueObjectPath")), VectorStruct->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedSpawnActorCommand = FindNodeCommand(Result.Commands, SpawnActorNode.Id);
+		TestNotNull(TEXT("Resolved spawn actor nodes should still lower into AddNode commands."), PlannedSpawnActorCommand);
+		if (PlannedSpawnActorCommand != nullptr)
+		{
+			TestEqual(TEXT("Spawn actor class paths should normalize before planning."), PlannedSpawnActorCommand->StringValue, AActor::StaticClass()->GetPathName());
+			TestEqual(TEXT("Spawn actor metadata should retain the normalized class path."), PlannedSpawnActorCommand->Attributes.FindRef(TEXT("ActorClassPath")), AActor::StaticClass()->GetPathName());
+		}
+
+		const FVergilCompilerCommand* const PlannedMakeTransformCommand = FindNodeCommand(Result.Commands, MakeTransformNode.Id);
+		TestNotNull(TEXT("Resolved transform make-struct nodes should still lower into AddNode commands."), PlannedMakeTransformCommand);
+		if (PlannedMakeTransformCommand != nullptr)
+		{
+			TestEqual(TEXT("Transform make-struct paths should normalize to the resolved struct path."), PlannedMakeTransformCommand->Attributes.FindRef(TEXT("StructPath")), TransformStruct->GetPathName());
 		}
 	}
 
@@ -2529,6 +2626,24 @@ bool FVergilTypeResolutionPassTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Invalid wildcard node categories should fail type resolution."), Result.bSucceeded);
 		TestEqual(TEXT("Invalid wildcard node categories should plan zero commands."), Result.Commands.Num(), 0);
 		TestTrue(TEXT("Invalid wildcard node categories should report InvalidSelectValueType."), ContainsDiagnostic(Result.Diagnostics, TEXT("InvalidSelectValueType")));
+	}
+
+	{
+		FVergilGraphNode InvalidSpawnActorNode;
+		InvalidSpawnActorNode.Id = FGuid::NewGuid();
+		InvalidSpawnActorNode.Kind = EVergilNodeKind::Custom;
+		InvalidSpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+		InvalidSpawnActorNode.Metadata.Add(TEXT("ActorClassPath"), UActorComponent::StaticClass()->GetPathName());
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_TypeResolution_InvalidSpawnActor");
+		Request.Document.Nodes.Add(InvalidSpawnActorNode);
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("Non-actor spawn classes should fail type resolution."), Result.bSucceeded);
+		TestEqual(TEXT("Invalid spawn actor class types should plan zero commands."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Invalid spawn actor class types should report SpawnActorClassNotActor."), ContainsDiagnostic(Result.Diagnostics, TEXT("SpawnActorClassNotActor")));
 	}
 
 	return true;
@@ -2979,6 +3094,30 @@ bool FVergilConnectionLegalityPassTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		FVergilGraphNode SpawnActorNode;
+		SpawnActorNode.Id = FGuid::NewGuid();
+		SpawnActorNode.Kind = EVergilNodeKind::Custom;
+		SpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+		SpawnActorNode.Metadata.Add(TEXT("ActorClassPath"), AActor::StaticClass()->GetPathName());
+
+		FVergilGraphPin SpawnTransformPin;
+		SpawnTransformPin.Id = FGuid::NewGuid();
+		SpawnTransformPin.Name = TEXT("SpawnTransform");
+		SpawnTransformPin.Direction = EVergilPinDirection::Input;
+		SpawnActorNode.Pins.Add(SpawnTransformPin);
+
+		FVergilCompileRequest Request;
+		Request.TargetBlueprint = MakeTestBlueprint();
+		Request.Document.BlueprintPath = TEXT("/Game/Tests/BP_ConnectionLegality_SpawnActorMissingTransformConnection");
+		Request.Document.Nodes = { SpawnActorNode };
+
+		const FVergilCompileResult Result = CompilerService.Compile(Request);
+		TestFalse(TEXT("SpawnActor should fail compile-time legality validation when SpawnTransform is not driven."), Result.bSucceeded);
+		TestEqual(TEXT("Missing SpawnTransform inputs should stop command planning before any commands are returned."), Result.Commands.Num(), 0);
+		TestTrue(TEXT("Missing SpawnTransform inputs should report SpawnActorTransformConnectionMissing."), ContainsDiagnostic(Result.Diagnostics, TEXT("SpawnActorTransformConnectionMissing"), SpawnActorNode.Id));
+	}
+
+	{
 		FVergilNodeRegistry::Get().Reset();
 		FVergilNodeRegistry::Get().RegisterHandler(MakeShared<FTestPinDroppingNodeHandler, ESPMode::ThreadSafe>());
 
@@ -3299,6 +3438,15 @@ bool FVergilSupportedContractInspectionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("K2.Select should report exact-match descriptor inspection."), SelectContract->MatchKind, EVergilDescriptorMatchKind::Exact);
 		TestTrue(TEXT("K2.Select should require IndexPinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("IndexPinCategory")));
 		TestTrue(TEXT("K2.Select should require ValuePinCategory metadata."), ContainsNameValue(SelectContract->RequiredMetadataKeys, TEXT("ValuePinCategory")));
+	}
+
+	const FVergilSupportedDescriptorContract* const SpawnActorContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.SpawnActor"));
+	TestNotNull(TEXT("Supported-contract inspection should include K2.SpawnActor."), SpawnActorContract);
+	if (SpawnActorContract != nullptr)
+	{
+		TestEqual(TEXT("K2.SpawnActor should report exact-match descriptor inspection."), SpawnActorContract->MatchKind, EVergilDescriptorMatchKind::Exact);
+		TestTrue(TEXT("K2.SpawnActor should require ActorClassPath metadata."), ContainsNameValue(SpawnActorContract->RequiredMetadataKeys, TEXT("ActorClassPath")));
+		TestTrue(TEXT("K2.SpawnActor notes should mention expose-on-spawn pins."), SpawnActorContract->Notes.Contains(TEXT("ExposeOnSpawn")));
 	}
 
 	const FVergilSupportedDescriptorContract* const CallContract = FindSupportedDescriptorContract(Manifest.SupportedDescriptors, TEXT("K2.Call.<FunctionName>"));
@@ -6929,6 +7077,58 @@ bool FVergilCommandPlanValidationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Unsupported impure variable getter plans should emit the dedicated preflight diagnostic."), ContainsDiagnostic(Result.Diagnostics, TEXT("UnsupportedVariableGetVariant")));
 	}
 
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for spawn actor preflight coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FVergilCompilerCommand InvalidSpawnActorCommand;
+		InvalidSpawnActorCommand.Type = EVergilCommandType::AddNode;
+		InvalidSpawnActorCommand.GraphName = TEXT("EventGraph");
+		InvalidSpawnActorCommand.NodeId = FGuid::NewGuid();
+		InvalidSpawnActorCommand.Name = TEXT("Vergil.K2.SpawnActor");
+		InvalidSpawnActorCommand.StringValue = UActorComponent::StaticClass()->GetPathName();
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { InvalidSpawnActorCommand });
+
+		TestFalse(TEXT("Non-actor spawn plans should fail command-plan validation."), Result.bSucceeded);
+		TestFalse(TEXT("Non-actor spawn plans should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Non-actor spawn plans should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Non-actor spawn plans should emit SpawnActorClassNotActor."), ContainsDiagnostic(Result.Diagnostics, TEXT("SpawnActorClassNotActor")));
+	}
+
+	{
+		UBlueprint* const Blueprint = MakeTestBlueprint();
+		TestNotNull(TEXT("Transient test blueprint should be created for spawn actor transform preflight coverage."), Blueprint);
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+
+		FVergilCompilerCommand InvalidSpawnActorCommand;
+		InvalidSpawnActorCommand.Type = EVergilCommandType::AddNode;
+		InvalidSpawnActorCommand.GraphName = TEXT("EventGraph");
+		InvalidSpawnActorCommand.NodeId = FGuid::NewGuid();
+		InvalidSpawnActorCommand.Name = TEXT("Vergil.K2.SpawnActor");
+		InvalidSpawnActorCommand.StringValue = AActor::StaticClass()->GetPathName();
+
+		FVergilPlannedPin SpawnTransformPin;
+		SpawnTransformPin.PinId = FGuid::NewGuid();
+		SpawnTransformPin.Name = TEXT("SpawnTransform");
+		SpawnTransformPin.bIsInput = true;
+		InvalidSpawnActorCommand.PlannedPins.Add(SpawnTransformPin);
+
+		const FVergilCompileResult Result = EditorSubsystem->ExecuteCommandPlan(Blueprint, { InvalidSpawnActorCommand });
+
+		TestFalse(TEXT("Spawn actor plans without a connected SpawnTransform should fail command-plan validation."), Result.bSucceeded);
+		TestFalse(TEXT("Spawn actor plans without a connected SpawnTransform should not be marked as applied."), Result.bApplied);
+		TestEqual(TEXT("Spawn actor plans without a connected SpawnTransform should execute zero commands."), Result.ExecutedCommandCount, 0);
+		TestTrue(TEXT("Spawn actor plans without a connected SpawnTransform should emit SpawnActorTransformConnectionMissing."), ContainsDiagnostic(Result.Diagnostics, TEXT("SpawnActorTransformConnectionMissing")));
+	}
+
 	return true;
 }
 
@@ -10495,6 +10695,265 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FVergilStandardMacroInstanceExecutionTest,
 	"Vergil.Scaffold.StandardMacroInstanceExecution",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilSpawnActorExecutionTest,
+	"Vergil.Scaffold.SpawnActorExecution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FVergilSpawnActorExecutionTest::RunTest(const FString& Parameters)
+{
+	UVergilEditorSubsystem* const EditorSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilEditorSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil editor subsystem is available."), EditorSubsystem);
+	if (EditorSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	auto FindNodeCommand = [](const TArray<FVergilCompilerCommand>& Commands, const FGuid& NodeId) -> const FVergilCompilerCommand*
+	{
+		return Commands.FindByPredicate([NodeId](const FVergilCompilerCommand& Command)
+		{
+			return Command.Type == EVergilCommandType::AddNode && Command.NodeId == NodeId;
+		});
+	};
+
+	auto ContainsPlannedPin = [](const FVergilCompilerCommand& Command, const FName PinName, const bool bIsInput, const bool bIsExec) -> bool
+	{
+		return Command.PlannedPins.ContainsByPredicate([PinName, bIsInput, bIsExec](const FVergilPlannedPin& PlannedPin)
+		{
+			return PlannedPin.Name == PinName && PlannedPin.bIsInput == bIsInput && PlannedPin.bIsExec == bIsExec;
+		});
+	};
+
+	UBlueprint* const Blueprint = MakeTestBlueprint(APawn::StaticClass());
+	TestNotNull(TEXT("Transient pawn test blueprint should be created."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	UScriptStruct* const TransformStruct = TBaseStructure<FTransform>::Get();
+	TestNotNull(TEXT("FTransform base structure should be available."), TransformStruct);
+	if (TransformStruct == nullptr)
+	{
+		return false;
+	}
+
+	FEdGraphPinType ActorType;
+	ActorType.PinCategory = UEdGraphSchema_K2::PC_Object;
+	ActorType.PinSubCategoryObject = AActor::StaticClass();
+	TestTrue(TEXT("SpawnedActor member variable should be added."), FBlueprintEditorUtils::AddMemberVariable(Blueprint, TEXT("SpawnedActor"), ActorType, TEXT("None")));
+
+	FVergilGraphNode BeginPlayNode;
+	BeginPlayNode.Id = FGuid::NewGuid();
+	BeginPlayNode.Kind = EVergilNodeKind::Event;
+	BeginPlayNode.Descriptor = TEXT("K2.Event.ReceiveBeginPlay");
+	BeginPlayNode.Position = FVector2D(0.0f, 0.0f);
+
+	FVergilGraphPin BeginPlayThenPin;
+	BeginPlayThenPin.Id = FGuid::NewGuid();
+	BeginPlayThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	BeginPlayThenPin.Direction = EVergilPinDirection::Output;
+	BeginPlayThenPin.bIsExec = true;
+	BeginPlayNode.Pins.Add(BeginPlayThenPin);
+
+	FVergilGraphNode SelfNode;
+	SelfNode.Id = FGuid::NewGuid();
+	SelfNode.Kind = EVergilNodeKind::Custom;
+	SelfNode.Descriptor = TEXT("K2.Self");
+	SelfNode.Position = FVector2D(220.0f, -180.0f);
+
+	FVergilGraphPin SelfOutputPin;
+	SelfOutputPin.Id = FGuid::NewGuid();
+	SelfOutputPin.Name = UEdGraphSchema_K2::PN_Self;
+	SelfOutputPin.Direction = EVergilPinDirection::Output;
+	SelfNode.Pins.Add(SelfOutputPin);
+
+	FVergilGraphNode MakeTransformNode;
+	MakeTransformNode.Id = FGuid::NewGuid();
+	MakeTransformNode.Kind = EVergilNodeKind::Custom;
+	MakeTransformNode.Descriptor = TEXT("K2.MakeStruct");
+	MakeTransformNode.Position = FVector2D(220.0f, 40.0f);
+	MakeTransformNode.Metadata.Add(TEXT("StructPath"), TransformStruct->GetPathName());
+
+	FVergilGraphPin MakeTransformResultPin;
+	MakeTransformResultPin.Id = FGuid::NewGuid();
+	MakeTransformResultPin.Name = TransformStruct->GetFName();
+	MakeTransformResultPin.Direction = EVergilPinDirection::Output;
+	MakeTransformNode.Pins.Add(MakeTransformResultPin);
+
+	FVergilGraphNode SpawnActorNode;
+	SpawnActorNode.Id = FGuid::NewGuid();
+	SpawnActorNode.Kind = EVergilNodeKind::Custom;
+	SpawnActorNode.Descriptor = TEXT("K2.SpawnActor");
+	SpawnActorNode.Position = FVector2D(420.0f, -20.0f);
+	SpawnActorNode.Metadata.Add(TEXT("ActorClassPath"), AActor::StaticClass()->GetPathName());
+
+	FVergilGraphPin SpawnExecPin;
+	SpawnExecPin.Id = FGuid::NewGuid();
+	SpawnExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SpawnExecPin.Direction = EVergilPinDirection::Input;
+	SpawnExecPin.bIsExec = true;
+	SpawnActorNode.Pins.Add(SpawnExecPin);
+
+	FVergilGraphPin SpawnTransformPin;
+	SpawnTransformPin.Id = FGuid::NewGuid();
+	SpawnTransformPin.Name = TEXT("SpawnTransform");
+	SpawnTransformPin.Direction = EVergilPinDirection::Input;
+	SpawnActorNode.Pins.Add(SpawnTransformPin);
+
+	FVergilGraphPin SpawnThenPin;
+	SpawnThenPin.Id = FGuid::NewGuid();
+	SpawnThenPin.Name = UEdGraphSchema_K2::PN_Then;
+	SpawnThenPin.Direction = EVergilPinDirection::Output;
+	SpawnThenPin.bIsExec = true;
+	SpawnActorNode.Pins.Add(SpawnThenPin);
+
+	FVergilGraphPin SpawnResultPin;
+	SpawnResultPin.Id = FGuid::NewGuid();
+	SpawnResultPin.Name = UEdGraphSchema_K2::PN_ReturnValue;
+	SpawnResultPin.Direction = EVergilPinDirection::Output;
+	SpawnActorNode.Pins.Add(SpawnResultPin);
+
+	FVergilGraphPin SpawnInstigatorPin;
+	SpawnInstigatorPin.Id = FGuid::NewGuid();
+	SpawnInstigatorPin.Name = TEXT("Instigator");
+	SpawnInstigatorPin.Direction = EVergilPinDirection::Input;
+	SpawnActorNode.Pins.Add(SpawnInstigatorPin);
+
+	FVergilGraphNode SetSpawnedActorNode;
+	SetSpawnedActorNode.Id = FGuid::NewGuid();
+	SetSpawnedActorNode.Kind = EVergilNodeKind::VariableSet;
+	SetSpawnedActorNode.Descriptor = TEXT("K2.VarSet.SpawnedActor");
+	SetSpawnedActorNode.Position = FVector2D(760.0f, 40.0f);
+
+	FVergilGraphPin SetSpawnedActorExecPin;
+	SetSpawnedActorExecPin.Id = FGuid::NewGuid();
+	SetSpawnedActorExecPin.Name = UEdGraphSchema_K2::PN_Execute;
+	SetSpawnedActorExecPin.Direction = EVergilPinDirection::Input;
+	SetSpawnedActorExecPin.bIsExec = true;
+	SetSpawnedActorNode.Pins.Add(SetSpawnedActorExecPin);
+
+	FVergilGraphPin SetSpawnedActorValuePin;
+	SetSpawnedActorValuePin.Id = FGuid::NewGuid();
+	SetSpawnedActorValuePin.Name = TEXT("SpawnedActor");
+	SetSpawnedActorValuePin.Direction = EVergilPinDirection::Input;
+	SetSpawnedActorNode.Pins.Add(SetSpawnedActorValuePin);
+
+	FVergilGraphDocument Document;
+	Document.BlueprintPath = TEXT("/Temp/BP_VergilSpawnActorExecution");
+	Document.Nodes = { BeginPlayNode, SelfNode, MakeTransformNode, SpawnActorNode, SetSpawnedActorNode };
+
+	FVergilGraphEdge EventToSpawn;
+	EventToSpawn.Id = FGuid::NewGuid();
+	EventToSpawn.SourceNodeId = BeginPlayNode.Id;
+	EventToSpawn.SourcePinId = BeginPlayThenPin.Id;
+	EventToSpawn.TargetNodeId = SpawnActorNode.Id;
+	EventToSpawn.TargetPinId = SpawnExecPin.Id;
+	Document.Edges.Add(EventToSpawn);
+
+	FVergilGraphEdge TransformToSpawn;
+	TransformToSpawn.Id = FGuid::NewGuid();
+	TransformToSpawn.SourceNodeId = MakeTransformNode.Id;
+	TransformToSpawn.SourcePinId = MakeTransformResultPin.Id;
+	TransformToSpawn.TargetNodeId = SpawnActorNode.Id;
+	TransformToSpawn.TargetPinId = SpawnTransformPin.Id;
+	Document.Edges.Add(TransformToSpawn);
+
+	FVergilGraphEdge SelfToInstigator;
+	SelfToInstigator.Id = FGuid::NewGuid();
+	SelfToInstigator.SourceNodeId = SelfNode.Id;
+	SelfToInstigator.SourcePinId = SelfOutputPin.Id;
+	SelfToInstigator.TargetNodeId = SpawnActorNode.Id;
+	SelfToInstigator.TargetPinId = SpawnInstigatorPin.Id;
+	Document.Edges.Add(SelfToInstigator);
+
+	FVergilGraphEdge SpawnThenToSetter;
+	SpawnThenToSetter.Id = FGuid::NewGuid();
+	SpawnThenToSetter.SourceNodeId = SpawnActorNode.Id;
+	SpawnThenToSetter.SourcePinId = SpawnThenPin.Id;
+	SpawnThenToSetter.TargetNodeId = SetSpawnedActorNode.Id;
+	SpawnThenToSetter.TargetPinId = SetSpawnedActorExecPin.Id;
+	Document.Edges.Add(SpawnThenToSetter);
+
+	FVergilGraphEdge SpawnResultToSetter;
+	SpawnResultToSetter.Id = FGuid::NewGuid();
+	SpawnResultToSetter.SourceNodeId = SpawnActorNode.Id;
+	SpawnResultToSetter.SourcePinId = SpawnResultPin.Id;
+	SpawnResultToSetter.TargetNodeId = SetSpawnedActorNode.Id;
+	SpawnResultToSetter.TargetPinId = SetSpawnedActorValuePin.Id;
+	Document.Edges.Add(SpawnResultToSetter);
+
+	const FVergilCompileResult Result = EditorSubsystem->CompileDocument(Blueprint, Document, false, false, true);
+
+	TestTrue(TEXT("Spawn actor document should compile successfully."), Result.bSucceeded);
+	TestTrue(TEXT("Spawn actor document should be applied."), Result.bApplied);
+	TestTrue(TEXT("Spawn actor document should execute commands."), Result.ExecutedCommandCount > 0);
+
+	const FVergilCompilerCommand* const SpawnCommand = FindNodeCommand(Result.Commands, SpawnActorNode.Id);
+	TestNotNull(TEXT("Spawn actor should lower into an AddNode command."), SpawnCommand);
+	if (SpawnCommand == nullptr)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Spawn actor should lower into its dedicated command name."), SpawnCommand->Name, FName(TEXT("Vergil.K2.SpawnActor")));
+	TestEqual(TEXT("Spawn actor should retain the normalized actor class path in StringValue."), SpawnCommand->StringValue, AActor::StaticClass()->GetPathName());
+	TestEqual(TEXT("Spawn actor should retain the normalized actor class path in attributes."), SpawnCommand->Attributes.FindRef(TEXT("ActorClassPath")), AActor::StaticClass()->GetPathName());
+	TestTrue(TEXT("Spawn actor planned pins should include SpawnTransform."), ContainsPlannedPin(*SpawnCommand, TEXT("SpawnTransform"), true, false));
+	TestTrue(TEXT("Spawn actor planned pins should include Instigator."), ContainsPlannedPin(*SpawnCommand, TEXT("Instigator"), true, false));
+	TestTrue(TEXT("Spawn actor planned pins should include ReturnValue."), ContainsPlannedPin(*SpawnCommand, UEdGraphSchema_K2::PN_ReturnValue, false, false));
+
+	UEdGraph* const EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+	TestNotNull(TEXT("Event graph should exist after spawn actor execution."), EventGraph);
+	if (EventGraph == nullptr)
+	{
+		return false;
+	}
+
+	UK2Node_Event* const EventGraphNode = FindGraphNodeByGuid<UK2Node_Event>(EventGraph, BeginPlayNode.Id);
+	UK2Node_Self* const SelfGraphNode = FindGraphNodeByGuid<UK2Node_Self>(EventGraph, SelfNode.Id);
+	UEdGraphNode* const MakeTransformGraphNode = FindGraphNodeByGuid<UEdGraphNode>(EventGraph, MakeTransformNode.Id);
+	UK2Node_SpawnActorFromClass* const SpawnActorGraphNode = FindGraphNodeByGuid<UK2Node_SpawnActorFromClass>(EventGraph, SpawnActorNode.Id);
+	UK2Node_VariableSet* const SetSpawnedActorGraphNode = FindGraphNodeByGuid<UK2Node_VariableSet>(EventGraph, SetSpawnedActorNode.Id);
+
+	TestNotNull(TEXT("Event node should exist."), EventGraphNode);
+	TestNotNull(TEXT("Self node should exist."), SelfGraphNode);
+	TestNotNull(TEXT("MakeTransform node should exist."), MakeTransformGraphNode);
+	TestNotNull(TEXT("Spawn actor node should exist."), SpawnActorGraphNode);
+	TestNotNull(TEXT("SpawnedActor setter node should exist."), SetSpawnedActorGraphNode);
+	if (EventGraphNode == nullptr || SelfGraphNode == nullptr || MakeTransformGraphNode == nullptr || SpawnActorGraphNode == nullptr || SetSpawnedActorGraphNode == nullptr)
+	{
+		return false;
+	}
+
+	UEdGraphPin* const EventThenGraphPin = EventGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SelfGraphPin = SelfGraphNode->FindPin(UEdGraphSchema_K2::PN_Self);
+	UEdGraphPin* const SpawnExecGraphPin = SpawnActorGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SpawnTransformGraphPin = SpawnActorGraphNode->FindPin(TEXT("SpawnTransform"));
+	UEdGraphPin* const SpawnThenGraphPin = SpawnActorGraphNode->FindPin(UEdGraphSchema_K2::PN_Then);
+	UEdGraphPin* const SpawnInstigatorGraphPin = SpawnActorGraphNode->FindPin(TEXT("Instigator"));
+	UEdGraphPin* const SpawnResultGraphPin = SpawnActorGraphNode->GetResultPin();
+	UEdGraphPin* const SpawnClassGraphPin = SpawnActorGraphNode->GetClassPin();
+	UEdGraphPin* const SetExecGraphPin = SetSpawnedActorGraphNode->FindPin(UEdGraphSchema_K2::PN_Execute);
+	UEdGraphPin* const SetValueGraphPin = SetSpawnedActorGraphNode->FindPin(TEXT("SpawnedActor"));
+
+	TestNotNull(TEXT("Spawn actor should expose the SpawnTransform pin from the UE_5.7 actor surface."), SpawnTransformGraphPin);
+	TestNotNull(TEXT("Spawn actor should expose the Instigator pin from the UE_5.7 actor surface."), SpawnInstigatorGraphPin);
+	TestTrue(TEXT("Spawn actor should resolve the class pin to AActor."), SpawnClassGraphPin != nullptr && SpawnClassGraphPin->DefaultObject == AActor::StaticClass());
+	TestTrue(TEXT("Spawn actor result pin should resolve to AActor."), SpawnResultGraphPin != nullptr && SpawnResultGraphPin->PinType.PinSubCategoryObject.Get() == AActor::StaticClass());
+	TestTrue(TEXT("BeginPlay should drive the spawn actor exec pin."), EventThenGraphPin != nullptr && EventThenGraphPin->LinkedTo.Contains(SpawnExecGraphPin));
+	TestTrue(TEXT("MakeTransform should feed the spawn actor SpawnTransform pin."), SpawnTransformGraphPin != nullptr && SpawnTransformGraphPin->LinkedTo.ContainsByPredicate([MakeTransformGraphNode](const UEdGraphPin* LinkedPin)
+	{
+		return LinkedPin != nullptr && LinkedPin->GetOwningNode() == MakeTransformGraphNode;
+	}));
+	TestTrue(TEXT("Self should feed the spawn actor Instigator pin."), SelfGraphPin != nullptr && SelfGraphPin->LinkedTo.Contains(SpawnInstigatorGraphPin));
+	TestTrue(TEXT("Spawn actor Then should drive the SpawnedActor setter."), SpawnThenGraphPin != nullptr && SpawnThenGraphPin->LinkedTo.Contains(SetExecGraphPin));
+	TestTrue(TEXT("Spawn actor ReturnValue should feed the SpawnedActor setter value."), SpawnResultGraphPin != nullptr && SpawnResultGraphPin->LinkedTo.Contains(SetValueGraphPin));
+
+	return true;
+}
 
 bool FVergilStandardMacroInstanceExecutionTest::RunTest(const FString& Parameters)
 {

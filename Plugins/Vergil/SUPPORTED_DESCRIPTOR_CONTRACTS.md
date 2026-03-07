@@ -156,7 +156,7 @@ This document describes the current scaffold contracts implemented in code today
 - The type pass normalizes authored type metadata across variable definitions, function signatures, macro signatures, dispatcher parameters, component class paths, interface class paths, and explicit typed-node metadata on the active graph surface.
 - Supported logical type categories remain `bool`, `int`, `float`, `double`, `string`, `name`, `text`, `enum`, `object`, `class`, and `struct`.
 - `enum`, `object`, `class`, and `struct` references now resolve to canonical object paths before planning, so planned commands stop depending on raw authored whitespace or alternate path spellings.
-- The type pass currently resolves explicit type metadata for `K2.Cast`, `K2.Select`, `K2.SwitchEnum`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
+- The type pass currently resolves explicit type metadata for `K2.Cast`, `K2.SpawnActor`, `K2.Select`, `K2.SwitchEnum`, `K2.MakeStruct`, `K2.BreakStruct`, `K2.MakeArray`, `K2.MakeSet`, and `K2.MakeMap`.
 - Failed type resolution stops compilation before node lowering, connection legality validation, or command planning, so invalid authored type references now return zero planned commands.
 
 ## Node lowering contracts
@@ -330,6 +330,7 @@ This document describes the current scaffold contracts implemented in code today
 | `K2.ForLoop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `ForLoop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. |
 | `K2.DoOnce` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `DoOnce` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. The bool input pin follows the engine name `Start Closed`. |
 | `K2.FlipFlop` | any | none | Optional `MacroBlueprintPath` and `MacroGraphName`. Defaults resolve to the engine `FlipFlop` macro in `StandardMacros`, and the symbol pass validates the selected macro graph before planning. The single input exec pin maps to the engine macro's unnamed entry exec pin, while outputs remain `A`, `B`, and `IsA`. |
+| `K2.SpawnActor` | any | `ActorClassPath` | `ActorClassPath` must resolve to an `AActor`-derived class during type resolution and is normalized before planning. Under `UE_5.7` this lowers to `UK2Node_SpawnActorFromClass`, exposing the deterministic `SpawnTransform`, `CollisionHandlingOverride`, `TransformScaleMethod`, `Owner`, `ReturnValue`, and class-specific `ExposeOnSpawn` property pins. `SpawnTransform` must be authored and connected because the `UE_5.7` node expands into by-reference transform calls. The dynamic `Class` and `WorldContextObject` pins are intentionally outside the authored contract. |
 | `K2.Delay` | any | none | Lowers to `UKismetSystemLibrary::Delay`. |
 | `K2.Cast` | any | `TargetClassPath` | Target class path must resolve to a class during type resolution and is normalized before planning. |
 | `K2.Reroute` | any | none | Creates a knot node. |

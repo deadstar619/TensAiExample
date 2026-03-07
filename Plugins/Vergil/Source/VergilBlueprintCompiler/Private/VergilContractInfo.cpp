@@ -230,6 +230,13 @@ namespace
 				{},
 				TEXT("Optional MacroBlueprintPath and MacroGraphName metadata selects the backing macro. Defaults resolve to the engine StandardMacros FlipFlop and are validated before planning. The input exec pin maps to the engine macro's unnamed entry exec pin, while outputs remain A, B, and IsA.")),
 			MakeDescriptorContract(
+				TEXT("K2.SpawnActor"),
+				EVergilDescriptorMatchKind::Exact,
+				TEXT("any"),
+				SupportedGraphs,
+				{ TEXT("ActorClassPath") },
+				TEXT("ActorClassPath must resolve to an AActor-derived class during type resolution and is normalized before planning. Under UE_5.7 this lowers to UK2Node_SpawnActorFromClass with the fixed SpawnActorFromClass surface: SpawnTransform, CollisionHandlingOverride, TransformScaleMethod, Owner, ReturnValue, and class-specific ExposeOnSpawn property pins. SpawnTransform must be authored and connected because the UE_5.7 node expands through by-reference transform calls. The dynamic Class and WorldContextObject pins are intentionally not part of the authored deterministic contract.")),
+			MakeDescriptorContract(
 				TEXT("K2.Delay"),
 				EVergilDescriptorMatchKind::Exact,
 				TEXT("any"),

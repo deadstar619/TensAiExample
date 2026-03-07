@@ -5,6 +5,8 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
+#include "GameFramework/Actor.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectGlobals.h"
 
@@ -17,6 +19,19 @@ namespace
 	const FName EventGraphName(TEXT("EventGraph"));
 	const FName ConstructionScriptGraphName(TEXT("UserConstructionScript"));
 	const FString StandardMacrosBlueprintPath(TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"));
+	const FName SpawnActorClassPinName(TEXT("Class"));
+	const FName SpawnActorWorldContextPinName(TEXT("WorldContextObject"));
+	const FName SpawnActorTransformPinName(TEXT("SpawnTransform"));
+	const FName SpawnActorCollisionHandlingOverridePinName(TEXT("CollisionHandlingOverride"));
+	const FName SpawnActorTransformScaleMethodPinName(TEXT("TransformScaleMethod"));
+	const FName SpawnActorOwnerPinName(TEXT("Owner"));
+
+	struct FVergilSpawnActorPinDescriptor
+	{
+		FName Name = NAME_None;
+		EVergilPinDirection Direction = EVergilPinDirection::Input;
+		bool bIsExec = false;
+	};
 
 	struct FVergilStandardMacroDescriptor
 	{
@@ -284,6 +299,25 @@ namespace
 				Context,
 				TEXT("MissingTargetClassPath"),
 				TEXT("Cast nodes require metadata TargetClassPath naming the target class."));
+			return bIsValid;
+		}
+
+		if (Node.Descriptor == TEXT("K2.SpawnActor"))
+		{
+			bIsValid &= HasRequiredMetadataValue(
+				Node,
+				TEXT("ActorClassPath"),
+				Context,
+				TEXT("MissingSpawnActorClassPath"),
+				TEXT("Spawn actor nodes require metadata ActorClassPath naming the actor class to spawn."));
+
+			if (Context.GetGraphName() == ConstructionScriptGraphName)
+			{
+				AddNodeDiagnostic(
+					TEXT("ConstructionScriptSpawnActorUnsupported"),
+					TEXT("K2.SpawnActor is not supported when compiling UserConstructionScript because UE_5.7 SpawnActor nodes are incompatible with construction scripts."));
+			}
+
 			return bIsValid;
 		}
 
@@ -1016,6 +1050,133 @@ namespace
 		return true;
 	}
 
+	void BuildSpawnActorSupportedPins(const UClass* ActorClass, TArray<FVergilSpawnActorPinDescriptor>& OutPins)
+	{
+		OutPins.Reset();
+
+		OutPins.Add({ UEdGraphSchema_K2::PN_Execute, EVergilPinDirection::Input, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_Then, EVergilPinDirection::Output, true });
+		OutPins.Add({ UEdGraphSchema_K2::PN_ReturnValue, EVergilPinDirection::Output, false });
+		OutPins.Add({ SpawnActorTransformPinName, EVergilPinDirection::Input, false });
+		OutPins.Add({ SpawnActorCollisionHandlingOverridePinName, EVergilPinDirection::Input, false });
+		OutPins.Add({ SpawnActorTransformScaleMethodPinName, EVergilPinDirection::Input, false });
+		OutPins.Add({ SpawnActorOwnerPinName, EVergilPinDirection::Input, false });
+
+		if (ActorClass == nullptr)
+		{
+			return;
+		}
+
+		for (TFieldIterator<FProperty> PropertyIt(ActorClass, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+		{
+			FProperty* const Property = *PropertyIt;
+			if (Property == nullptr)
+			{
+				continue;
+			}
+
+			const bool bIsDelegate = Property->IsA(FMulticastDelegateProperty::StaticClass());
+			const bool bIsExposedToSpawn = UEdGraphSchema_K2::IsPropertyExposedOnSpawn(Property);
+			const bool bIsSettableExternally = !Property->HasAnyPropertyFlags(CPF_DisableEditOnInstance);
+
+			if (bIsExposedToSpawn
+				&& !Property->HasAnyPropertyFlags(CPF_Parm)
+				&& bIsSettableExternally
+				&& Property->HasAllPropertyFlags(CPF_BlueprintVisible)
+				&& !bIsDelegate
+				&& FBlueprintEditorUtils::PropertyStillExists(Property))
+			{
+				OutPins.Add({ Property->GetFName(), EVergilPinDirection::Input, false });
+			}
+		}
+	}
+
+	bool ValidateSpawnActorPins(
+		const FVergilGraphNode& Node,
+		const UClass* ActorClass,
+		FVergilCompilerContext& Context)
+	{
+		TArray<FVergilSpawnActorPinDescriptor> SupportedPins;
+		BuildSpawnActorSupportedPins(ActorClass, SupportedPins);
+
+		bool bIsValid = true;
+		for (const FVergilGraphPin& Pin : Node.Pins)
+		{
+			if (Pin.Name == SpawnActorClassPinName)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("SpawnActorDynamicClassPinUnsupported"),
+					TEXT("K2.SpawnActor currently uses ActorClassPath metadata as its deterministic class source; authored Class-pin connections are not supported."),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			if (Pin.Name == SpawnActorWorldContextPinName)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("SpawnActorWorldContextPinUnsupported"),
+					TEXT("K2.SpawnActor does not currently expose authored WorldContextObject pin connections."),
+					Node.Id);
+				bIsValid = false;
+				continue;
+			}
+
+			const FVergilSpawnActorPinDescriptor* const SupportedPin = SupportedPins.FindByPredicate([&Pin](const FVergilSpawnActorPinDescriptor& Candidate)
+			{
+				return Candidate.Name == Pin.Name
+					&& Candidate.Direction == Pin.Direction
+					&& Candidate.bIsExec == Pin.bIsExec;
+			});
+
+			if (SupportedPin == nullptr)
+			{
+				Context.AddDiagnostic(
+					EVergilDiagnosticSeverity::Error,
+					TEXT("SpawnActorPinUnsupported"),
+					FString::Printf(
+						TEXT("K2.SpawnActor pin '%s' is not part of the UE_5.7 SpawnActorFromClass surface for actor class '%s'."),
+						*Pin.Name.ToString(),
+						ActorClass != nullptr ? *ActorClass->GetPathName() : TEXT("<null>")),
+					Node.Id);
+				bIsValid = false;
+			}
+		}
+
+		return bIsValid;
+	}
+
+	bool ResolveAndNormalizeSpawnActorNodeType(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
+	{
+		const FString ActorClassPath = Node.Metadata.FindRef(TEXT("ActorClassPath")).TrimStartAndEnd();
+		FString NormalizedClassPath;
+		if (!ResolveNormalizedClassPath(ActorClassPath, NormalizedClassPath))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				TEXT("SpawnActorClassNotFound"),
+				FString::Printf(TEXT("Unable to resolve spawn actor class '%s'."), *ActorClassPath),
+				Node.Id);
+			return false;
+		}
+
+		UClass* const ActorClass = ResolveClassReference(NormalizedClassPath);
+		if (ActorClass == nullptr || !ActorClass->IsChildOf(AActor::StaticClass()))
+		{
+			AddTypeResolutionDiagnostic(
+				Context,
+				TEXT("SpawnActorClassNotActor"),
+				FString::Printf(TEXT("Spawn actor class '%s' must resolve to an AActor-derived class."), *NormalizedClassPath),
+				Node.Id);
+			return false;
+		}
+
+		bOutChanged |= SetNormalizedMetadataValue(Node.Metadata, TEXT("ActorClassPath"), NormalizedClassPath);
+		return ValidateSpawnActorPins(Node, ActorClass, Context);
+	}
+
 	bool ResolveAndNormalizeSelectNodeTypes(FVergilGraphNode& Node, FVergilCompilerContext& Context, bool& bOutChanged)
 	{
 		return ResolveAndNormalizeNodePinTypeMetadata(Node, TEXT("IndexPinCategory"), TEXT("IndexObjectPath"), TEXT("InvalidSelectIndexType"), Context, bOutChanged)
@@ -1216,6 +1377,11 @@ namespace
 		if (Node.Descriptor == TEXT("K2.Cast"))
 		{
 			return ResolveAndNormalizeCastNodeType(Node, Context, bOutChanged);
+		}
+
+		if (Node.Descriptor == TEXT("K2.SpawnActor"))
+		{
+			return ResolveAndNormalizeSpawnActorNodeType(Node, Context, bOutChanged);
 		}
 
 		if (Node.Descriptor == TEXT("K2.Select"))
@@ -2423,6 +2589,35 @@ namespace
 		}
 	};
 
+	class FVergilSpawnActorNodeHandler final : public IVergilNodeHandler
+	{
+	public:
+		virtual FName GetDescriptor() const override
+		{
+			return TEXT("Vergil.K2.SpawnActor");
+		}
+
+		virtual bool CanHandle(const FVergilGraphNode& Node) const override
+		{
+			return Node.Descriptor == TEXT("K2.SpawnActor");
+		}
+
+		virtual bool BuildCommands(const FVergilGraphNode& Node, FVergilCompilerContext& Context) const override
+		{
+			FVergilCompilerCommand Command;
+			Command.Type = EVergilCommandType::AddNode;
+			Command.GraphName = Context.GetGraphName();
+			Command.NodeId = Node.Id;
+			Command.Name = GetDescriptor();
+			Command.StringValue = Node.Metadata.FindRef(TEXT("ActorClassPath"));
+			Command.Position = Node.Position;
+			Command.Attributes = Node.Metadata;
+			CopyPlannedPins(Node, Command);
+			Context.AddCommand(Command);
+			return true;
+		}
+	};
+
 	class FVergilBindDelegateNodeHandler final : public IVergilNodeHandler
 	{
 	public:
@@ -3194,6 +3389,7 @@ namespace
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.DoOnce"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilStandardMacroNodeHandler, ESPMode::ThreadSafe>(*FindStandardMacroDescriptorByDescriptor(TEXT("K2.FlipFlop"))));
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilDelayNodeHandler, ESPMode::ThreadSafe>());
+		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilSpawnActorNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilBindDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilRemoveDelegateNodeHandler, ESPMode::ThreadSafe>());
 		FVergilNodeRegistry::Get().RegisterFallbackHandler(MakeShared<FVergilClearDelegateNodeHandler, ESPMode::ThreadSafe>());
@@ -3940,6 +4136,44 @@ namespace
 			else
 			{
 				FirstIncomingEdgeByTargetPin.Add(Edge.TargetPinId, Edge.Id);
+			}
+		}
+
+		for (const FVergilGraphNode& Node : TargetNodes)
+		{
+			if (Node.Descriptor != TEXT("K2.SpawnActor"))
+			{
+				continue;
+			}
+
+			const FVergilCompilerCommand* const LoweredSpawnActor = LoweredNodesById.FindRef(Node.Id);
+			if (LoweredSpawnActor == nullptr)
+			{
+				continue;
+			}
+
+			const FVergilPlannedPin* const SpawnTransformPin = LoweredSpawnActor->PlannedPins.FindByPredicate([](const FVergilPlannedPin& PlannedPin)
+			{
+				return PlannedPin.Name == SpawnActorTransformPinName
+					&& PlannedPin.bIsInput
+					&& !PlannedPin.bIsExec;
+			});
+
+			if (SpawnTransformPin == nullptr || !SpawnTransformPin->PinId.IsValid())
+			{
+				AddConnectionDiagnostic(
+					TEXT("SpawnActorTransformPinMissing"),
+					TEXT("Connection legality pass requires K2.SpawnActor nodes to author a valid input pin named 'SpawnTransform'."),
+					Node.Id);
+				continue;
+			}
+
+			if (!FirstIncomingEdgeByTargetPin.Contains(SpawnTransformPin->PinId))
+			{
+				AddConnectionDiagnostic(
+					TEXT("SpawnActorTransformConnectionMissing"),
+					TEXT("Connection legality pass requires K2.SpawnActor nodes to drive 'SpawnTransform' with a data edge because UE_5.7 UK2Node_SpawnActorFromClass expands into by-reference transform calls."),
+					Node.Id);
 			}
 		}
 
