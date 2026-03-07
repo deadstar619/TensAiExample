@@ -5,6 +5,7 @@
 - When working roadmap tickets for this repository, default to completing the current ticket end-to-end in one pass: implement, verify, commit, and push, unless the user explicitly asks to pause before commit or push.
 - After a ticket has been committed and pushed successfully, immediately look up the next roadmap ticket and start it without waiting for another prompt, unless the user has redirected the work.
 - Keep each commit scoped to the ticket that was just completed. Do not bundle unrelated dirty files into the commit.
+- For unattended chaining outside an active chat turn, use `Tools/Start-CodexRoadmapLoop.ps1` to launch the detached Codex roadmap loop, `Tools/Get-CodexRoadmapLoopStatus.ps1` to inspect it, and `Tools/Stop-CodexRoadmapLoop.ps1` to stop it.
 
 ## Vergil / TensAi Constraints
 
