@@ -63,6 +63,9 @@ public:
 	FVergilAgentResponse ExecuteRequest(const FVergilAgentRequest& Request);
 
 	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
+	EVergilAgentWritePermissionPolicy GetWritePermissionPolicy() const;
+
+	UFUNCTION(BlueprintPure, Category = "Vergil|Agent")
 	FString GetAuditTrailPersistencePath() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Vergil|Agent")
@@ -142,6 +145,7 @@ private:
 	FVergilAgentRequest NormalizeRequest(const FVergilAgentRequest& Request) const;
 	FVergilAgentResponse ExecutePlanRequest(const FVergilAgentRequest& Request) const;
 	FVergilAgentResponse ExecuteApplyRequest(const FVergilAgentRequest& Request) const;
+	bool IsWriteRequestAuthorized(const FVergilAgentRequest& Request, FString& OutRejectionMessage, FName& OutDiagnosticCode) const;
 	bool TryLoadAuditTrailFromDisk(TArray<FVergilAgentAuditEntry>& OutEntries, FString* OutErrorMessage = nullptr) const;
 	bool TryWriteAuditTrailToDisk(const TArray<FVergilAgentAuditEntry>& Entries, FString* OutErrorMessage = nullptr) const;
 };

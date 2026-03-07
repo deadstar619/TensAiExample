@@ -26,7 +26,7 @@ Vergil tracks the plugin release, document schema, serialized command-plan forma
   Source of truth: `Vergil::GetReflectionSymbolFormatName()` and `Vergil::GetReflectionSymbolFormatVersion()`
 - Reflection-discovery inspection format: `Vergil.ReflectionDiscovery` version `1`
   Source of truth: `Vergil::GetReflectionDiscoveryFormatName()` and `Vergil::GetReflectionDiscoveryFormatVersion()`
-- Agent request inspection format: `Vergil.AgentRequest` version `1`
+- Agent request inspection format: `Vergil.AgentRequest` version `2`
   Source of truth: `Vergil::GetAgentRequestFormatName()` and `Vergil::GetAgentRequestFormatVersion()`
 - Agent response inspection format: `Vergil.AgentResponse` version `1`
   Source of truth: `Vergil::GetAgentResponseFormatName()` and `Vergil::GetAgentResponseFormatVersion()`

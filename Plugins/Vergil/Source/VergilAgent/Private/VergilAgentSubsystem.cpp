@@ -9,6 +9,7 @@
 #include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
+#include "VergilDeveloperSettings.h"
 #include "VergilEditorSubsystem.h"
 #include "VergilLog.h"
 
@@ -260,6 +261,24 @@ namespace
 	{
 		return BlueprintPath.IsEmpty() ? FString(TEXT("<none>")) : BlueprintPath;
 	}
+
+	const TCHAR* LexWritePermissionPolicyString(const EVergilAgentWritePermissionPolicy Policy)
+	{
+		switch (Policy)
+		{
+		case EVergilAgentWritePermissionPolicy::AllowAll:
+			return TEXT("AllowAll");
+
+		case EVergilAgentWritePermissionPolicy::RequireExplicitApproval:
+			return TEXT("RequireExplicitApproval");
+
+		case EVergilAgentWritePermissionPolicy::DenyAll:
+			return TEXT("DenyAll");
+
+		default:
+			return TEXT("Unknown");
+		}
+	}
 }
 
 void UVergilAgentSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -394,6 +413,14 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecuteRequest(const FVergilAgentReq
 	AuditEntry.Response = Response;
 	RecordAuditEntry(AuditEntry);
 	return Response;
+}
+
+EVergilAgentWritePermissionPolicy UVergilAgentSubsystem::GetWritePermissionPolicy() const
+{
+	const UVergilDeveloperSettings* const Settings = GetDefault<UVergilDeveloperSettings>();
+	return Settings != nullptr
+		? Settings->AgentWritePermissionPolicy
+		: EVergilAgentWritePermissionPolicy::RequireExplicitApproval;
 }
 
 FString UVergilAgentSubsystem::GetAuditTrailPersistencePath() const
@@ -559,6 +586,11 @@ FVergilAgentRequest UVergilAgentSubsystem::NormalizeRequest(const FVergilAgentRe
 		NormalizedRequest.Context.RequestId = FGuid::NewGuid();
 	}
 
+	NormalizedRequest.Context.WriteAuthorization.ApprovedBy =
+		NormalizedRequest.Context.WriteAuthorization.ApprovedBy.TrimStartAndEnd();
+	NormalizedRequest.Context.WriteAuthorization.ApprovalNote =
+		NormalizedRequest.Context.WriteAuthorization.ApprovalNote.TrimStartAndEnd();
+
 	switch (NormalizedRequest.Operation)
 	{
 	case EVergilAgentOperation::PlanDocument:
@@ -684,6 +716,43 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecutePlanRequest(const FVergilAgen
 	return Response;
 }
 
+bool UVergilAgentSubsystem::IsWriteRequestAuthorized(
+	const FVergilAgentRequest& Request,
+	FString& OutRejectionMessage,
+	FName& OutDiagnosticCode) const
+{
+	if (!Request.IsWriteRequest())
+	{
+		return true;
+	}
+
+	switch (GetWritePermissionPolicy())
+	{
+	case EVergilAgentWritePermissionPolicy::AllowAll:
+		return true;
+
+	case EVergilAgentWritePermissionPolicy::RequireExplicitApproval:
+		if (Request.Context.WriteAuthorization.bApproved)
+		{
+			return true;
+		}
+
+		OutDiagnosticCode = TEXT("MissingAgentWriteApproval");
+		OutRejectionMessage = TEXT("ApplyCommandPlan requests require explicit write approval under the current permission policy.");
+		return false;
+
+	case EVergilAgentWritePermissionPolicy::DenyAll:
+		OutDiagnosticCode = TEXT("AgentWritePermissionDenied");
+		OutRejectionMessage = TEXT("ApplyCommandPlan requests are disabled by the current permission policy.");
+		return false;
+
+	default:
+		OutDiagnosticCode = TEXT("UnknownAgentWritePermissionPolicy");
+		OutRejectionMessage = TEXT("ApplyCommandPlan requests are blocked because the current permission policy is unknown.");
+		return false;
+	}
+}
+
 FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAgentRequest& Request) const
 {
 	FVergilAgentResponse Response = MakeBaseResponse(Request);
@@ -725,6 +794,24 @@ FVergilAgentResponse UVergilAgentSubsystem::ExecuteApplyRequest(const FVergilAge
 				TEXT("ApplyCommandPlan fingerprint '%s' did not match the normalized command plan fingerprint '%s'."),
 				*Request.Apply.ExpectedCommandPlanFingerprint,
 				*Response.Result.Statistics.CommandPlanFingerprint));
+		return Response;
+	}
+
+	FString WritePermissionRejectionMessage;
+	FName WritePermissionDiagnosticCode = NAME_None;
+	if (!IsWriteRequestAuthorized(Request, WritePermissionRejectionMessage, WritePermissionDiagnosticCode))
+	{
+		Response.State = EVergilAgentExecutionState::Rejected;
+		Response.Message = WritePermissionRejectionMessage;
+		AddAgentErrorDiagnostic(
+			Response.Result,
+			WritePermissionDiagnosticCode,
+			FString::Printf(
+				TEXT("%s Policy=%s approved=%s approvedBy=%s."),
+				*WritePermissionRejectionMessage,
+				LexWritePermissionPolicyString(GetWritePermissionPolicy()),
+				Request.Context.WriteAuthorization.bApproved ? TEXT("true") : TEXT("false"),
+				Request.Context.WriteAuthorization.ApprovedBy.IsEmpty() ? TEXT("<none>") : *Request.Context.WriteAuthorization.ApprovedBy));
 		return Response;
 	}
 

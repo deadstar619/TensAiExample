@@ -7,7 +7,7 @@
 namespace
 {
 	inline constexpr TCHAR AgentRequestFormatName[] = TEXT("Vergil.AgentRequest");
-	inline constexpr int32 AgentRequestFormatVersion = 1;
+	inline constexpr int32 AgentRequestFormatVersion = 2;
 	inline constexpr TCHAR AgentResponseFormatName[] = TEXT("Vergil.AgentResponse");
 	inline constexpr int32 AgentResponseFormatVersion = 1;
 	inline constexpr TCHAR AgentAuditEntryFormatName[] = TEXT("Vergil.AgentAuditEntry");
@@ -139,6 +139,16 @@ namespace
 	}
 
 	template <typename PrintPolicy>
+	void WriteAgentWriteAuthorizationJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilAgentWriteAuthorization& Authorization)
+	{
+		Writer.WriteObjectStart(TEXT("writeAuthorization"));
+		Writer.WriteValue(TEXT("approved"), Authorization.bApproved);
+		Writer.WriteValue(TEXT("approvedBy"), Authorization.ApprovedBy);
+		Writer.WriteValue(TEXT("approvalNote"), Authorization.ApprovalNote);
+		Writer.WriteObjectEnd();
+	}
+
+	template <typename PrintPolicy>
 	void WriteAgentRequestContextJson(TJsonWriter<TCHAR, PrintPolicy>& Writer, const FVergilAgentRequestContext& Context)
 	{
 		Writer.WriteObjectStart(TEXT("context"));
@@ -146,6 +156,7 @@ namespace
 		Writer.WriteValue(TEXT("summary"), Context.Summary);
 		Writer.WriteValue(TEXT("inputText"), Context.InputText);
 		WriteNameArray(Writer, TEXT("tags"), Context.Tags);
+		WriteAgentWriteAuthorizationJson(Writer, Context.WriteAuthorization);
 		Writer.WriteObjectEnd();
 	}
 
@@ -230,12 +241,22 @@ namespace
 	}
 }
 
+FString FVergilAgentWriteAuthorization::ToDisplayString() const
+{
+	return FString::Printf(
+		TEXT("approved=%s approvedBy=%s approvalNote=%s"),
+		LexBoolString(bApproved),
+		ApprovedBy.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(ApprovedBy),
+		ApprovalNote.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(ApprovalNote));
+}
+
 FString FVergilAgentRequestContext::ToDisplayString() const
 {
 	return FString::Printf(
-		TEXT("requestId=%s tags=%d"),
+		TEXT("requestId=%s tags=%d writeApproved=%s"),
 		RequestId.IsValid() ? *LexGuidString(RequestId) : TEXT("<none>"),
-		Tags.Num());
+		Tags.Num(),
+		LexBoolString(WriteAuthorization.bApproved));
 }
 
 FString FVergilAgentPlanPayload::ToDisplayString() const
@@ -312,6 +333,7 @@ FString Vergil::DescribeAgentRequest(const FVergilAgentRequest& Request)
 	Lines.Add(FString::Printf(TEXT("summary: %s"), Request.Context.Summary.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(Request.Context.Summary)));
 	Lines.Add(FString::Printf(TEXT("inputText: %s"), Request.Context.InputText.IsEmpty() ? TEXT("<none>") : *EscapeDisplayValue(Request.Context.InputText)));
 	Lines.Add(FString::Printf(TEXT("tags: %s"), *JoinNameArray(Request.Context.Tags)));
+	Lines.Add(FString::Printf(TEXT("writeAuthorization: %s"), *Request.Context.WriteAuthorization.ToDisplayString()));
 
 	switch (Request.Operation)
 	{

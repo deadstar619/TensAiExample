@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "VergilCompilerTypes.h"
+#include "VergilPermissionTypes.h"
 #include "VergilAgentTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -23,6 +24,23 @@ enum class EVergilAgentOperation : uint8
 };
 
 USTRUCT(BlueprintType)
+struct VERGILAGENT_API FVergilAgentWriteAuthorization
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	bool bApproved = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString ApprovedBy;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FString ApprovalNote;
+
+	FString ToDisplayString() const;
+};
+
+USTRUCT(BlueprintType)
 struct VERGILAGENT_API FVergilAgentRequestContext
 {
 	GENERATED_BODY()
@@ -38,6 +56,9 @@ struct VERGILAGENT_API FVergilAgentRequestContext
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
 	TArray<FName> Tags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Vergil")
+	FVergilAgentWriteAuthorization WriteAuthorization;
 
 	FString ToDisplayString() const;
 };

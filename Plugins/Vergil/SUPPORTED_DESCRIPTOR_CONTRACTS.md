@@ -29,7 +29,7 @@ This document describes the current scaffold contracts implemented in code today
 - `Vergil::DescribeGraphDocument(...)` / `SerializeGraphDocument(...)`, `Vergil::DescribeDiagnostics(...)` / `SerializeDiagnostics(...)`, and `Vergil::DescribeCompileResult(...)` / `SerializeCompileResult(...)` now expose the canonical document, diagnostic list, and compile result through stable human-readable descriptions plus deterministic JSON inspection payloads.
 - `UVergilEditorSubsystem` now exposes read-only command-plan, document, document-diff, diagnostic, compile-result, command-plan-preview, and runtime/reflection inspection helpers, while `UVergilAgentSubsystem` mirrors those same helpers for tool-facing inspection without requiring callers to scrape logs.
 - `Vergil::GetSupportedContractManifest()` now exposes the current supported-contract surface as code-backed data, and `UVergilAgentSubsystem` exposes that manifest through read-only inspection helpers for structured data, descriptor-only inspection, deterministic JSON, and a human-readable summary.
-- The real agent-layer contract is now explicit and versioned. `PlanDocument` requests wrap `FVergilGraphDocument` plus target graph and compile flags, `ApplyCommandPlan` requests wrap explicit command plans plus target Blueprint path and expected fingerprint, responses wrap `FVergilCompileResult`, audit entries store the request/response pair plus a UTC timestamp, and the persisted audit-log wrapper stores those normalized entries on disk.
+- The real agent-layer contract is now explicit and versioned. `PlanDocument` requests wrap `FVergilGraphDocument` plus target graph and compile flags, `ApplyCommandPlan` requests wrap explicit command plans plus target Blueprint path and expected fingerprint, `FVergilAgentRequestContext.WriteAuthorization` carries explicit write-approval metadata for apply replay, responses wrap `FVergilCompileResult`, audit entries store the request/response pair plus a UTC timestamp, and the persisted audit-log wrapper stores those normalized entries on disk.
 - `UVergilAgentSubsystem::ExecuteRequest(...)` is the supported orchestration entry point for those agent requests. Planning stays read-only, apply requests replay only the explicit provided command plan, and each execution appends an audit entry automatically.
 
 ## Inspection manifest contracts
@@ -49,7 +49,7 @@ This document describes the current scaffold contracts implemented in code today
 - The command-plan preview inspection format is `format="Vergil.CommandPlanPreview"` with `version=1`, sourced from `Vergil::GetCommandPlanPreviewInspectionFormatName()` and `Vergil::GetCommandPlanPreviewInspectionFormatVersion()`.
 - The reflection-symbol inspection format is `format="Vergil.ReflectionSymbol"` with `version=1`, sourced from `Vergil::GetReflectionSymbolFormatName()` and `Vergil::GetReflectionSymbolFormatVersion()`.
 - The reflection-discovery inspection format is `format="Vergil.ReflectionDiscovery"` with `version=1`, sourced from `Vergil::GetReflectionDiscoveryFormatName()` and `Vergil::GetReflectionDiscoveryFormatVersion()`.
-- The agent request format is `format="Vergil.AgentRequest"` with `version=1`, sourced from `Vergil::GetAgentRequestFormatName()` and `Vergil::GetAgentRequestFormatVersion()`.
+- The agent request format is `format="Vergil.AgentRequest"` with `version=2`, sourced from `Vergil::GetAgentRequestFormatName()` and `Vergil::GetAgentRequestFormatVersion()`.
 - The agent response format is `format="Vergil.AgentResponse"` with `version=1`, sourced from `Vergil::GetAgentResponseFormatName()` and `Vergil::GetAgentResponseFormatVersion()`.
 - The agent audit-entry format is `format="Vergil.AgentAuditEntry"` with `version=1`, sourced from `Vergil::GetAgentAuditEntryFormatName()` and `Vergil::GetAgentAuditEntryFormatVersion()`.
 - The persisted agent audit-log wrapper currently uses `format="Vergil.AgentAuditLog"` with `version=1` in `Saved/Vergil/AgentAuditTrail.json`.
@@ -67,16 +67,19 @@ This document describes the current scaffold contracts implemented in code today
 
 - `EVergilAgentOperation` currently supports `PlanDocument` and `ApplyCommandPlan`.
 - `FVergilAgentRequest` wraps `FVergilAgentRequestContext` plus exactly one typed payload selected by `Operation`.
-- `FVergilAgentRequestContext` currently carries `RequestId`, `Summary`, `InputText`, and `Tags`.
+- `FVergilAgentRequestContext` currently carries `RequestId`, `Summary`, `InputText`, `Tags`, and `WriteAuthorization`.
 - `FVergilAgentPlanPayload` currently carries `TargetBlueprintPath`, `Document`, `TargetGraphName`, `bAutoLayout`, and `bGenerateComments`.
 - `FVergilAgentApplyPayload` currently carries `TargetBlueprintPath`, `Commands`, and `ExpectedCommandPlanFingerprint`.
-- `FVergilAgentRequest::IsWriteRequest()` returns `true` only for `ApplyCommandPlan`, which is the current contract boundary for future permission-gating work.
+- `FVergilAgentWriteAuthorization` currently carries `bApproved`, `ApprovedBy`, and `ApprovalNote`.
+- `FVergilAgentRequest::IsWriteRequest()` returns `true` only for `ApplyCommandPlan`, and `UVergilAgentSubsystem` enforces the configured `AgentWritePermissionPolicy` only on those write requests.
 - `FVergilAgentResponse` currently carries `RequestId`, `Operation`, `State`, `Message`, and `Result`. `Result` stays the existing `FVergilCompileResult` so agent orchestration reuses the same compile/apply diagnostics, plan statistics, and normalized command-plan payload already documented elsewhere.
 - `FVergilAgentAuditEntry` currently carries `Request`, `Response`, and `TimestampUtc`.
 - `UVergilAgentSubsystem::MakeApplyRequestFromPlan(...)` is the supported helper for the explicit phase handoff. It copies the reviewed normalized plan, carries the target Blueprint path forward from the plan request, and stamps the expected normalized command-plan fingerprint onto the apply request.
-- `UVergilAgentSubsystem::ExecuteRequest(...)` now normalizes missing plan target paths from `Document.BlueprintPath`, defaults missing plan graph names to `EventGraph`, normalizes apply command ordering before fingerprint checks, and records the normalized request in the audit trail.
-- `PlanDocument` execution runs `UVergilEditorSubsystem::MakeCompileRequest(...)` plus `CompileRequest(..., false)` and never mutates the Blueprint. `ApplyCommandPlan` execution runs `ExecuteCommandPlan(...)` only after the provided expected fingerprint matches the normalized explicit plan.
+- `UVergilAgentSubsystem::GetWritePermissionPolicy()` returns the current project-level apply policy from `UVergilDeveloperSettings::AgentWritePermissionPolicy`.
+- `UVergilAgentSubsystem::ExecuteRequest(...)` now normalizes missing plan target paths from `Document.BlueprintPath`, defaults missing plan graph names to `EventGraph`, trims `WriteAuthorization` text fields, normalizes apply command ordering before fingerprint checks, and records the normalized request in the audit trail.
+- `PlanDocument` execution runs `UVergilEditorSubsystem::MakeCompileRequest(...)` plus `CompileRequest(..., false)` and never mutates the Blueprint. `ApplyCommandPlan` execution runs `ExecuteCommandPlan(...)` only after the provided expected fingerprint matches the normalized explicit plan and the configured write-permission policy allows the request.
 - Missing or mismatched `ExpectedCommandPlanFingerprint` rejects apply requests before mutation with explicit diagnostics, so plan review and apply replay stay separate.
+- Missing explicit write approval under `RequireExplicitApproval`, or any write request under `DenyAll`, rejects apply requests before editor execution with explicit diagnostics while still auditing the rejected attempt.
 - `UVergilAgentSubsystem::RecordAuditEntry(...)` now normalizes missing response request ids, missing response operations, and missing `TimestampUtc` before appending the audit trail and immediately persisting it.
 - `UVergilAgentSubsystem::GetAuditTrailPersistencePath()`, `FlushAuditTrailToDisk()`, and `ReloadAuditTrailFromDisk()` expose the supported persistence surface for the current audit trail.
 - `UVergilAgentSubsystem::ClearAuditTrail()` clears both the in-memory audit trail and the persisted on-disk audit log.

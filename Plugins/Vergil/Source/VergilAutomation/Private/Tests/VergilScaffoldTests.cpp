@@ -55,6 +55,7 @@
 #include "VergilCommandTypes.h"
 #include "VergilBlueprintCompilerService.h"
 #include "VergilCompilerTypes.h"
+#include "VergilDeveloperSettings.h"
 #include "VergilEditorSubsystem.h"
 #include "VergilGraphDocument.h"
 #include "VergilNodeRegistry.h"
@@ -376,6 +377,37 @@ namespace
 		FString OriginalFileContents;
 		bool bHadOriginalFile = false;
 		bool bBackupReady = false;
+	};
+
+	struct FScopedVergilWritePermissionPolicyOverride final
+	{
+		explicit FScopedVergilWritePermissionPolicyOverride(const EVergilAgentWritePermissionPolicy InPolicy)
+			: Settings(GetMutableDefault<UVergilDeveloperSettings>())
+		{
+			if (Settings != nullptr)
+			{
+				OriginalPolicy = Settings->AgentWritePermissionPolicy;
+				Settings->AgentWritePermissionPolicy = InPolicy;
+				bReady = true;
+			}
+		}
+
+		~FScopedVergilWritePermissionPolicyOverride()
+		{
+			if (Settings != nullptr && bReady)
+			{
+				Settings->AgentWritePermissionPolicy = OriginalPolicy;
+			}
+		}
+
+		bool IsReady() const
+		{
+			return bReady;
+		}
+
+		UVergilDeveloperSettings* Settings = nullptr;
+		EVergilAgentWritePermissionPolicy OriginalPolicy = EVergilAgentWritePermissionPolicy::RequireExplicitApproval;
+		bool bReady = false;
 	};
 
 	FName MakeCastResultPinName(UClass* TargetClass)
@@ -3455,6 +3487,11 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	"Vergil.Scaffold.AgentPlanApplySeparation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FVergilAgentWritePermissionGatesTest,
+	"Vergil.Scaffold.AgentWritePermissionGates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
 bool FVergilResultSummaryUtilitiesTest::RunTest(const FString& Parameters)
 {
 	TArray<FVergilDiagnostic> NonErrorDiagnostics;
@@ -4079,14 +4116,15 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 
 	TestFalse(TEXT("PlanDocument requests should remain read-only."), PlanRequest.IsWriteRequest());
 	TestEqual(TEXT("Agent request format name should be versioned."), Vergil::GetAgentRequestFormatName(), FString(TEXT("Vergil.AgentRequest")));
-	TestEqual(TEXT("Agent request format version should remain 1."), Vergil::GetAgentRequestFormatVersion(), 1);
+	TestEqual(TEXT("Agent request format version should remain 2."), Vergil::GetAgentRequestFormatVersion(), 2);
 
 	const FString NamespacePlanRequestDescription = Vergil::DescribeAgentRequest(PlanRequest);
 	const FString AgentPlanRequestDescription = AgentSubsystem->DescribeAgentRequest(PlanRequest);
 	TestEqual(TEXT("Agent request description should mirror the namespace helper."), AgentPlanRequestDescription, NamespacePlanRequestDescription);
-	TestTrue(TEXT("Plan request description should advertise the request format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.AgentRequest version=1")));
+	TestTrue(TEXT("Plan request description should advertise the request format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.AgentRequest version=2")));
 	TestTrue(TEXT("Plan request description should include the plan summary."), NamespacePlanRequestDescription.Contains(TEXT("Plan the authored document.")));
 	TestTrue(TEXT("Plan request description should include the graph-document format."), NamespacePlanRequestDescription.Contains(TEXT("Vergil.GraphDocument version=1")));
+	TestTrue(TEXT("Plan request description should include the default write-authorization state."), NamespacePlanRequestDescription.Contains(TEXT("writeAuthorization: approved=false")));
 
 	const FString NamespacePlanRequestJson = Vergil::SerializeAgentRequest(PlanRequest, false);
 	const FString AgentPlanRequestJson = AgentSubsystem->InspectAgentRequestAsJson(PlanRequest, false);
@@ -4095,6 +4133,7 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	TestTrue(TEXT("Plan request JSON should include the plan operation."), NamespacePlanRequestJson.Contains(TEXT("\"operation\":\"PlanDocument\"")));
 	TestTrue(TEXT("Plan request JSON should embed the graph-document payload."), NamespacePlanRequestJson.Contains(TEXT("\"document\":{\"format\":\"Vergil.GraphDocument\"")));
 	TestTrue(TEXT("Plan request JSON should include the read-only request classification."), NamespacePlanRequestJson.Contains(TEXT("\"writeRequest\":false")));
+	TestTrue(TEXT("Plan request JSON should include the default write-authorization payload."), NamespacePlanRequestJson.Contains(TEXT("\"writeAuthorization\":{\"approved\":false")));
 
 	FVergilCompilerCommand ApplyMetadataCommand;
 	ApplyMetadataCommand.Type = EVergilCommandType::SetBlueprintMetadata;
@@ -4115,6 +4154,9 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 	ApplyRequest.Context.Summary = TEXT("Apply the normalized command plan.");
 	ApplyRequest.Context.InputText = TEXT("Replay the approved plan.");
 	ApplyRequest.Context.Tags = { TEXT("Agent"), TEXT("Apply") };
+	ApplyRequest.Context.WriteAuthorization.bApproved = true;
+	ApplyRequest.Context.WriteAuthorization.ApprovedBy = TEXT("Automation");
+	ApplyRequest.Context.WriteAuthorization.ApprovalNote = TEXT("Request contract coverage");
 	ApplyRequest.Operation = EVergilAgentOperation::ApplyCommandPlan;
 	ApplyRequest.Apply.TargetBlueprintPath = TEXT("/Game/Tests/BP_AgentRequestContract");
 	ApplyRequest.Apply.Commands = ResponseResult.Commands;
@@ -4122,12 +4164,16 @@ bool FVergilAgentRequestResponseContractsTest::RunTest(const FString& Parameters
 
 	TestTrue(TEXT("ApplyCommandPlan requests should be treated as write requests."), ApplyRequest.IsWriteRequest());
 	TestTrue(TEXT("Apply payload should preserve the expected fingerprint."), ApplyRequest.Apply.ExpectedCommandPlanFingerprint == ResponseResult.Statistics.CommandPlanFingerprint);
+	TestTrue(TEXT("Apply requests should preserve explicit write approval."), ApplyRequest.Context.WriteAuthorization.bApproved);
 
+	const FString NamespaceApplyRequestDescription = Vergil::DescribeAgentRequest(ApplyRequest);
+	TestTrue(TEXT("Apply request description should include the explicit write approval."), NamespaceApplyRequestDescription.Contains(TEXT("writeAuthorization: approved=true approvedBy=Automation")));
 	const FString NamespaceApplyRequestJson = Vergil::SerializeAgentRequest(ApplyRequest, false);
 	TestTrue(TEXT("Apply request JSON should include the apply operation."), NamespaceApplyRequestJson.Contains(TEXT("\"operation\":\"ApplyCommandPlan\"")));
 	TestTrue(TEXT("Apply request JSON should include the expected fingerprint."), NamespaceApplyRequestJson.Contains(*FString::Printf(TEXT("\"expectedCommandPlanFingerprint\":\"%s\""), *ResponseResult.Statistics.CommandPlanFingerprint)));
 	TestTrue(TEXT("Apply request JSON should embed the command-plan payload."), NamespaceApplyRequestJson.Contains(TEXT("\"commandPlan\":{\"format\":\"Vergil.CommandPlan\"")));
 	TestTrue(TEXT("Apply request JSON should include the write-request classification."), NamespaceApplyRequestJson.Contains(TEXT("\"writeRequest\":true")));
+	TestTrue(TEXT("Apply request JSON should include the explicit write-authorization payload."), NamespaceApplyRequestJson.Contains(TEXT("\"writeAuthorization\":{\"approved\":true,\"approvedBy\":\"Automation\",\"approvalNote\":\"Request contract coverage\"}")));
 
 	FVergilAgentResponse Response;
 	Response.RequestId = PlanRequest.Context.RequestId;
@@ -4376,6 +4422,9 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 	ApplyContext.Summary = TEXT("Apply the reviewed command plan.");
 	ApplyContext.InputText = TEXT("Replay the approved command plan against the Blueprint.");
 	ApplyContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Approved") };
+	ApplyContext.WriteAuthorization.bApproved = true;
+	ApplyContext.WriteAuthorization.ApprovedBy = TEXT("Automation");
+	ApplyContext.WriteAuthorization.ApprovalNote = TEXT("Plan/apply separation coverage");
 
 	const FVergilAgentRequest ApplyRequest = AgentSubsystem->MakeApplyRequestFromPlan(ApplyContext, PlanRequest, PlanResponse.Result);
 	const FVergilAgentResponse ApplyResponse = AgentSubsystem->ExecuteRequest(ApplyRequest);
@@ -4397,6 +4446,136 @@ bool FVergilAgentPlanApplySeparationTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("The second audit entry should record the rejected apply."), AuditEntries[1].Response.State, EVergilAgentExecutionState::Rejected);
 		TestEqual(TEXT("The third audit entry should record the successful apply."), AuditEntries[2].Response.State, EVergilAgentExecutionState::Completed);
 		TestEqual(TEXT("The third audit entry should preserve the approved fingerprint."), AuditEntries[2].Request.Apply.ExpectedCommandPlanFingerprint, PlanResponse.Result.Statistics.CommandPlanFingerprint);
+	}
+
+	AgentSubsystem->ClearAuditTrail();
+	return true;
+}
+
+bool FVergilAgentWritePermissionGatesTest::RunTest(const FString& Parameters)
+{
+	UVergilAgentSubsystem* const AgentSubsystem = GEditor != nullptr ? GEditor->GetEditorSubsystem<UVergilAgentSubsystem>() : nullptr;
+	TestNotNull(TEXT("Vergil agent subsystem should be available for write-permission coverage."), AgentSubsystem);
+	if (AgentSubsystem == nullptr)
+	{
+		return false;
+	}
+
+	FScopedVergilWritePermissionPolicyOverride RequireApprovalPolicy(EVergilAgentWritePermissionPolicy::RequireExplicitApproval);
+	TestTrue(TEXT("Write-permission tests should be able to override the project policy."), RequireApprovalPolicy.IsReady());
+	if (!RequireApprovalPolicy.IsReady())
+	{
+		return false;
+	}
+
+	TestEqual(
+		TEXT("The agent subsystem should expose the current write-permission policy."),
+		AgentSubsystem->GetWritePermissionPolicy(),
+		EVergilAgentWritePermissionPolicy::RequireExplicitApproval);
+
+	AgentSubsystem->ClearAuditTrail();
+
+	FScopedPersistentTestBlueprint PersistentBlueprint(TEXT("BP_AgentWritePermissionGates"));
+	UBlueprint* const Blueprint = PersistentBlueprint.CreateBlueprintAsset();
+	TestNotNull(TEXT("Write-permission coverage should create a persistent Blueprint asset."), Blueprint);
+	if (Blueprint == nullptr)
+	{
+		return false;
+	}
+
+	FVergilGraphDocument Document;
+	Document.SchemaVersion = Vergil::SchemaVersion;
+	Document.BlueprintPath = PersistentBlueprint.PackagePath;
+	Document.Metadata.Add(TEXT("BlueprintDescription"), TEXT("Permission gated apply"));
+
+	FVergilAgentRequest PlanRequest;
+	PlanRequest.Context.RequestId = FGuid::NewGuid();
+	PlanRequest.Context.Summary = TEXT("Plan the permission-gated document.");
+	PlanRequest.Context.InputText = TEXT("Produce a dry-run command plan before approval.");
+	PlanRequest.Context.Tags = { TEXT("Agent"), TEXT("Plan"), TEXT("Permission") };
+	PlanRequest.Operation = EVergilAgentOperation::PlanDocument;
+	PlanRequest.Plan.Document = Document;
+	PlanRequest.Plan.bAutoLayout = false;
+	PlanRequest.Plan.bGenerateComments = false;
+
+	const FVergilAgentResponse PlanResponse = AgentSubsystem->ExecuteRequest(PlanRequest);
+	TestEqual(TEXT("Planning should succeed before any write approval is evaluated."), PlanResponse.State, EVergilAgentExecutionState::Completed);
+	TestTrue(TEXT("Planning should still return a successful dry-run result."), PlanResponse.Result.bSucceeded);
+	TestFalse(TEXT("Planning should remain read-only."), PlanResponse.Result.bApplied);
+
+	FVergilAgentRequestContext MissingApprovalContext;
+	MissingApprovalContext.RequestId = FGuid::NewGuid();
+	MissingApprovalContext.Summary = TEXT("Reject apply without approval.");
+	MissingApprovalContext.InputText = TEXT("Do not mutate until write approval exists.");
+	MissingApprovalContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Permission") };
+
+	const FVergilAgentRequest MissingApprovalRequest = AgentSubsystem->MakeApplyRequestFromPlan(MissingApprovalContext, PlanRequest, PlanResponse.Result);
+	TestFalse(TEXT("Write approval should default to false on apply requests."), MissingApprovalRequest.Context.WriteAuthorization.bApproved);
+
+	const FVergilAgentResponse MissingApprovalResponse = AgentSubsystem->ExecuteRequest(MissingApprovalRequest);
+	TestEqual(TEXT("Apply requests without approval should be rejected."), MissingApprovalResponse.State, EVergilAgentExecutionState::Rejected);
+	TestFalse(TEXT("Rejected apply requests should not report a successful apply."), MissingApprovalResponse.Result.bApplied);
+	TestFalse(TEXT("Rejected apply requests should not attempt editor execution."), MissingApprovalResponse.Result.Statistics.bExecutionAttempted);
+	TestTrue(TEXT("Missing-approval responses should mention explicit write approval."), MissingApprovalResponse.Message.Contains(TEXT("explicit write approval")));
+	TestTrue(
+		TEXT("Missing-approval responses should emit a dedicated diagnostic code."),
+		MissingApprovalResponse.Result.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+		{
+			return Diagnostic.Code == TEXT("MissingAgentWriteApproval");
+		}));
+	TestTrue(TEXT("Rejected apply requests should leave the Blueprint unchanged."), Blueprint->BlueprintDescription.IsEmpty());
+
+	FVergilAgentRequestContext ApprovedContext;
+	ApprovedContext.RequestId = FGuid::NewGuid();
+	ApprovedContext.Summary = TEXT("Apply with explicit approval.");
+	ApprovedContext.InputText = TEXT("Replay the reviewed command plan after approval.");
+	ApprovedContext.Tags = { TEXT("Agent"), TEXT("Apply"), TEXT("Permission"), TEXT("Approved") };
+	ApprovedContext.WriteAuthorization.bApproved = true;
+	ApprovedContext.WriteAuthorization.ApprovedBy = TEXT(" Automation ");
+	ApprovedContext.WriteAuthorization.ApprovalNote = TEXT(" Permission gate coverage ");
+
+	const FVergilAgentRequest ApprovedRequest = AgentSubsystem->MakeApplyRequestFromPlan(ApprovedContext, PlanRequest, PlanResponse.Result);
+	TestTrue(TEXT("The apply helper should preserve explicit approval when supplied."), ApprovedRequest.Context.WriteAuthorization.bApproved);
+
+	const FVergilAgentResponse ApprovedResponse = AgentSubsystem->ExecuteRequest(ApprovedRequest);
+	TestEqual(TEXT("Apply requests with approval should complete successfully."), ApprovedResponse.State, EVergilAgentExecutionState::Completed);
+	TestTrue(TEXT("Approved apply requests should mutate the Blueprint."), ApprovedResponse.Result.bApplied);
+	TestEqual(TEXT("Approved apply requests should author the planned description."), Blueprint->BlueprintDescription, FString(TEXT("Permission gated apply")));
+
+	TArray<FVergilAgentAuditEntry> AuditEntries = AgentSubsystem->GetRecentAuditEntries();
+	TestEqual(TEXT("Plan, rejected apply, and approved apply should each audit once."), AuditEntries.Num(), 3);
+	if (AuditEntries.Num() == 3)
+	{
+		TestEqual(TEXT("The rejected audit entry should keep its rejected state."), AuditEntries[1].Response.State, EVergilAgentExecutionState::Rejected);
+		TestEqual(TEXT("The approved audit entry should keep its completed state."), AuditEntries[2].Response.State, EVergilAgentExecutionState::Completed);
+		TestEqual(TEXT("Approved-by names should be normalized before audit persistence."), AuditEntries[2].Request.Context.WriteAuthorization.ApprovedBy, FString(TEXT("Automation")));
+		TestEqual(TEXT("Approval notes should be normalized before audit persistence."), AuditEntries[2].Request.Context.WriteAuthorization.ApprovalNote, FString(TEXT("Permission gate coverage")));
+	}
+
+	{
+		FScopedVergilWritePermissionPolicyOverride DenyAllPolicy(EVergilAgentWritePermissionPolicy::DenyAll);
+		TestTrue(TEXT("The deny-all override should also be available for policy coverage."), DenyAllPolicy.IsReady());
+		if (!DenyAllPolicy.IsReady())
+		{
+			return false;
+		}
+
+		TestEqual(
+			TEXT("The agent subsystem should expose the deny-all write-permission policy."),
+			AgentSubsystem->GetWritePermissionPolicy(),
+			EVergilAgentWritePermissionPolicy::DenyAll);
+
+		const FVergilAgentResponse DenyAllResponse = AgentSubsystem->ExecuteRequest(ApprovedRequest);
+		TestEqual(TEXT("Deny-all policy should reject apply even with explicit approval."), DenyAllResponse.State, EVergilAgentExecutionState::Rejected);
+		TestFalse(TEXT("Deny-all policy should still block editor execution."), DenyAllResponse.Result.Statistics.bExecutionAttempted);
+		TestTrue(TEXT("Deny-all responses should mention the permission policy."), DenyAllResponse.Message.Contains(TEXT("permission policy")));
+		TestTrue(
+			TEXT("Deny-all responses should emit the deny diagnostic."),
+			DenyAllResponse.Result.Diagnostics.ContainsByPredicate([](const FVergilDiagnostic& Diagnostic)
+			{
+				return Diagnostic.Code == TEXT("AgentWritePermissionDenied");
+			}));
+		TestEqual(TEXT("Deny-all policy should leave the previously applied Blueprint state untouched."), Blueprint->BlueprintDescription, FString(TEXT("Permission gated apply")));
 	}
 
 	AgentSubsystem->ClearAuditTrail();

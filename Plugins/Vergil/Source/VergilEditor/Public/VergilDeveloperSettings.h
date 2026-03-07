@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "VergilPermissionTypes.h"
 #include "VergilDeveloperSettings.generated.h"
 
 UCLASS(Config = EditorPerProjectUserSettings, DefaultConfig, meta = (DisplayName = "Vergil"))
@@ -18,6 +19,9 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category = "Agent")
 	bool bEnableAgentTools = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Agent")
+	EVergilAgentWritePermissionPolicy AgentWritePermissionPolicy = EVergilAgentWritePermissionPolicy::RequireExplicitApproval;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Compiler")
 	bool bEnableExperimentalCompilerPasses = false;
